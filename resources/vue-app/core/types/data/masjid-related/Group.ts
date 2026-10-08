@@ -1,3 +1,5 @@
+import type { ClassSubjectFields } from './ClassSubject';
+
 /**
  * Groups — the org -> group -> member scoping level of the core.
  *
@@ -108,9 +110,10 @@ export type GroupTeacher = {
     id: number;
     name: string;
     subjects: { value: string; label: string }[] | null;
+    class_subject_ids?: number[] | null;
 };
 
-export type Group = {
+export type Group = ClassSubjectFields & {
     id: number;
     masjid_id: number;
     name: string;

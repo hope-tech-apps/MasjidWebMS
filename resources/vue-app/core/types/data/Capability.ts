@@ -31,6 +31,7 @@ export type CapabilityKey = 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' |
     | 'points_weekly_report'
     // The class store (T-003.4): points become Manara Bucks that a class store spends. A grant, off for everyone.
     | 'class_store'
+    | 'class_subjects'
     // The lobby TV board's settings page: a grant, off for everyone, given to an organisation that has a TV screen.
     | 'tv_display'
     // The online shop (shop slice B1): products with size variants and stock, sold through the basket. A grant, off for everyone.
@@ -177,6 +178,7 @@ export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
     simple_marking: 'Mark work Excellent, Good or Needs work',
     points_weekly_report: 'Weekly points report',
     class_store: 'Class store (Manara Bucks)',
+    class_subjects: 'Class subjects',
     shop: 'Online shop',
     tv_display: 'TV display',
 };

@@ -22,6 +22,8 @@ use App\Http\Requests\BaseFormRequest;
  */
 class TeacherInviteRequest extends BaseFormRequest
 {
+    use ClassSubjectAssignments;
+
     /**
      * The subjects for one class, as the assignment should store them: a unique,
      * ordered list, or NULL for "everything". Empty means everything too, so an
@@ -79,6 +81,6 @@ class TeacherInviteRequest extends BaseFormRequest
             // so a teacher with one all-subjects class could not be saved at all.
             'class_subjects.*' => ['nullable', 'array'],
             'class_subjects.*.*' => ['string', \Illuminate\Validation\Rule::in(\App\Models\GroupStaff::SUBJECTS)],
-        ];
+        ] + $this->classSubjectRules();
     }
 }

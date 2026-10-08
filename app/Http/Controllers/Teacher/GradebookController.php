@@ -113,11 +113,11 @@ class GradebookController extends TeacherController
             // What THIS teacher may file work under, and where the form starts.
             'subjects' => $offered,
             'default_subject' => ClassSubjects::defaultFor($offered, $limits),
-            'my_subjects' => $limits,
+            'my_subjects' => Auth::user()?->type === 'Teacher' ? SubjectFence::assigned((int) $group->id, (int) Auth::id()) : null,
             // Off where the school teaches no pacing guide (BISS): the form hides
             // the Standard field and the server would not write it.
             'standards_enabled' => SchoolSettings::showsStandards($org),
-        ], Response::HTTP_OK);
+        ] + SubjectFence::payload($group, Auth::user()), Response::HTTP_OK);
     }
 
     public function store(StoreClassAssignmentRequest $request, $masjid_id, $group_id): JsonResponse

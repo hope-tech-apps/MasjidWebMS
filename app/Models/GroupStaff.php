@@ -104,6 +104,8 @@ class GroupStaff extends Pivot
         'user_id',
         'role',
         'subjects',
+        'class_subject_ids',
+        'class_subjects_mapped_at',
         'assigned_at',
     ];
 
@@ -114,9 +116,18 @@ class GroupStaff extends Pivot
      * not a users.id), keeps NULL rather than a guess or a foreign id. Set here, not
      * at call sites, because attach() drops it there.
      */
+    protected $hidden = ['class_subject_ids', 'class_subjects_mapped_at'];
+
     protected static function booted(): void
     {
         static::creating(function (self $row): void {
+            $group = Group::find($row->group_id);
+            if ($group?->teachesStudents() && \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org($group->masjid_id))) {
+                if ($row->class_subjects_mapped_at === null) {
+                    $row->class_subject_ids = \App\Support\ClassSubjectInitializer::mapLegacy($group, $row->subjects);
+                    $row->class_subjects_mapped_at = now();
+                }
+            }
             $actor = Auth::user();
             $row->assigned_by_user_id = $actor instanceof User ? $actor->getKey() : null;
         });
@@ -127,6 +138,8 @@ class GroupStaff extends Pivot
         return [
             'assigned_at' => 'datetime',
             'subjects' => 'array',
+            'class_subject_ids' => 'array',
+            'class_subjects_mapped_at' => 'datetime',
         ];
     }
 }

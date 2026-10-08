@@ -128,7 +128,8 @@ abstract class TeacherController extends Controller
                 'age' => $ages[(int) $m->id] ?? null,
             ])->values(),
         ] + ($unreadMessages !== null ? ['unread_messages' => $unreadMessages] : [])
-          + $this->classStoreFlag($group);
+          + $this->classStoreFlag($group)
+          + \App\Support\SubjectFence::payload($group, Auth::user());
     }
 
     /**

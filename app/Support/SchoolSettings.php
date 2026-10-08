@@ -125,6 +125,11 @@ final class SchoolSettings
      * unknown organisation, or a stale config cache during a deploy, reads as OFF, which
      * mints nothing and answers no store route.
      */
+    public static function classSubjects(?Masjid $masjid): bool
+    {
+        return (bool) $masjid?->hasCapability('class_subjects');
+    }
+
     public static function classStore(?Masjid $masjid): bool
     {
         return (bool) $masjid?->hasCapability(self::CLASS_STORE);

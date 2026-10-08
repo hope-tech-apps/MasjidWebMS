@@ -34,6 +34,11 @@ final class ClassSubjects
      */
     public static function offered(Group $group): array
     {
+        if ($group->teachesStudents() && SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) {
+            return \App\Models\ClassSubject::where('group_id', $group->id)->whereNull('hidden_at')->orderBy('position')->orderBy('id')->get()
+                ->map(fn ($s) => ['name' => $s->name, 'key' => $s->name_key])->all();
+        }
+
         $grades = $group->memberships()->participants()->current()
             ->pluck('grade_label')
             ->map(fn ($g) => is_string($g) && trim($g) !== '' ? trim($g) : null)
@@ -113,6 +118,10 @@ final class ClassSubjects
      */
     public static function defaultFor(array $fenced, ?array $limits): ?string
     {
+        if ($limits !== null && array_key_exists('class_subject_ids', $limits)) {
+            return count($limits['class_subject_ids']) === 1 && count($fenced) === 1 ? $fenced[0]['name'] : null;
+        }
+
         if ($limits === null || count($limits) !== 1) {
             return null;
         }

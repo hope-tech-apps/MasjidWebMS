@@ -88,6 +88,8 @@ class Group extends Model
         'points_period',
     ];
 
+    protected $hidden = ['subject_seed_grades', 'class_subjects_initialized_at'];
+
     protected $attributes = [
         'kind' => self::KIND_GENERAL,
     ];
@@ -95,6 +97,8 @@ class Group extends Model
     protected function casts(): array
     {
         return [
+            'subject_seed_grades' => 'array',
+            'class_subjects_initialized_at' => 'datetime',
             'is_active' => 'boolean',
             'position' => 'integer',
             'starts_on' => 'date',
@@ -170,6 +174,15 @@ class Group extends Model
 
     protected static function booted(): void
     {
+        static::created(function (self $group): void {
+            if ($group->teachesStudents() && \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org($group->masjid_id))) {
+                \Illuminate\Support\Facades\DB::transaction(function () use ($group): void {
+                    Masjid::whereKey($group->masjid_id)->lockForUpdate()->firstOrFail();
+                    \App\Support\ClassSubjectInitializer::initializeGroup($group);
+                });
+            }
+        });
+
         static::deleting(function (self $group): void {
             if (! $group->isForceDeleting()) {
                 return;
