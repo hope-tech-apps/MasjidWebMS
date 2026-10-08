@@ -127,18 +127,39 @@ for (const off of [false, true]) test(`review3 snapshots ${off ? 'OFF' : 'ON'}: 
         const first = capture(() => student.value, 'advance', snapshot);
         const second = capture(() => student.value, 'masterAll', snapshot);
         assert.equal(second.snapshot(), true); second.finish();
-        assert.equal(first.snapshot(), off); first.finish(); assert.equal(reads, 0, 'newest applied snapshot needs no repair');
+        assert.equal(first.snapshot(), off); first.finish(); assert.equal(reads, off ? 0 : 1, 'a discarded successful snapshot is re-read: send order is not server order');
         const third = capture(() => student.value, 'saveDrillNote', snapshot);
         const fourth = capture(() => student.value, 'masterGroup', snapshot);
-        assert.equal(third.snapshot(), off); third.finish(); assert.equal(reads, 0, 'wait for the last pending save');
-        fourth.finish(); assert.equal(reads, off ? 0 : 1, 'a rejected newer save still requires reading the older successful write');
+        assert.equal(third.snapshot(), off); third.finish(); assert.equal(reads, off ? 0 : 1, 'wait for the last pending save');
+        fourth.finish(); assert.equal(reads, off ? 0 : 2, 'a rejected newer save still requires reading the older successful write');
         const other = capture(() => student.value, 'advance', snapshot);
         const independent = capture(() => student.value, 'setStage', { key: () => 'stage', refresh: () => { reads++; } });
         assert.equal(other.snapshot(), true); other.finish(); independent.snapshot(); independent.finish();
         const leaving = capture(() => student.value, 'advance', snapshot);
-        student.value = 10; assert.equal(leaving.snapshot(), off); leaving.finish(); assert.equal(reads, off ? 0 : 1, 'do not repair a different student');
+        student.value = 10; assert.equal(leaving.snapshot(), off); leaving.finish(); assert.equal(reads, off ? 0 : 2, 'do not repair a different student');
         const disposed = capture(() => student.value, 'advance', snapshot);
         disposals.forEach(fn => fn()); scope.stop(); assert.equal(disposed.snapshot(), off); disposed.finish();
-        assert.equal(reads, off ? 0 : 1, 'no read after disposal');
+        assert.equal(reads, off ? 0 : 2, 'no read after disposal');
+    } finally { disposals.forEach(fn => fn()); scope.stop(); }
+});
+
+for (const on of [true, false]) test(`review4 snapshot matrix ${on ? 'ON' : 'OFF'}: every three-save arrival order and success/refusal combination`, async () => {
+    const disposals: (() => void)[] = [];
+    const { useToolSaveContext } = await loadTs('composables/useToolResponseGuard.ts', {
+        vue: { ...vue, onBeforeUnmount: (fn: () => void) => disposals.push(fn) },
+    });
+    const scope = vue.effectScope(); let reads = 0;
+    const capture = scope.run(() => useToolSaveContext(() => on, () => 'class:2', () => 'letters'));
+    try {
+        for (const order of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) for (let successes = 0; successes < 8; successes++) {
+            const before = reads;
+            const saves = ['advance', 'masterAll', 'saveDrillNote'].map(action => capture(() => 9, action, { key: () => 'tracker:9', refresh: () => { reads++; } }));
+            for (const [at, i] of order.entries()) {
+                if (successes & (1 << i)) assert.equal(saves[i].snapshot(), !on || i === 2);
+                saves[i].finish();
+                const needsRepair = on && !!(successes & 3);
+                assert.equal(reads - before, at === 2 && needsRepair ? 1 : 0, `arrival ${order}, successes ${successes}: one repair after all settle`);
+            }
+        }
     } finally { disposals.forEach(fn => fn()); scope.stop(); }
 });

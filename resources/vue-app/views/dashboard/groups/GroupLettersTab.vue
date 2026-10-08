@@ -357,6 +357,11 @@ const open = async (student: any, which: string = alphabet.value, preserveEditor
         tracker.value = res.data?.data ?? null;
     } catch (e: any) {
         if (!keepResponse()) return;
+        // A repair re-read after overlapping saves keeps the open child and any refusal shown.
+        if (preserveEditor) {
+            if (!letterError.value) letterError.value = 'The letters could not be refreshed. Reload the page to see the latest marks.';
+            return;
+        }
         selected.value = null;
         tracker.value = null;
         stageFailed.value = true;

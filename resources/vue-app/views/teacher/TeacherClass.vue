@@ -4632,7 +4632,11 @@ const openLetters = async (s: any, preserveEditor = false) => {
         tracker.value = res.data?.data ?? null;
         lettersMeta.value = res.data?.meta ?? lettersMeta.value;
     } catch {
-        if (keepRead()) tracker.value = null;
+        // A repair re-read after overlapping saves must not blank the open editor or hide
+        // a refusal already on screen: keep what is shown and say it may be out of date.
+        if (keepRead() && preserveEditor) {
+            if (!letterError.value) letterError.value = 'The letters could not be refreshed. Reload the page to see the latest marks.';
+        } else if (keepRead()) tracker.value = null;
     } finally {
         if (keepRead()) trackerLoading.value = false;
     }
@@ -5597,7 +5601,6 @@ const saveHifzEdit = async () => {
 
     recordingHifz.value = true;
     hifzError.value = '';
-    const savedStudent = hifzMembership.value;
     const save = classSubjects.saveContext(() => `${hifzMembership.value}:${hifzEditing.value?.id}`, 'recordingHifz', {
         key: () => `hifz:${hifzMembership.value}:${entry.id}`,
         refresh: () => { if (activeTab.value === 'hifz') loadHifz(true); },
@@ -5614,7 +5617,7 @@ const saveHifzEdit = async () => {
         });
         save.saved();
         const applySnapshot = save.snapshot();
-        if (classSubjects.enabled.value && save.reconcile() && activeTab.value === 'hifz' && !save.editor() && hifzMembership.value && String(hifzMembership.value) === String(savedStudent)) loadHifz(true);
+        // Departed editors reconcile once, after the last overlapping save settles.
         if (!save.editor() || !applySnapshot) return;
         if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('loadHifz');
         const saved = res.data?.data;
@@ -5676,7 +5679,6 @@ const saveHifzNote = async (entry: any, note?: string) => {
     if (hifzBusy.value) return;
     savingHifzNote.value = true;
     hifzNoteError.value = '';
-    const savedStudent = hifzMembership.value;
     const save = classSubjects.saveContext(() => `${hifzMembership.value}:${openHifzNote.value}`, 'saveHifzNote', {
         key: () => `hifz:${hifzMembership.value}:${entry.id}`,
         refresh: () => { if (activeTab.value === 'hifz') loadHifz(true); },
@@ -5685,7 +5687,7 @@ const saveHifzNote = async (entry: any, note?: string) => {
         const res = await TeacherApiService.put(`${base.value}/hifz/${entry.id}`, { note: note ?? hifzNoteDraft.value });
         save.saved();
         const applySnapshot = save.snapshot();
-        if (classSubjects.enabled.value && save.reconcile() && activeTab.value === 'hifz' && !save.editor() && hifzMembership.value && String(hifzMembership.value) === String(savedStudent)) loadHifz(true);
+        // Departed editors reconcile once, after the last overlapping save settles.
         if (!save.editor() || !applySnapshot) return;
         if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('loadHifz');
         const saved = res.data?.data;

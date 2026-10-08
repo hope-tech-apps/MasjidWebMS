@@ -56,7 +56,7 @@ export function useToolSaveContext(enabled: () => boolean, owner: () => string, 
     let revision = 0;
     const selections = new Set<() => void>();
     const busyOwners = new Map<string, number>();
-    const snapshots = new Map<string, { pending: number; latest: number; applied: number; dirty: boolean }>();
+    const snapshots = new Map<string, { pending: number; latest: number; applied: number; dirty: boolean; skipped: boolean }>();
     let operation = 0;
     const subscriber = refresh ? { enabled, owner, refresh } : null;
     if (subscriber) saveViews.add(subscriber);
@@ -76,7 +76,7 @@ export function useToolSaveContext(enabled: () => boolean, owner: () => string, 
         let state = alive && wasOn && snapshot ? snapshots.get(snapshotKey) : undefined;
         if (alive && wasOn && snapshot) {
             if (!state) {
-                state = { pending: 0, latest: token, applied: 0, dirty: false };
+                state = { pending: 0, latest: token, applied: 0, dirty: false, skipped: false };
                 snapshots.set(snapshotKey, state);
             }
             ++state.pending;
@@ -101,6 +101,9 @@ export function useToolSaveContext(enabled: () => boolean, owner: () => string, 
             snapshot: (present = true) => {
                 if (legacy()) return true;
                 if (state) state.dirty = true;
+                // Send order is not server order: a success whose snapshot is not painted
+                // may still be the newest truth, so the last save to settle re-reads.
+                if (present && state && state.latest !== token) state.skipped = true;
                 if (!present || !editor() || (state && state.latest !== token)) return false;
                 if (state) state.applied = token;
                 return true;
@@ -109,7 +112,7 @@ export function useToolSaveContext(enabled: () => boolean, owner: () => string, 
                 stop(); selections.delete(stop);
                 if (state && --state.pending === 0) {
                     snapshots.delete(snapshotKey);
-                    if (alive && !legacy() && reconcile() && snapshot && snapshot.key() === snapshotIdentity && state.dirty && state.applied !== state.latest) snapshot.refresh();
+                    if (alive && !legacy() && reconcile() && snapshot && snapshot.key() === snapshotIdentity && state.dirty && (state.applied !== state.latest || state.skipped)) snapshot.refresh();
                 }
                 const ownsBusy = legacy() || !alive || busyOwners.get(busy) === token;
                 if (busyOwners.get(busy) === token) busyOwners.delete(busy);

@@ -861,21 +861,28 @@ const twoDrills = (mastered = 0) => ({ ...arabicDrillTracker(), totals: { master
 const drillButton = (screen: any, label: string) => screen.all((n: Node) => n.tag === 'button' && n.textContent.includes(label) && !n.textContent.startsWith('Note on'))[0];
 for (const realm of ['teacher', 'office'] as const) for (const on of [true, false]) {
     test(`review3 2 ${on ? 'ON' : 'OFF'}: ${realm} older drill snapshot cannot undo the newest sent save`, async () => {
-        const first = deferred(); const second = deferred(); let writes = 0; let overviews = 0;
+        const first = deferred(); const second = deferred(); let writes = 0; let overviews = 0; let stored = twoDrills(); let reads = 0;
         const { screen } = await setup(realm, { flag: on,
             read: (url: string) => {
-                if (url.includes('/members/9/letters')) return ok(twoDrills());
+                if (url.includes('/members/9/letters')) { reads++; return ok(structuredClone(stored)); }
                 if (url.includes('/letters?')) overviews++;
                 return undefined;
-            }, write: (_: string, url: string) => url.endsWith('/members/9/letters') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+            }, write: (_: string, url: string) => {
+                if (!url.endsWith('/members/9/letters')) return undefined;
+                // These writes execute in send order; their frozen answers arrive in reverse.
+                stored = twoDrills(++writes);
+                return writes === 1 ? first.promise : second.promise;
+            } });
         try {
             await visit(screen, on, on ? 'Arabic' : 'Letters'); click(screen.button('Practice student')); await flush();
             click(screen.all((n: Node) => String(n.props.class).includes('letter-tile'))[0]); await flush();
             click(drillButton(screen, 'Drill 1')); await flush(); click(drillButton(screen, 'Drill 2')); await flush();
-            assert.equal(writes, 2); const before = overviews;
+            assert.equal(writes, 2); const before = overviews; const beforeReads = reads;
             second.resolve(ok(twoDrills(2))); await flush(); assert.match(screen.text(), /2 of 2 mastered/);
             first.resolve(ok(twoDrills(1))); await flush();
             assert.match(screen.text(), on ? /2 of 2 mastered/ : /1 of 2 mastered/);
+            assert.equal(reads - beforeReads, on ? 1 : 0);
+            if (on) assert.match(screen.text(), new RegExp(`${stored.totals.mastered} of ${stored.totals.total} mastered`));
             if (on) assert.ok(overviews >= before + 2, 'both successes still reconcile the class overview');
         } finally { screen.unmount(); }
     });
@@ -908,9 +915,14 @@ for (const action of ['masterAll', 'masterGroup', 'saveDrillNote']) for (const o
     test(`review3 2 sibling ${on ? 'ON' : 'OFF'}: ${action} shares the tracker sequence with a newer drill mark`, async () => {
         const first = deferred(); const second = deferred(); let writes = 0;
         const payload = (mastered = 0) => ({ ...twoDrills(mastered), groups: [{ id: 'practice', label: 'Practice', totals: { mastered: 0, total: 2 }, drills: [] }] });
+        let stored = payload(); let reads = 0;
         const { screen } = await setup('teacher', { flag: on,
-            read: (url: string) => url.includes('/members/9/letters') ? ok(payload()) : undefined,
-            write: (_: string, url: string) => url.includes('/members/9/letters') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+            read: (url: string) => { if (url.includes('/members/9/letters')) { reads++; return ok(structuredClone(stored)); } return undefined; },
+            write: (_: string, url: string) => {
+                if (!url.includes('/members/9/letters')) return undefined;
+                stored = payload(++writes);
+                return writes === 1 ? first.promise : second.promise;
+            } });
         try {
             await visit(screen, on, on ? 'Arabic' : 'Letters'); click(screen.button('Practice student')); await flush();
             click(screen.all((n: Node) => String(n.props.class).includes('letter-tile'))[0]); await flush();
@@ -918,8 +930,11 @@ for (const action of ['masterAll', 'masterGroup', 'saveDrillNote']) for (const o
             else if (action === 'masterGroup') { click(exactButton(screen, 'Mark all practice mastered')); await flush(); click(exactButton(screen, 'Yes, mark them mastered')); }
             else { click(exactButton(screen, 'Note on Drill 1')); await flush(); type(screen.all((n: Node) => n.tag === 'textarea')[0], 'Saved drill note'); await flush(); click(exactButton(screen, 'Save note')); }
             await flush(); click(drillButton(screen, 'Drill 2')); await flush(); assert.equal(writes, 2);
+            const beforeReads = reads;
             second.resolve(ok(payload(2))); await flush(); first.resolve(ok(payload(1))); await flush();
             assert.match(screen.text(), on ? /2 of 2 mastered/ : /1 of 2 mastered/);
+            assert.equal(reads - beforeReads, on ? 1 : 0);
+            if (on) assert.match(screen.text(), new RegExp(`${stored.totals.mastered} of ${stored.totals.total} mastered`));
         } finally { screen.unmount(); }
     });
 }
@@ -1021,4 +1036,205 @@ for (const on of [true, false]) test(`review3 2 period ${on ? 'ON' : 'OFF'}: old
         second.resolve(ok({ points_period: 'running' })); await flush(); first.resolve(ok({ points_period: 'weekly' })); await flush();
         assert.equal(data.points_period, on ? 'running' : 'weekly');
     } finally { totals.resolve(ok({ points_period: 'running' })); await flush(); screen.unmount(); }
+});
+
+const arrivalOrders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+// Server execution and response delivery are separate: a response holds the snapshot
+// at execution time, while a repair GET reads all writes the server has accepted.
+const queuedSnapshots = (initial: any, apply: (stored: any, body: any) => any) => {
+    let stored = structuredClone(initial);
+    const pending: any[] = [];
+    return {
+        get stored() { return structuredClone(stored); },
+        pending,
+        write(body: any) { const answer = deferred(); pending.push({ body, answer }); return answer.promise; },
+        execute(index: number) {
+            assert.equal(pending[index].snapshot, undefined, 'each request executes once');
+            stored = apply(structuredClone(stored), pending[index].body);
+            pending[index].snapshot = structuredClone(stored);
+        },
+        respond(index: number) { assert.ok(pending[index].snapshot); pending[index].answer.resolve(ok(pending[index].snapshot)); },
+    };
+};
+const markedTracker = (ids: string[], mastered: string[] = []) => ({ ...twoDrills(), totals: { mastered: mastered.length, total: ids.length },
+    letters: [{ ...twoDrills().letters[0], drills: ids.map(id => ({ id, text: 'ا', label: `Drill ${id.split('.').at(-1)}`, status: mastered.includes(id) ? 'mastered' : 'learning' })) }] });
+const openDrills = async (screen: any, on: boolean) => {
+    await visit(screen, on, on ? 'Arabic' : 'Letters'); click(screen.button('Practice student')); await flush();
+    click(screen.all((n: Node) => String(n.props.class).includes('letter-tile'))[0]); await flush();
+};
+const refreshFailure = 'The letters could not be refreshed. Reload the page to see the latest marks.';
+
+for (const realm of ['teacher', 'office'] as const) for (const on of [true, false]) test(`review4 finding 1 ${on ? 'ON' : 'OFF'}: ${realm} reversed execution and arrival shows both stored marks`, async () => {
+    const ids = ['alif.1', 'alif.2']; let reads = 0;
+    const server = queuedSnapshots(markedTracker(ids), (stored, body) => markedTracker(ids,
+        [...stored.letters[0].drills.filter((d: any) => d.status === 'mastered').map((d: any) => d.id), body.drill_id]));
+    const { screen } = await setup(realm, { flag: on,
+        read: (url: string) => { if (url.includes('/members/9/letters')) { reads++; return ok(server.stored); } return undefined; },
+        write: (_: string, url: string, body: any) => url.endsWith('/members/9/letters') ? server.write(body) : undefined });
+    try {
+        await openDrills(screen, on); click(drillButton(screen, 'Drill 1')); await flush(); click(drillButton(screen, 'Drill 2')); await flush();
+        assert.equal(server.pending.length, 2); const before = reads;
+        server.execute(1); server.respond(1); await flush(); assert.match(screen.text(), /1 of 2 mastered/);
+        server.execute(0); server.respond(0); await flush();
+        assert.match(screen.text(), /2 of 2 mastered/); assert.equal(server.stored.totals.mastered, 2);
+        assert.equal(reads - before, on ? 1 : 0); assert.equal(drillButton(screen, 'Drill 1').disabled, false); assert.equal(drillButton(screen, 'Drill 2').disabled, false);
+    } finally { screen.unmount(); }
+});
+
+for (const realm of ['teacher', 'office'] as const) for (const on of [true, false]) for (const refused of [true, false]) test(`review4 finding 2 ${on ? 'ON' : 'OFF'}: ${realm} failed repair ${refused ? 'preserves refusal' : 'reports refresh failure'}`, async () => {
+    const first = deferred(); const second = deferred(); let writes = 0; let reads = 0;
+    const { screen, alerts } = await setup(realm, { flag: on,
+        read: (url: string) => { if (url.includes('/members/9/letters')) { if (++reads > 1) throw httpError(503, { message: 'Repair unavailable.' }); return ok(twoDrills()); } return undefined; },
+        write: (_: string, url: string) => url.endsWith('/members/9/letters') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+    try {
+        await openDrills(screen, on); click(drillButton(screen, 'Drill 1')); await flush(); click(drillButton(screen, 'Drill 2')); await flush(); assert.equal(writes, 2);
+        if (refused) second.reject(httpError(422, { message: 'Newest mark refused.' })); else second.resolve(ok(twoDrills(1)));
+        await flush(); first.resolve(ok(twoDrills(2))); await flush();
+        assert.equal(reads, on ? 2 : 1, 'OFF never attempts the failing repair');
+        assert.match(screen.text(), on ? (refused ? /0 of 2 mastered/ : /1 of 2 mastered/) : /2 of 2 mastered/);
+        assert.equal(screen.text().includes('Newest mark refused.'), refused);
+        assert.equal(screen.text().includes(refreshFailure), on && !refused);
+        assert.equal(drillButton(screen, 'Drill 1').disabled, false); assert.equal(drillButton(screen, 'Drill 2').disabled, false);
+        assert.doesNotMatch(screen.text(), /Loading|Saving|Marking/); assert.equal(alerts.length, 0);
+    } finally { screen.unmount(); }
+});
+
+for (const realm of ['teacher', 'office'] as const) for (const on of [true, false]) for (const execution of ['sent', 'arrival']) for (const order of arrivalOrders) test(`review4 matrix letters ${on ? 'ON' : 'OFF'}: ${realm} execution ${execution}, arrival ${order.join('')}`, async () => {
+    const ids = ['alif.1', 'alif.2', 'alif.3']; let reads = 0;
+    const server = queuedSnapshots(markedTracker(ids), (stored, body) => markedTracker(ids,
+        [...stored.letters[0].drills.filter((d: any) => d.status === 'mastered').map((d: any) => d.id), body.drill_id]));
+    const { screen } = await setup(realm, { flag: on,
+        read: (url: string) => { if (url.includes('/members/9/letters')) { reads++; return ok(server.stored); } return undefined; },
+        write: (_: string, url: string, body: any) => url.endsWith('/members/9/letters') ? server.write(body) : undefined });
+    try {
+        await openDrills(screen, on);
+        for (let i = 1; i <= 3; i++) { click(drillButton(screen, `Drill ${i}`)); await flush(); }
+        assert.equal(server.pending.length, 3); const before = reads;
+        if (execution === 'sent') [0, 1, 2].forEach(i => server.execute(i));
+        for (const [at, i] of order.entries()) {
+            if (execution === 'arrival') server.execute(i);
+            server.respond(i); await flush();
+            assert.equal(reads - before, on && at === 2 ? 1 : 0, 'only the last pending save repairs the burst');
+        }
+        const expected = on ? server.stored : server.pending[order[2]].snapshot;
+        assert.match(screen.text(), new RegExp(`${expected.totals.mastered} of 3 mastered`));
+        for (const drill of expected.letters[0].drills) {
+            const button = drillButton(screen, drill.label);
+            const statusRow = realm === 'teacher' ? button.parent?.parent : button;
+            assert.ok(String(statusRow?.props.class).includes(`drill--${drill.status}`));
+            assert.equal(drillButton(screen, drill.label).disabled, false);
+        }
+    } finally { screen.unmount(); }
+});
+
+for (const realm of ['teacher', 'office'] as const) for (const on of [true, false]) for (const order of arrivalOrders) test(`review4 matrix stage ${on ? 'ON' : 'OFF'}: ${realm} arrival ${order.join('')}`, async () => {
+    const stages = ['initial', 'one', 'two', 'three'].map(id => ({ id, label: `Stage ${id}` })); let reads = 0;
+    const server = queuedSnapshots({ students: [student], stage: stages[0], stages, total: 2 }, (stored, body) => ({ ...stored, stage: stages.find(s => s.id === body.stage) }));
+    const { screen } = await setup(realm, { flag: on, data: { arabic_stage: 'initial' },
+        read: (url: string) => { if (url.includes('/letters?')) { reads++; return ok(server.stored); } return undefined; },
+        write: (_: string, url: string, body: any) => url.endsWith('/letters/stage') ? server.write(body) : undefined });
+    try {
+        await visit(screen, on, on ? 'Arabic' : 'Letters');
+        const picker = screen.all((n: Node) => n.tag === 'select' && n.children.some(c => c.textContent === 'Stage one'))[0];
+        for (const stage of ['one', 'two', 'three']) { picker.value = stage; chooseOption(picker, stage); }
+        await flush(); assert.equal(server.pending.length, 3); const before = reads;
+        for (const [at, i] of order.entries()) {
+            server.execute(i); server.respond(i); await flush();
+            assert.equal(reads - before, (realm === 'teacher' ? at + 1 : 0) + (on && at === 2 ? 1 : 0), 'teacher reads after each stage save; either realm repairs at most once');
+        }
+        assert.equal(picker.props.value, server.stored.stage.id); assert.equal(picker.disabled, false);
+        assert.match(screen.text(), new RegExp(server.stored.stage.label));
+    } finally { screen.unmount(); }
+});
+
+for (const on of [true, false]) for (const order of arrivalOrders) test(`review4 matrix period ${on ? 'ON' : 'OFF'}: teacher arrival ${order.join('')}`, async () => {
+    let reads = 0;
+    const server = queuedSnapshots({ points_period: 'running' }, (_stored, body) => ({ points_period: body.points_period }));
+    const { screen, data } = await setup('teacher', { flag: on, data: { points_period: 'running' },
+        read: (url: string) => { if (url.includes('/awards/totals')) { reads++; return ok(server.stored); } return undefined; },
+        write: (_: string, url: string, body: any) => url.endsWith('/points-period') ? server.write(body) : undefined });
+    try {
+        await visit(screen, on, 'Points'); const input: any = screen.all((n: Node) => n.props.id === 'points-weekly')[0];
+        for (const checked of [true, false, true]) { input.checked = checked; input.props.onChange({ target: input }); }
+        await flush(); assert.equal(server.pending.length, 3); const before = reads;
+        for (const [at, i] of order.entries()) {
+            server.execute(i); server.respond(i); await flush();
+            assert.equal(reads - before, at + 1 + (on && at === 2 ? 1 : 0), 'one normal totals read per success and at most one repair');
+        }
+        assert.equal(data.points_period, server.stored.points_period); assert.equal(input.checked, server.stored.points_period === 'weekly'); assert.equal(input.disabled, false);
+    } finally { screen.unmount(); }
+});
+
+for (const action of ['edit', 'note', 'mixed']) for (const order of arrivalOrders) test(`review4 matrix Hifdh: ${action} arrival ${order.join('')}`, async () => {
+    let reads = 0;
+    const server = queuedSnapshots(row, (stored, body) => ({ ...stored, note: body.note }));
+    const { screen } = await setup('teacher', {
+        read: (url: string) => { if (url.endsWith('/hifz')) { reads++; return ok([server.stored]); } return undefined; },
+        write: (_: string, url: string, body: any) => /\/hifz\/7(?:\/correct)?$/.test(url) ? server.write(body) : undefined });
+    try {
+        await pick(screen, "Qur'an"); chooseOption(studentPicker(screen), 9); await flush();
+        for (let i = 0; i < 3; i++) {
+            if (i) { await pick(screen, 'Roster'); await pick(screen, "Qur'an"); }
+            const editing = action === 'edit' || (action === 'mixed' && i !== 1);
+            click(exactButton(screen, editing ? 'Edit entry' : 'Edit note')); await flush();
+            const text = screen.all((n: Node) => editing ? n.tag === 'input' && n.props.placeholder === 'e.g. struggled with the waqf on ayah 12' : n.tag === 'textarea' && n.props['aria-label'] === 'Note on this recitation')[0];
+            type(text, `Stored note ${i}`); await flush(); click(exactButton(screen, editing ? 'Save changes' : 'Save note')); await flush();
+        }
+        assert.equal(server.pending.length, 3); const before = reads;
+        for (const [at, i] of order.entries()) {
+            server.execute(i); server.respond(i); await flush();
+            assert.equal(reads - before, at === 2 ? 1 : 0, 'departed editors share one final repair');
+        }
+        assert.match(screen.text(), new RegExp(server.stored.note)); assert.equal(exactButton(screen, 'Edit entry').disabled, false);
+        assert.doesNotMatch(screen.text(), /Loading recitations|Saving/);
+    } finally { screen.unmount(); }
+});
+
+for (const action of ['masterAll', 'masterGroup', 'saveDrillNote']) for (const order of arrivalOrders) test(`review4 matrix siblings: ${action} arrival ${order.join('')}`, async () => {
+    const ids = ['alif.1', 'alif.2', 'alif.3']; let reads = 0;
+    const initial = { ...markedTracker(ids), groups: [{ id: 'practice', label: 'Practice', totals: { mastered: 0, total: 3 }, drills: [] }] };
+    const server = queuedSnapshots(initial, (stored, body) => {
+        for (const drill of stored.letters[0].drills) {
+            if (!body.drill_id || body.drill_id === drill.id) {
+                drill.status = body.status ?? 'mastered';
+                if ('note' in body) drill.note = body.note;
+            }
+        }
+        stored.totals.mastered = stored.letters[0].drills.filter((d: any) => d.status === 'mastered').length;
+        return stored;
+    });
+    const { screen } = await setup('teacher', {
+        read: (url: string) => { if (url.includes('/members/9/letters')) { reads++; return ok(server.stored); } return undefined; },
+        write: (_: string, url: string, body: any) => url.includes('/members/9/letters') ? server.write(body) : undefined });
+    try {
+        await openDrills(screen, true);
+        if (action === 'masterAll') { click(exactButton(screen, 'Mark all mastered')); await flush(); click(screen.button('Just this stage')); }
+        else if (action === 'masterGroup') { click(exactButton(screen, 'Mark all practice mastered')); await flush(); click(exactButton(screen, 'Yes, mark them mastered')); }
+        else { click(exactButton(screen, 'Note on Drill 1')); await flush(); type(screen.all((n: Node) => n.tag === 'textarea')[0], 'Stored sibling note'); await flush(); click(exactButton(screen, 'Save note')); }
+        await flush(); click(drillButton(screen, 'Drill 2')); await flush(); click(drillButton(screen, 'Drill 3')); await flush();
+        assert.equal(server.pending.length, 3); const before = reads;
+        for (const [at, i] of order.entries()) {
+            server.execute(i); server.respond(i); await flush();
+            assert.equal(reads - before, at === 2 ? 1 : 0, 'siblings share one final repair');
+        }
+        assert.match(screen.text(), new RegExp(`${server.stored.totals.mastered} of 3 mastered`));
+        if (action === 'saveDrillNote') assert.match(screen.text(), /Stored sibling note/);
+        for (const drill of server.stored.letters[0].drills) {
+            const button = drillButton(screen, drill.label);
+            assert.ok(String(button.parent?.parent?.props.class).includes(`drill--${drill.status}`)); assert.equal(button.disabled, false);
+        }
+    } finally { screen.unmount(); }
+});
+
+for (const realm of ['teacher', 'office'] as const) test(`review4 OFF: ${realm} ordinary tracker read failure keeps main's error display`, async () => {
+    let reads = 0;
+    const { screen, alerts } = await setup(realm, { flag: false,
+        read: (url: string) => { if (url.includes('/members/9/letters')) { reads++; throw httpError(503, { message: 'Tracker unavailable.' }); } return undefined; } });
+    try {
+        await visit(screen, false, 'Letters'); click(screen.button('Practice student')); await flush();
+        assert.equal(reads, 1); assert.equal(screen.all((n: Node) => String(n.props.class).includes('letter-tile')).length, 0);
+        assert.equal(screen.text().includes('Tracker unavailable.'), realm === 'office');
+        assert.equal(screen.text().includes('All students'), realm === 'teacher');
+        assert.equal(screen.text().includes(refreshFailure), false); assert.doesNotMatch(screen.text(), /Loading/); assert.equal(alerts.length, 0);
+    } finally { screen.unmount(); }
 });
