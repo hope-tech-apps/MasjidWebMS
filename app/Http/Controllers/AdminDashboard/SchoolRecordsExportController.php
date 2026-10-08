@@ -142,7 +142,7 @@ class SchoolRecordsExportController extends Controller
         $classSubjects = \App\Support\SchoolSettings::classSubjects($masjid);
         return response()->stream(function () use ($dataset, $classSubjects) {
             $out = Csv::open();
-            if (in_array($dataset, ['assignments', 'lesson_plans'], true)) $this->{'write' . Str::studly($dataset)}($out, $classSubjects);
+            if (in_array($dataset, ['assignments', 'lesson_plans', 'class_staff'], true)) $this->{'write' . Str::studly($dataset)}($out, $classSubjects);
             else $this->{'write' . Str::studly($dataset)}($out);
             fclose($out);
         }, Response::HTTP_OK, [
@@ -315,8 +315,13 @@ class SchoolRecordsExportController extends Controller
     }
 
     /** @param resource $out */
-    private function writeClassStaff($out): void
+    private function writeClassStaff($out, bool $classSubjects = false): void
     {
+        if ($classSubjects) {
+            $this->writeClassStaffWithSubjects($out);
+            return;
+        }
+
         Csv::row($out, ['Row id', 'Class id', 'Staff user id', 'Staff name', 'Role', 'Assigned at']);
 
         Csv::each(
@@ -326,6 +331,20 @@ class SchoolRecordsExportController extends Controller
                 Csv::text($r->user?->name), Csv::text($r->role), Csv::num($r->assigned_at),
             ])
         );
+    }
+
+    /** ON staff names and limits are read in chunks; the legacy CSV stays unchanged. */
+    private function writeClassStaffWithSubjects($out): void
+    {
+        Csv::row($out, ['Row id', 'Class id', 'Staff user id', 'Staff name', 'Role', 'Assigned at', 'Subjects']);
+        \App\Models\GroupStaff::whereIn('group_id', $this->schoolGroupIds())->orderBy('id')->chunkById(500, function ($rows) use ($out) {
+            $users = \App\Models\User::whereIn('id', $rows->pluck('user_id'))->get()->keyBy('id');
+            $catalog = \App\Support\ClassSubjectStaffDisplay::catalog($rows->pluck('group_id')->unique()->all());
+            foreach ($rows as $r) Csv::row($out, [
+                Csv::num($r->id), Csv::num($r->group_id), Csv::num($r->user_id), Csv::text($users->get($r->user_id)?->name),
+                Csv::text($r->role), Csv::num($r->assigned_at), Csv::text(\App\Support\ClassSubjectStaffDisplay::text(\App\Support\ClassSubjectStaffDisplay::fields($r, $catalog))),
+            ]);
+        });
     }
 
     /** @param resource $out */

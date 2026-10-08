@@ -371,7 +371,7 @@ const downloadExport = async (): Promise<void> => {
 const groups = computed<Group[]>(() => (groupsStore.groupsPaginated?.data as Group[]) || []);
 
 /** Each listed class's teacher lines, by class id: worked out once per page, not once per cell drawn. */
-const teacherLines = computed(() => new Map(groups.value.map((g) => [g.id, classTeacherLines(g.teachers)])));
+const teacherLines = computed(() => new Map(groups.value.map((g) => [g.id, classTeacherLines(g.teachers, masjidStore.masjid?.capabilities?.class_subjects === true)])));
 
 /** The kind vocabulary as the SERVER states it; the literal list is a fallback for a cold load. */
 const kinds = computed<GroupKind[]>(() => groupsStore.groupsMeta?.kinds ?? ['general', 'class', 'halaqa', 'team']);

@@ -128,7 +128,8 @@ class ClassSubjectsController extends Controller
     public function addForCurrentGrades(Request $request, $masjid_id, $group_id)
     {
         $group = $this->group((int) $group_id);
-        DB::transaction(function () use ($group): void {
+        $added = DB::transaction(function () use ($group): int {
+            $added = 0;
             $this->lockGroup($group);
             $existing = ClassSubject::where('group_id', $group->id)->get();
             $position = $existing->max('position');
@@ -139,10 +140,15 @@ class ClassSubjectsController extends Controller
                 if ($fields['tool'] !== null && $existing->contains('tool', $fields['tool'])) $fields['tool'] = null;
                 if ($position > 65535) throw ValidationException::withMessages(['name' => ['Reorder this class\'s subjects before adding another.']]);
                 $this->check($group, $fields);
+                $added++;
                 $existing->push(ClassSubject::create(['group_id' => $group->id, 'position' => $position++] + $fields));
             }
+            return $added;
         });
-        return $this->index($request, $masjid_id, $group_id);
+        $response = $this->index($request, $masjid_id, $group_id);
+        $payload = $response->getData(true);
+        $payload['meta']['subjects_added'] = $added;
+        return $response->setData($payload);
     }
 
     public function reorder(ReorderClassSubjectsRequest $request, $masjid_id, $group_id)

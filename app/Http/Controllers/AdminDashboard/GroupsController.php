@@ -148,6 +148,8 @@ class GroupsController extends Controller
 
         $subjectsOn = \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org(app(TenantContext::class)->get()));
 
+        $catalog = \App\Support\ClassSubjectStaffDisplay::catalog($groupIds);
+
         return GroupStaff::query()
             ->join('users', 'users.id', '=', 'group_staff.user_id')
             ->whereNull('users.deleted_at')
@@ -157,7 +159,7 @@ class GroupsController extends Controller
             ->sort(fn (GroupStaff $a, GroupStaff $b) => strcmp(mb_strtolower((string) $a->name), mb_strtolower((string) $b->name))
                 ?: (int) $a->user_id <=> (int) $b->user_id)
             ->groupBy(fn (GroupStaff $row) => (int) $row->group_id)
-            ->map(fn ($rows) => $rows->map(function (GroupStaff $row) use ($subjectsOn): array {
+            ->map(fn ($rows) => $rows->map(function (GroupStaff $row) use ($subjectsOn, $catalog): array {
                 $subjects = $row->subjects ?: null;
 
                 return [
@@ -168,7 +170,7 @@ class GroupsController extends Controller
                         [...array_intersect(GroupStaff::SUBJECTS, $subjects), ...array_diff($subjects, GroupStaff::SUBJECTS)]
                     ),
                 ] + ($subjectsOn
-                    ? ['class_subject_ids' => $row->class_subjects_mapped_at === null && $row->class_subject_ids_edited_at === null ? [] : $row->class_subject_ids] : []);
+                    ? \App\Support\ClassSubjectStaffDisplay::fields($row, $catalog) : []);
             })->values()->all())
             ->all();
     }
@@ -266,6 +268,8 @@ class GroupsController extends Controller
         $group->setAttribute('unread_messages', $readable === null
             ? 0
             : (GroupThreadUnread::byGroup((int) $user->id, [(int) $group->id], $readable)[(int) $group->id] ?? 0));
+
+        $group->setAttribute('teachers', $this->teachersByGroupWithClassSubjects([(int) $group->id])[(int) $group->id] ?? []);
 
         foreach (\App\Support\SubjectFence::payload($group, $request->user()) as $key => $value) $group->setAttribute($key, $value);
 

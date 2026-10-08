@@ -83,6 +83,12 @@
                         @reload="loadRoster"
                     >
                         <template #afterMembers>
+                            <div v-if="classSubjects.enabled.value && group?.teachers?.length" class="mb-3" aria-label="Class teachers">
+                                <h6>Teachers</h6>
+                                <div v-for="line in classTeacherLines(group?.teachers, true)" :key="line.id">
+                                    {{ line.name }} <span class="text-muted small">{{ line.subjects }}</span>
+                                </div>
+                            </div>
                             <ClassSubjectManager v-if="classSubjects.enabled.value" :base="subjectBase" @changed="subjectsChanged" />
                         </template>
                     </GroupRosterTab>
@@ -112,6 +118,7 @@
                          this page's copy of the roster. -->
                     <GroupGradesTab
                         v-else-if="activeTab === 'grades'"
+                        :subjects-enabled="classSubjects.enabled.value"
                         :groupId="groupId"
                         :masjidId="masjidStore.masjid?.id ?? 0"
                     />
@@ -172,6 +179,7 @@ import GroupStoryTab from './groups/GroupStoryTab.vue';
 import GroupPointsTab from './groups/GroupPointsTab.vue';
 import GroupLettersTab from './groups/GroupLettersTab.vue';
 import GroupLessonPlansTab from './groups/GroupLessonPlansTab.vue';
+import { classTeacherLines } from '@/core/helpers/classTeachers';
 import GroupGradesTab from './groups/GroupGradesTab.vue';
 import GroupHifzTab from './groups/GroupHifzTab.vue';
 import GroupThreadsTab from './groups/GroupThreadsTab.vue';

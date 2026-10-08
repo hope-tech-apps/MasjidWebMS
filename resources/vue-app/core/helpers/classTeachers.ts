@@ -37,8 +37,17 @@ export function subjectsText(subjects: GroupTeacher['subjects'] | undefined): st
  * came without the key (a group answered by store or update, which do not carry
  * it) has no lines, and the screen draws that as a dash.
  */
-export function classTeacherLines(teachers: readonly GroupTeacher[] | null | undefined): ClassTeacherLine[] {
+export function classTeacherLines(teachers: readonly GroupTeacher[] | null | undefined, enabled = false): ClassTeacherLine[] {
     if (!Array.isArray(teachers)) return [];
 
-    return teachers.map((t) => ({ id: t.id, name: String(t.name ?? '').trim(), subjects: subjectsText(t.subjects) }));
+    return teachers.map((t) => ({ id: t.id, name: String(t.name ?? '').trim(), subjects: enabled ? classSubjectNamesText(t) : subjectsText(t.subjects) }));
+}
+
+/** Ordered ON assignment names. Empty IDs are no subjects; legacy labels remain independent. */
+export function classSubjectNamesText(assignment: { class_subject_ids?: number[] | null; class_subject_names?: { id: number; name: string; position: number; hidden_at?: string | null }[] | null }): string {
+    if (assignment.class_subject_ids === null) return ALL_SUBJECTS_TEXT;
+    if (!assignment.class_subject_ids?.length) return 'No subjects';
+    const words = [...(assignment.class_subject_names ?? [])].sort((a, b) => a.position - b.position || a.id - b.id)
+        .map(s => s.name + (s.hidden_at ? ' (hidden)' : ''));
+    return words.length ? words.join(', ') : 'Subjects unavailable';
 }

@@ -151,18 +151,19 @@ class TeachersController extends Controller
         $groups = Group::whereIn('id', $rows->pluck('group_id')->unique())->get()->keyBy('id');
 
         $subjectsOn = $this->subjectsOn();
-        $teachers = $rows->pluck('user_id')->unique()->values()->map(function ($userId) use ($rows, $users, $groups, $seen, $subjectsOn) {
+        $catalog = \App\Support\ClassSubjectStaffDisplay::catalog($groups->modelKeys());
+        $teachers = $rows->pluck('user_id')->unique()->values()->map(function ($userId) use ($rows, $users, $groups, $seen, $subjectsOn, $catalog) {
             $user = $users->get($userId);
             if ($user === null) {
                 return null;
             }
 
             $classes = $rows->where('user_id', $userId)
-                ->map(function (GroupStaff $r) use ($groups, $subjectsOn) {
+                ->map(function (GroupStaff $r) use ($groups, $subjectsOn, $catalog) {
                     $g = $groups->get($r->group_id);
 
                     // null = every subject; see GroupStaff::SUBJECTS.
-                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null] + ($subjectsOn ? self::subjectIdFields($r) : []);
+                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null] + ($subjectsOn ? \App\Support\ClassSubjectStaffDisplay::fields($r, $catalog) : []);
                 })
                 ->filter()
                 ->values();
@@ -1263,6 +1264,8 @@ class TeachersController extends Controller
             ->get(['group_id', 'subjects', 'class_subject_ids', 'class_subjects_mapped_at', 'class_subject_ids_edited_at'])
             ->keyBy('group_id');
 
+        $catalog = \App\Support\ClassSubjectStaffDisplay::catalog($classes->modelKeys());
+
         return [
             'id' => $userId,
             'name' => $name,
@@ -1271,7 +1274,7 @@ class TeachersController extends Controller
                 'id' => (int) $g->id,
                 'name' => $g->name,
                 'subjects' => $rows->get((int) $g->id)?->subjects ?: null,
-            ] + ($subjectsOn ? self::subjectIdFields($rows->get((int) $g->id)) : []))->values(),
+            ] + ($subjectsOn ? \App\Support\ClassSubjectStaffDisplay::fields($rows->get((int) $g->id), $catalog) : []))->values(),
         ];
     }
 

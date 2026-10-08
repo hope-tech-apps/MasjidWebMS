@@ -6,6 +6,7 @@ import * as ApiErrors from '../core/services/ApiErrors.ts';
 import * as classTeachers from '../core/helpers/classTeachers.ts';
 import * as teacherForm from '../core/helpers/teacherForm.ts';
 import * as lastOpened from '../core/helpers/lastOpened.ts';
+import { realClassModules } from './support/classSubjectModules.ts';
 import { click, flush, loadTs, mountSfc, Node, select, submit, type } from './support/mountSfc.ts';
 
 const vue = createRequire(import.meta.url)('vue');
@@ -54,7 +55,8 @@ async function screen(file: string, term = 'Classrooms', deletion = 'success') {
         '@/composables/useMinorUnits': { formatMinor: () => '' },
         sweetalert2: { default: { fire: async (options: any) => { alerts.push(options); return { isConfirmed: true }; } } },
     };
-    const mounted = await mountSfc(`views/dashboard/${file}.vue`, {}, modules);
+    const mounted = await mountSfc(`views/dashboard/${file}.vue`, {}, file === 'TeachersView'
+        ? await realClassModules(`views/dashboard/${file}.vue`, { ...modules, '@/core/services/ApiService': { default: {} } }) : modules);
     await flush();
     return { mounted, sent, alerts };
 }

@@ -17,6 +17,7 @@ export type TeacherClass = {
     id: number;
     name: string;
     class_subject_ids?: number[] | null;
+    class_subject_names?: { id: number; name: string; position: number; hidden_at: string | null }[] | null;
 };
 
 /** One teacher row as the admin index returns it. */

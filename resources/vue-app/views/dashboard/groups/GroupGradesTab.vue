@@ -1,5 +1,5 @@
 <template>
-    <div>
+    <div :class="{ 'office-subject-grades': subjectsEnabled }">
         <!-- READ ONLY for work and marks, and it says so once, at the top. An
              office screen that looks like the teacher's marking screen but
              silently drops the save is worse than one that never offered the
@@ -298,7 +298,7 @@ import { computed, onMounted, ref } from 'vue';
  * "Not marked", missing work reads "Missing" and excused work reads "Excused" —
  * three different facts that a single dash would flatten into one.
  */
-const props = defineProps<{ groupId: number; masjidId: number }>();
+const props = defineProps<{ groupId: number; masjidId: number; subjectsEnabled?: boolean }>();
 
 const base = computed(() => `/api/admin/masjids/${props.masjidId}/groups/${props.groupId}`);
 
@@ -474,3 +474,17 @@ const openStudent = async (s: any) => {
 
 onMounted(() => load());
 </script>
+
+
+<style scoped>
+.office-subject-grades { min-width: 0; max-width: 100%; }
+.office-subject-grades .flex-grow-1 { min-width: 0; }
+.office-subject-grades .badge { white-space: normal; overflow-wrap: anywhere; }
+.office-subject-grades .table-responsive { max-width: 100%; }
+@media (max-width: 575px) {
+    .office-subject-grades .list-group-item { flex-wrap: wrap; }
+    .office-subject-grades .row { margin-inline: 0; }
+    .office-subject-grades .form-control { max-width: 100%; }
+    .office-subject-grades .d-flex { flex-wrap: wrap; }
+}
+</style>

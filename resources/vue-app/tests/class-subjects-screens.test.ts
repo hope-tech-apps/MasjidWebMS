@@ -1303,3 +1303,52 @@ for (const scenario of ['limited named', 'unrestricted named', 'hidden named', '
         } finally { screen.unmount(); }
     });
 }
+
+for (const count of [0, 2]) test(`current-grade merge says what changed when count is ${count}`, async () => {
+    const { screen } = await setup('office', { write: (method: string, url: string) => url.endsWith('/add-for-current-grades') ? ok(subjects, { subjects_added: count }) : undefined });
+    try {
+        click(exactButton(screen, 'Add subjects for current grades')); await flush(12);
+        assert.ok(screen.text().includes(count === 0 ? 'This class already has the subjects for its current grades.' : 'Subjects for current grades added.'));
+    } finally { screen.unmount(); }
+});
+
+test('office ON roster staff labels use current limits including hidden names; OFF has no added staff panel', async () => {
+    const teachers = [
+        { id: 7, name: 'All Teacher', class_subject_ids: null, class_subject_names: null },
+        { id: 8, name: 'None Teacher', class_subject_ids: [], class_subject_names: [] },
+        { id: 9, name: 'Limited Teacher', class_subject_ids: [104], class_subject_names: [{ id: 104, name: 'Healthful Living', position: 0, hidden_at: null }] },
+        { id: 10, name: 'Hidden Teacher', class_subject_ids: [103], class_subject_names: [{ id: 103, name: 'Reading', position: 1, hidden_at: '2026-10-08' }] },
+    ];
+    for (const flag of [true, false]) {
+        const { screen } = await setup('office', { flag, data: { teachers } });
+        try {
+            if (flag) for (const words of ['All Teacher', 'All subjects', 'None Teacher', 'No subjects', 'Healthful Living', 'Reading (hidden)']) assert.ok(screen.text().includes(words), words);
+            else assert.ok(!screen.text().includes('Hidden Teacher'));
+        } finally { screen.unmount(); }
+    }
+});
+
+test('office Grades has an ON-only shrinkable layout hook for narrow phones', async () => {
+    for (const flag of [true, false]) {
+        const { screen } = await setup('office', { flag, width: 320, query: { tab: 'grades' } });
+        try { assert.equal(screen.all((n: Node) => String(n.props.class ?? '').includes('office-subject-grades')).length, flag ? 1 : 0); }
+        finally { screen.unmount(); }
+    }
+    const source = readFileSync(new URL('../views/dashboard/groups/GroupGradesTab.vue', import.meta.url), 'utf8');
+    assert.match(source, /\.office-subject-grades[^}]*min-width: 0/);
+    assert.match(source, /\.office-subject-grades[^}]*white-space: normal/);
+});
+
+for (const count of [0, 1]) test(`merge reload refusal retains the resolved success sentence for count ${count}`, async () => {
+    let merged = false;
+    const { screen } = await setup('office', {
+        write: (_method: string, url: string) => { if (url.endsWith('/add-for-current-grades')) { merged = true; return ok(subjects, { subjects_added: count }); } },
+        read: (url: string) => { if (merged && url.endsWith('/subjects')) throw httpError(503, { message: 'The catalog is temporarily unavailable.' }); },
+    });
+    try {
+        click(exactButton(screen, 'Add subjects for current grades')); await flush(12);
+        assert.ok(screen.text().includes(count === 0 ? 'This class already has the subjects for its current grades.' : 'Subjects for current grades added.'));
+        assert.match(screen.text(), /The list could not reload\. The catalog is temporarily unavailable\./);
+        assert.doesNotMatch(screen.text(), /response =>|subjects_added|function/);
+    } finally { screen.unmount(); }
+});

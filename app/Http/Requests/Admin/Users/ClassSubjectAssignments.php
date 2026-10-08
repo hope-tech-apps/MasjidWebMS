@@ -63,7 +63,7 @@ trait ClassSubjectAssignments
                 $group = Group::where('kind', 'class')->find($groupId);
                 if (! \App\Support\SubjectFence::validStoredIds($ids) || $group === null || ! in_array((int) $groupId, array_map('intval', $this->input('class_ids', [])), true)
                     || ($ids !== null && count($ids) !== ClassSubject::where('group_id', $groupId)->whereIn('id', $ids)->count())) {
-                    $validator->errors()->add('class_subject_ids', 'Choose subjects belonging to the named class in this school.');
+                    $validator->errors()->add('class_subject_ids.'.$groupId, 'Choose subjects belonging to the named class in this school.');
                 }
             }
         });
@@ -74,7 +74,7 @@ trait ClassSubjectAssignments
     {
         $given = $this->validated('class_subject_ids');
         if (! is_array($given) || ! array_key_exists($group->id, $given)) {
-            throw ValidationException::withMessages(['class_subject_ids' => ['State the subjects for every new class explicitly; choose all subjects explicitly when intended.']]);
+            throw ValidationException::withMessages(['class_subject_ids.'.$group->id => ['State the subjects for every new class explicitly; choose all subjects explicitly when intended.']]);
         }
         $ids = $given[$group->id];
         return ['class_subject_ids' => $ids === null ? null : array_map('intval', $ids)];

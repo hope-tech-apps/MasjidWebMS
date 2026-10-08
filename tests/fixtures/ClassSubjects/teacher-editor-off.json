@@ -1,0 +1,200 @@
+{
+    "teachers": {
+        "status": "success",
+        "data": [
+            {
+                "id": 1,
+                "name": "Practice Teacher",
+                "email": "teacher@example.invalid",
+                "phone": "+15555550101",
+                "last_seen_at": null,
+                "invited": true,
+                "classes": [
+                    {
+                        "id": 1,
+                        "name": "Grade 2",
+                        "subjects": [
+                            "arabic"
+                        ]
+                    }
+                ]
+            }
+        ],
+        "meta": {
+            "subjects": [
+                {
+                    "value": "quran",
+                    "label": "Qur'an"
+                },
+                {
+                    "value": "arabic",
+                    "label": "Arabic"
+                },
+                {
+                    "value": "islamic_studies",
+                    "label": "Islamic Studies"
+                }
+            ],
+            "classes": [
+                {
+                    "id": 1,
+                    "name": "Grade 2"
+                }
+            ]
+        }
+    },
+    "teachers/1": {
+        "status": "success",
+        "data": {
+            "id": 1,
+            "name": "Practice Teacher",
+            "email": "teacher@example.invalid",
+            "phone": "+15555550101",
+            "shared": false,
+            "last_seen_at": null,
+            "class_ids": [
+                1
+            ],
+            "class_subjects": {
+                "1": [
+                    "arabic"
+                ]
+            }
+        },
+        "meta": {
+            "subjects": [
+                {
+                    "value": "quran",
+                    "label": "Qur'an"
+                },
+                {
+                    "value": "arabic",
+                    "label": "Arabic"
+                },
+                {
+                    "value": "islamic_studies",
+                    "label": "Islamic Studies"
+                }
+            ]
+        }
+    },
+    "groups": {
+        "status": "success",
+        "data": {
+            "current_page": 1,
+            "data": [
+                {
+                    "id": 1,
+                    "masjid_id": 1,
+                    "name": "Grade 2",
+                    "slug": "grade-2",
+                    "kind": "class",
+                    "description": null,
+                    "is_active": true,
+                    "starts_on": null,
+                    "ends_on": null,
+                    "created_at": "2026-10-08T12:00:00.000000Z",
+                    "updated_at": "2026-10-08T12:00:00.000000Z",
+                    "deleted_at": null,
+                    "arabic_stage": null,
+                    "position": null,
+                    "points_period": null,
+                    "participants_count": 0,
+                    "teachers": [
+                        {
+                            "id": 1,
+                            "name": "Practice Teacher",
+                            "subjects": [
+                                {
+                                    "value": "arabic",
+                                    "label": "Arabic"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "first_page_url": "http://localhost/api/admin/masjids/1/groups?page=1",
+            "from": 1,
+            "last_page": 1,
+            "last_page_url": "http://localhost/api/admin/masjids/1/groups?page=1",
+            "links": [
+                {
+                    "url": null,
+                    "label": "&laquo; Previous",
+                    "page": null,
+                    "active": false
+                },
+                {
+                    "url": "http://localhost/api/admin/masjids/1/groups?page=1",
+                    "label": "1",
+                    "page": 1,
+                    "active": true
+                },
+                {
+                    "url": null,
+                    "label": "Next &raquo;",
+                    "page": null,
+                    "active": false
+                }
+            ],
+            "next_page_url": null,
+            "path": "http://localhost/api/admin/masjids/1/groups",
+            "per_page": 15,
+            "prev_page_url": null,
+            "to": 1,
+            "total": 1
+        },
+        "meta": {
+            "group_label": "Classrooms",
+            "kinds": [
+                "general",
+                "class",
+                "halaqa",
+                "team"
+            ],
+            "roles": [
+                "leader",
+                "member",
+                "guardian"
+            ]
+        }
+    },
+    "groups/1": {
+        "status": "success",
+        "data": {
+            "id": 1,
+            "masjid_id": 1,
+            "name": "Grade 2",
+            "slug": "grade-2",
+            "kind": "class",
+            "description": null,
+            "is_active": true,
+            "starts_on": null,
+            "ends_on": null,
+            "created_at": "2026-10-08T12:00:00.000000Z",
+            "updated_at": "2026-10-08T12:00:00.000000Z",
+            "deleted_at": null,
+            "arabic_stage": null,
+            "position": null,
+            "points_period": null,
+            "unread_messages": 0,
+            "memberships": []
+        },
+        "meta": {
+            "group_label": "Classrooms",
+            "kinds": [
+                "general",
+                "class",
+                "halaqa",
+                "team"
+            ],
+            "roles": [
+                "leader",
+                "member",
+                "guardian"
+            ]
+        }
+    },
+    "staff_csv": "﻿\"Row id\",\"Class id\",\"Staff user id\",\"Staff name\",Role,\"Assigned at\"\n"
+}

@@ -80,7 +80,7 @@
                                             :key="cls.id"
                                             class="badge bg-light text-dark border"
                                         >
-                                            {{ cls.name }}
+                                            {{ cls.name }}<template v-if="classSubjectsEnabled"> · {{ classSubjectNamesText(cls) }}</template>
                                         </span>
                                     </div>
                                     <span v-else class="text-muted small">No {{ classesTerm.toLowerCase() }} assigned</span>
@@ -261,7 +261,11 @@
                                                      the whole class — what a full-time teacher is —
                                                      so an admin who adds a teacher and skips this
                                                      gets exactly what they always got. -->
-                                                <div v-if="form.class_ids.includes(option.id)"
+                                                <TeacherClassSubjects v-if="classSubjectsEnabled && form.class_ids.includes(option.id)"
+                                                    :class-id="option.id" :name="option.name" :base="`/api/admin/masjids/${masjidStore.masjid?.id}`"
+                                                    :model-value="form.class_subject_ids?.[option.id]" :cache="subjectCatalogs" :error="subjectErrors[option.id]"
+                                                    @update:model-value="chooseClassSubjects(option.id, $event)" />
+                                                <div v-if="!classSubjectsEnabled && form.class_ids.includes(option.id)"
                                                      class="d-flex flex-wrap gap-3 ms-4 mt-1 mb-2 small">
                                                     <div v-for="subj in subjectOptions" :key="subj.value" class="form-check form-check-inline m-0">
                                                         <input class="form-check-input" type="checkbox"
@@ -338,7 +342,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount, computed, watch } from 'vue';
+import { ref, onBeforeMount, onBeforeUnmount, computed, watch } from 'vue';
+import TeacherClassSubjects from '@/components/classes/TeacherClassSubjects.vue';
+import { classSubjectNamesText } from '@/core/helpers/classTeachers';
+import type { ClassSubject } from '@/core/types/data/masjid-related/ClassSubject';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { Teacher, TeacherClass, TeacherPayload, TeacherSubject, TeacherUpdatePayload } from '@/core/types/data/masjid-related/Teacher';
 import { useTeachersStore } from '@/stores/masjid/teachersStore';
@@ -399,7 +406,23 @@ const deleting = ref(false);
 /** The row whose invite is being re-sent, so only its button spins. */
 const resendingId = ref<number | null>(null);
 
-const emptyForm = (): TeacherPayload => ({ name: '', email: '', phone: '', class_ids: [], class_subjects: {} });
+const classSubjectsEnabled = computed(() => masjidStore.masjid?.capabilities?.class_subjects === true);
+const subjectCatalogs = ref<Record<number, { subjects?: ClassSubject[]; loading?: boolean; error?: string }>>({});
+const subjectErrors = ref<Record<number, string>>({});
+const changedSubjectClasses = ref(new Set<number>());
+let subjectEditorVersion = 0;
+onBeforeUnmount(() => { subjectEditorVersion++; });
+const resetSubjectEditor = () => { subjectEditorVersion++; subjectCatalogs.value = {}; subjectErrors.value = {}; changedSubjectClasses.value = new Set(); };
+const chooseClassSubjects = (id: number, ids: number[] | null) => {
+    form.value.class_subject_ids = { ...form.value.class_subject_ids, [id]: ids };
+    changedSubjectClasses.value.add(id); delete subjectErrors.value[id];
+};
+/** Only explicit office changes are sent; omitted existing classes retain their stored limits. */
+const subjectChoicePayload = () => classSubjectsEnabled.value
+    ? { class_subject_ids: Object.fromEntries(form.value.class_ids.filter(id => changedSubjectClasses.value.has(id)).map(id => [id, form.value.class_subject_ids?.[id]])) }
+    : { class_subjects: form.value.class_subjects };
+
+const emptyForm = (): TeacherPayload => ({ name: '', email: '', phone: '', class_ids: [], ...(classSubjectsEnabled.value ? { class_subject_ids: {} } : { class_subjects: {} }) });
 
 /**
  * The subjects a class assignment can be narrowed to — GroupStaff::SUBJECTS, in
@@ -448,7 +471,7 @@ const pickerState = computed<TeacherPickerState>(() =>
 
 const canSubmit = computed<boolean>(() =>
     // Email is required to CREATE, but is fixed (not sent) when editing.
-    !!form.value.name && (isEditing.value || !!form.value.email) && form.value.class_ids.length > 0
+    !!form.value.name && (isEditing.value || !!form.value.email) && form.value.class_ids.length > 0 && (!classSubjectsEnabled.value || form.value.class_ids.every(id => Object.prototype.hasOwnProperty.call(form.value.class_subject_ids ?? {}, id)))
 );
 
 // Lifecycle
@@ -490,6 +513,7 @@ const loadClasses = async () => {
 };
 
 const openCreateModal = () => {
+    resetSubjectEditor();
     editingId.value = null;
     loadingTeacher.value = false;
     sharedTeacher.value = false;
@@ -509,6 +533,9 @@ const openCreateModal = () => {
  * the detail read ticks the multiselect; email is shown disabled.
  */
 const openEditModal = async (teacher: Teacher) => {
+    resetSubjectEditor();
+    const version = subjectEditorVersion;
+    const current = () => !classSubjectsEnabled.value || (version === subjectEditorVersion && showFormModal.value);
     editingId.value = teacher.id;
     sharedTeacher.value = false;
     formError.value = '';
@@ -523,6 +550,7 @@ const openEditModal = async (teacher: Teacher) => {
     loadingTeacher.value = true;
     try {
         const detail = await teachersStore.fetchTeacher(teacher.id);
+        if (!current()) return;
         sharedTeacher.value = detail.shared === true;
         form.value = {
             name: detail.name,
@@ -530,10 +558,11 @@ const openEditModal = async (teacher: Teacher) => {
             phone: detail.phone ?? '',
             class_ids: Array.isArray(detail.class_ids) ? [...detail.class_ids] : [],
             // Round-tripped as stored, so saving a renamed teacher keeps what they teach.
-            class_subjects: { ...((detail as any).class_subjects ?? {}) }
+            ...(classSubjectsEnabled.value ? { class_subject_ids: { ...detail.class_subject_ids } } : { class_subjects: { ...((detail as any).class_subjects ?? {}) } })
         };
 
     } catch (error) {
+        if (!current()) return;
         // Couldn't pre-fill — close and tell the admin rather than show a stale form.
         showFormModal.value = false;
         editingId.value = null;
@@ -543,11 +572,12 @@ const openEditModal = async (teacher: Teacher) => {
             text: apiErrorText(error, 'Failed to load this teacher for editing.')
         });
     } finally {
-        loadingTeacher.value = false;
+        if (current()) loadingTeacher.value = false;
     }
 };
 
 const closeFormModal = () => {
+    if (classSubjectsEnabled.value) subjectEditorVersion++;
     showFormModal.value = false;
     editingId.value = null;
     loadingTeacher.value = false;
@@ -559,6 +589,7 @@ const closeFormModal = () => {
  * shown, so a refusal can never end with the spinner stopping and nothing said.
  */
 const applyFieldErrors = (error: any): boolean => {
+    if (classSubjectsEnabled.value) return applyClassSubjectErrors(error);
     if (error?.response?.status !== 422) return false;
 
     const sorted = sortTeacherFormErrors(error?.response?.data?.data);
@@ -568,11 +599,34 @@ const applyFieldErrors = (error: any): boolean => {
     return Object.keys(sorted.fields).length > 0 || sorted.banner !== '';
 };
 
+const applyClassSubjectErrors = (error: any): boolean => {
+    if (error?.response?.status !== 422) return false;
+
+    let bag = error?.response?.data?.data ?? error?.response?.data?.errors;
+    if (classSubjectsEnabled.value && bag && typeof bag === 'object') {
+        bag = { ...bag };
+        for (const [key, messages] of Object.entries(bag)) {
+            if (!key.startsWith('class_subject_ids')) continue;
+            const classId = Number(key.split('.')[1]);
+            const ids = Number.isInteger(classId) && form.value.class_ids.includes(classId) ? [classId] : form.value.class_ids;
+            const words = (Array.isArray(messages) ? messages : [messages]).map(String).join(' ');
+            for (const id of ids) subjectErrors.value[id] = [subjectErrors.value[id], words].filter(Boolean).join(' ');
+            if (ids.length) delete bag[key];
+        }
+    }
+    const sorted = sortTeacherFormErrors(bag);
+    fieldErrors.value = sorted.fields;
+    formError.value = sorted.banner;
+
+    return Object.keys(sorted.fields).length > 0 || sorted.banner !== '' || Object.keys(subjectErrors.value).length > 0;
+};
+
 const submitForm = async () => {
     if (!canSubmit.value || loadingTeacher.value) return;
     saving.value = true;
     formError.value = '';
     fieldErrors.value = {};
+    subjectErrors.value = {};
     try {
         if (isEditing.value && editingId.value !== null) {
             // Edit: email is fixed and not sent; class_ids is the full new set.
@@ -582,7 +636,7 @@ const submitForm = async () => {
                 // every school holds; the server refuses any value, so none is sent.
                 phone: sharedTeacher.value ? '' : form.value.phone,
                 class_ids: form.value.class_ids,
-                class_subjects: form.value.class_subjects
+                ...subjectChoicePayload()
             };
             const updated = await teachersStore.updateTeacher(editingId.value, payload);
             closeFormModal();
@@ -595,7 +649,7 @@ const submitForm = async () => {
                 showConfirmButton: false
             });
         } else {
-            const created = await teachersStore.createTeacher(form.value);
+            const created = await teachersStore.createTeacher(classSubjectsEnabled.value ? { name: form.value.name, email: form.value.email, phone: form.value.phone, class_ids: form.value.class_ids, ...subjectChoicePayload() } : form.value);
             closeFormModal();
             await loadData();
             Swal.fire({
@@ -686,6 +740,14 @@ const resendInvite = async (teacher: Teacher) => {
         resendingId.value = null;
     }
 };
+
+// Dropped classes must never send restrictions; reticking asks for a fresh explicit choice.
+watch(() => [...form.value.class_ids], (ids, before) => {
+    if (!classSubjectsEnabled.value) return;
+    for (const id of before) if (!ids.includes(id)) {
+        delete form.value.class_subject_ids?.[id]; changedSubjectClasses.value.delete(id); delete subjectErrors.value[id];
+    }
+});
 
 // Lock body scroll while either modal (form or remove-confirm) is open.
 watch(

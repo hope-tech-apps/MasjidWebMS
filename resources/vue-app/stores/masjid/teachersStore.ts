@@ -130,7 +130,9 @@ export const useTeachersStore = defineStore('teachersStore', () => {
         // Only when the form speaks about subjects. The server leaves existing
         // assignments alone when the key is absent, so an older screen cannot
         // widen a Sunday School teacher back to every subject by omission.
-        if (payload.class_subjects) body.class_subjects = payload.class_subjects;
+        if (masjidStore.masjid.capabilities?.class_subjects === true) {
+            if (payload.class_subject_ids) body.class_subject_ids = payload.class_subject_ids;
+        } else if (payload.class_subjects) body.class_subjects = payload.class_subjects;
         // Phone is optional; omit it entirely rather than send an empty string
         // (an empty `phone` can trip a `nullable` + format rule server-side).
         if (payload.phone) body.phone = payload.phone;
@@ -189,7 +191,9 @@ export const useTeachersStore = defineStore('teachersStore', () => {
         // Only when the form speaks about subjects. The server leaves existing
         // assignments alone when the key is absent, so an older screen cannot
         // widen a Sunday School teacher back to every subject by omission.
-        if (payload.class_subjects) body.class_subjects = payload.class_subjects;
+        if (masjidStore.masjid.capabilities?.class_subjects === true) {
+            if (payload.class_subject_ids) body.class_subject_ids = payload.class_subject_ids;
+        } else if (payload.class_subjects) body.class_subjects = payload.class_subjects;
         // Phone is optional; omit it rather than send an empty string.
         if (payload.phone) body.phone = payload.phone;
 

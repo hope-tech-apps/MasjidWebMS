@@ -158,19 +158,21 @@ const fromCurriculum = (event: Event) => {
     const name = (event.target as HTMLSelectElement).value;
     if (name) { form.value.name = name; form.value.guide_subject = name; }
 };
-const mutate = async (write: () => Promise<unknown>, words: string, after?: () => void) => {
+const mutate = async (write: () => Promise<unknown>, words: string | ((response: any) => string), after?: () => void) => {
     if (saving.value || !alive) return;
     saving.value = true; error.value = ''; success.value = '';
     let wrote = false;
+    let savedWords = typeof words === 'string' ? words : '';
     try {
-        await write(); wrote = true;
+        const response = await write(); wrote = true;
+        savedWords = typeof words === 'function' ? words(response) : words;
         if (!alive) return;
         after?.();
         await reload();
-        if (alive) success.value = words;
+        if (alive) success.value = savedWords;
     } catch (failure) {
         if (alive) error.value = wrote
-            ? `${words} The list could not reload. ${apiErrorText(failure, 'Try again.')}`
+            ? `${savedWords} The list could not reload. ${apiErrorText(failure, 'Try again.')}`
             : apiErrorText(failure, 'The subject could not be changed.');
     } finally { if (alive) saving.value = false; }
 };
@@ -197,7 +199,8 @@ const move = (index: number, direction: number) => {
 };
 const hide = (subject: ClassSubject) => mutate(() => api().hide(subject.id), 'Subject hidden. All its work is kept.', () => { removing.value = null; });
 const restore = (subject: ClassSubject) => mutate(() => api().restore(subject.id), 'Subject brought back.');
-const addCurrentGrades = () => mutate(() => api().addCurrentGrades(), 'Subjects for current grades added.');
+const addCurrentGrades = () => mutate(() => api().addCurrentGrades(), response => response?.data?.meta?.subjects_added === 0
+    ? 'This class already has the subjects for its current grades.' : 'Subjects for current grades added.');
 onMounted(load);
 onBeforeUnmount(() => { alive = false; ++generation; });
 </script>

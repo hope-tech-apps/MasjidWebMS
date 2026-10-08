@@ -111,6 +111,7 @@ export type GroupTeacher = {
     name: string;
     subjects: { value: string; label: string }[] | null;
     class_subject_ids?: number[] | null;
+    class_subject_names?: { id: number; name: string; position: number; hidden_at: string | null }[] | null;
 };
 
 export type Group = ClassSubjectFields & {
