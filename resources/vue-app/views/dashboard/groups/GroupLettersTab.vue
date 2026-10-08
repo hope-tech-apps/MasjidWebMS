@@ -340,11 +340,13 @@ onMounted(async () => {
  * the roster: a child shown as open with the previous child's letters, or the
  * previous TRACK's letters, under their name is worse than not opening at all.
  */
-const open = async (student: any, which: string = alphabet.value) => {
+const open = async (student: any, which: string = alphabet.value, preserveEditor = false) => {
     selected.value = student;
-    if (props.fixedAlphabet) tracker.value = null;
-    openTile.value = null;
-    letterError.value = '';
+    if (!preserveEditor) {
+        if (props.fixedAlphabet) tracker.value = null;
+        openTile.value = null;
+        letterError.value = '';
+    }
 
     const keepResponse = keepResponseFor(() => `${alphabet.value}:${selected.value?.membership_id}`, 'open');
     try {
@@ -424,13 +426,24 @@ const setStage = async (stage: string) => {
     savingStage.value = true;
     stageNote.value = '';
     stageFailed.value = false;
-    const save = saveContext(() => alphabet.value, 'setStage');
+    const save = saveContext(() => alphabet.value, 'setStage', {
+        key: () => `letters-overview:${alphabet.value}`,
+        refresh: () => {
+            loadOverview().catch((error) => {
+                stageFailed.value = true;
+                stageNote.value = error?.response?.data?.message ?? 'The letters for this class could not be loaded. Reload the page to try again.';
+            });
+        },
+    });
     try {
         const res = await ApiService.put(`${base.value}/letters/stage` as any, { stage });
         save.saved();
-        if (props.fixedAlphabet) keepResponseFor.invalidate('loadOverview');
-        if (save.editor()) overview.value = res.data?.data ?? overview.value;
-        stageNote.value = res.data?.message ?? '';
+        const applySnapshot = save.snapshot(!!res.data?.data);
+        if (props.fixedAlphabet && applySnapshot) keepResponseFor.invalidate('loadOverview');
+        if (applySnapshot) {
+            overview.value = res.data?.data ?? overview.value;
+            stageNote.value = res.data?.message ?? '';
+        }
         // A narrower stage hides later work rather than deleting it, so a child
         // already open must be re-read against the new scope.
         if (save.reconcile() && selected.value) await open(selected.value);
@@ -457,15 +470,19 @@ const setStage = async (stage: string) => {
 const advance = async (drill: any) => {
     marking.value = drill.id;
     letterError.value = '';
-    const save = saveContext(() => `${alphabet.value}:${selected.value?.membership_id}`, 'advance');
+    const save = saveContext(() => `${alphabet.value}:${selected.value?.membership_id}`, 'advance', {
+        key: () => `letters:${alphabet.value}:${selected.value?.membership_id}`,
+        refresh: () => { if (selected.value) open(selected.value, alphabet.value, true); },
+    });
     try {
         const res = await ApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters` as any,
             { drill_id: drill.id, status: NEXT[drill.status] ?? 'learning', alphabet: alphabet.value }
         );
         save.saved();
-        if (props.fixedAlphabet && save.editor()) keepResponseFor.invalidate('open');
-        if (save.editor()) tracker.value = res.data?.data ?? tracker.value;
+        const applySnapshot = save.snapshot(!!res.data?.data);
+        if (props.fixedAlphabet && applySnapshot) keepResponseFor.invalidate('open');
+        if (applySnapshot) tracker.value = res.data?.data ?? tracker.value;
         if (save.reconcile()) await loadOverview();
     } catch (e: any) {
         if (!save.editor()) {

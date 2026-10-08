@@ -489,7 +489,10 @@ const submitSkill = async () => {
         await behaviorStore.createSkill(skillForm.value);
         save.saved();
         if (save.editor()) skillForm.value = emptySkillForm();
-        if (save.reconcile()) await loadSkills();
+        if (save.reconcile()) {
+            if (props.classSubjectsEnabled) await loadSkills();
+            else await behaviorStore.fetchSkills();
+        }
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to create the skill.') });
     } finally {

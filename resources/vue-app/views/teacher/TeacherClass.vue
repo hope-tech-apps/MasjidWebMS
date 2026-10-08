@@ -4669,13 +4669,18 @@ const switchAlphabet = async (next: string) => {
     if (selected.value) await openLetters(selected.value);
 };
 
+const lettersSnapshot = () => ({
+    key: () => `letters:${lettersAlphabet.value}:${selected.value?.membership_id}`,
+    refresh: () => { if (activeTab.value === 'letters' && selected.value) openLetters(selected.value, true); },
+});
+
 const advance = async (drill: any) => {
     if (!selected.value) return;
     marking.value = drill.id;
     letterError.value = '';
     const savedAlphabet = lettersAlphabet.value;
     const savedStudent = selected.value?.membership_id;
-    const save = classSubjects.saveContext(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'advance');
+    const save = classSubjects.saveContext(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'advance', lettersSnapshot());
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters`,
@@ -4689,10 +4694,11 @@ const advance = async (drill: any) => {
             loadLettersOverview();
             if (!save.editor() && selected.value?.membership_id === savedStudent) openLetters(selected.value, true);
         }
+        const applySnapshot = save.snapshot(!!res.data?.data);
         if (!save.editor()) return;
-        if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('openLetters');
+        if (applySnapshot && classSubjects.enabled.value) classSubjects.keepRead.invalidate('openLetters');
         // Marking returns the whole tracker, so totals and tile colour move together.
-        tracker.value = res.data?.data ?? tracker.value;
+        if (applySnapshot) tracker.value = res.data?.data ?? tracker.value;
     } catch (e: any) {
         if (!save.editor()) {
             Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(e, 'That did not save. Check your connection and tap again.') });
@@ -4729,7 +4735,7 @@ const masterAll = async (scope: 'stage' | 'everything' = 'stage') => {
     masterAllNote.value = '';
     const savedAlphabet = lettersAlphabet.value;
     const savedStudent = selected.value?.membership_id;
-    const save = classSubjects.saveContext(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'masterAll');
+    const save = classSubjects.saveContext(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'masterAll', lettersSnapshot());
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters/master-all`,
@@ -4740,9 +4746,10 @@ const masterAll = async (scope: 'stage' | 'everything' = 'stage') => {
             loadLettersOverview();
             if (!save.editor() && selected.value?.membership_id === savedStudent) openLetters(selected.value, true);
         }
+        const applySnapshot = save.snapshot(!!res.data?.data);
         if (!save.editor()) return;
-        if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('openLetters');
-        tracker.value = res.data?.data ?? tracker.value;
+        if (applySnapshot && classSubjects.enabled.value) classSubjects.keepRead.invalidate('openLetters');
+        if (applySnapshot) tracker.value = res.data?.data ?? tracker.value;
         masterAllNote.value = res.data?.message ?? 'Marked mastered.';
         confirmMasterAll.value = false;
     } catch (e: any) {
@@ -4790,7 +4797,7 @@ const masterGroup = async (group: any) => {
     groupError.value = '';
     const savedAlphabet = lettersAlphabet.value;
     const savedStudent = selected.value?.membership_id;
-    const save = classSubjects.saveContext(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'masterGroup');
+    const save = classSubjects.saveContext(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'masterGroup', lettersSnapshot());
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters/master-all`,
@@ -4801,9 +4808,10 @@ const masterGroup = async (group: any) => {
             loadLettersOverview();
             if (!save.editor() && selected.value?.membership_id === savedStudent) openLetters(selected.value, true);
         }
+        const applySnapshot = save.snapshot(!!res.data?.data);
         if (!save.editor()) return;
-        if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('openLetters');
-        tracker.value = res.data?.data ?? tracker.value;
+        if (applySnapshot && classSubjects.enabled.value) classSubjects.keepRead.invalidate('openLetters');
+        if (applySnapshot) tracker.value = res.data?.data ?? tracker.value;
         masterAllNote.value = res.data?.message ?? 'Marked mastered.';
         confirmGroup.value = null;
     } catch (e: any) {
@@ -4830,13 +4838,24 @@ watch([selected, lettersAlphabet], () => {
 const setStage = async (stage: string) => {
     savingStage.value = true;
     stageNote.value = '';
-    const save = classSubjects.saveContext(() => lettersAlphabet.value, 'setStage');
+    const save = classSubjects.saveContext(() => lettersAlphabet.value, 'setStage', {
+        key: () => `letters-stage:${lettersAlphabet.value}`,
+        refresh: () => {
+            if (activeTab.value === 'letters') {
+                loadLettersOverview();
+                if (selected.value) openLetters(selected.value, true);
+            }
+        },
+    });
     try {
         const res = await TeacherApiService.put(`${base.value}/letters/stage`, { stage });
         save.saved();
+        const applySnapshot = save.snapshot();
         if (!save.reconcile()) return;
-        stageNote.value = res.data?.message ?? 'Class stage updated.';
-        if (group.value) group.value.arabic_stage = stage;
+        if (applySnapshot) {
+            stageNote.value = res.data?.message ?? 'Class stage updated.';
+            if (group.value) group.value.arabic_stage = stage;
+        }
         // A narrower stage re-scopes an open tracker — and the whole class's
         // denominator with it, so the list behind the child is re-read too.
         if (classSubjects.enabled.value && activeTab.value !== 'letters') return;
@@ -4902,7 +4921,7 @@ const saveDrillNote = async (drill: any, note?: string) => {
     drillNoteError.value = '';
     const savedAlphabet = lettersAlphabet.value;
     const savedStudent = selected.value?.membership_id;
-    const save = classSubjects.saveContext(() => `${lettersAlphabet.value}:${selected.value?.membership_id}:${openDrillNote.value}`, 'saveDrillNote');
+    const save = classSubjects.saveContext(() => `${lettersAlphabet.value}:${selected.value?.membership_id}:${openDrillNote.value}`, 'saveDrillNote', lettersSnapshot());
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters`,
@@ -4918,10 +4937,11 @@ const saveDrillNote = async (drill: any, note?: string) => {
             loadLettersOverview();
             if (!save.editor() && selected.value?.membership_id === savedStudent) openLetters(selected.value, true);
         }
+        const applySnapshot = save.snapshot(!!res.data?.data);
         if (!save.editor()) return;
-        if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('openLetters');
-        tracker.value = res.data?.data ?? tracker.value;
-        lettersMeta.value = res.data?.meta ?? lettersMeta.value;
+        if (applySnapshot && classSubjects.enabled.value) classSubjects.keepRead.invalidate('openLetters');
+        if (applySnapshot) tracker.value = res.data?.data ?? tracker.value;
+        if (applySnapshot) lettersMeta.value = res.data?.meta ?? lettersMeta.value;
         openDrillNote.value = null;
     } catch (e: any) {
         if (!save.editor()) {
@@ -5114,6 +5134,8 @@ const awardError = ref('');
 const removingAward = ref<string | number | null>(null);
 const skills = ref<any[]>([]);
 const awardSkillId = ref<string | number>('');
+let awardSelectionRevision = 0;
+watch([pointsMembership, awardSkillId], () => { ++awardSelectionRevision; }, { flush: 'sync' });
 const awardPoints = ref<number | null>(null);
 const awardNote = ref('');
 const awarding = ref(false);
@@ -5146,6 +5168,7 @@ const createSkill = async () => {
     addingSkill.value = true;
     skillError.value = '';
     const save = schoolSaveContext(() => null, 'createSkill');
+    const selectionRevision = awardSelectionRevision;
     try {
         const res = await TeacherApiService.post(
             `/api/teacher/masjids/${masjidId.value}/behavior-skills`,
@@ -5164,7 +5187,7 @@ const createSkill = async () => {
         const created = res.data?.data;
         if (created?.id) {
             skills.value = withSkillInserted(skills.value, created);
-            awardSkillId.value = created.id;
+            if (save.editor() && (!classSubjects.enabled.value || selectionRevision === awardSelectionRevision)) awardSkillId.value = created.id;
         }
         if (save.editor()) newSkill.value = { label: '', polarity: 'positive', default_points: 1 };
     } catch (e: any) {
@@ -5236,17 +5259,21 @@ const setPointsPeriod = async (input: HTMLInputElement) => {
     const weekly = input.checked;
     savingPeriod.value = true;
     periodError.value = '';
-    const save = classSubjects.saveContext(() => null, 'setPointsPeriod');
+    const save = classSubjects.saveContext(() => null, 'setPointsPeriod', {
+        key: () => 'points-period',
+        refresh: () => { if (activeTab.value === 'points') loadPointsTotals(weekFromQuery(route.query.week)); },
+    });
     try {
         const res = await TeacherApiService.put(`${base.value}/points-period`, {
             points_period: weekly ? 'weekly' : 'running',
         });
         save.saved();
+        const applySnapshot = save.snapshot();
         if (!save.reconcile()) return;
         // The server's word, not the checkbox's: what is stored is what is shown.
         if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('loadPointsTotals');
         const stored = res.data?.data?.points_period ?? (weekly ? 'weekly' : 'running');
-        if (group.value) group.value.points_period = stored;
+        if (applySnapshot && group.value) group.value.points_period = stored;
         if (!classSubjects.enabled.value || activeTab.value === 'points') await loadPointsTotals(classSubjects.enabled.value ? weekFromQuery(route.query.week)
             : (pointsTotals.value?.week?.is_current === false ? pointsTotals.value.week.start : null));
         if (!save.editor()) return;
@@ -5571,7 +5598,10 @@ const saveHifzEdit = async () => {
     recordingHifz.value = true;
     hifzError.value = '';
     const savedStudent = hifzMembership.value;
-    const save = classSubjects.saveContext(() => `${hifzMembership.value}:${hifzEditing.value?.id}`, 'recordingHifz');
+    const save = classSubjects.saveContext(() => `${hifzMembership.value}:${hifzEditing.value?.id}`, 'recordingHifz', {
+        key: () => `hifz:${hifzMembership.value}:${entry.id}`,
+        refresh: () => { if (activeTab.value === 'hifz') loadHifz(true); },
+    });
     try {
         const res = await TeacherApiService.post(`${base.value}/hifz/${entry.id}/correct`, {
             kind: f.kind,
@@ -5583,8 +5613,9 @@ const saveHifzEdit = async () => {
             ...(dayChanged ? { recited_at: hifzDayToSend(dayNow) } : {}),
         });
         save.saved();
+        const applySnapshot = save.snapshot();
         if (classSubjects.enabled.value && save.reconcile() && activeTab.value === 'hifz' && !save.editor() && hifzMembership.value && String(hifzMembership.value) === String(savedStudent)) loadHifz(true);
-        if (!save.editor()) return;
+        if (!save.editor() || !applySnapshot) return;
         if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('loadHifz');
         const saved = res.data?.data;
         endHifzEdit();
@@ -5646,12 +5677,16 @@ const saveHifzNote = async (entry: any, note?: string) => {
     savingHifzNote.value = true;
     hifzNoteError.value = '';
     const savedStudent = hifzMembership.value;
-    const save = classSubjects.saveContext(() => `${hifzMembership.value}:${openHifzNote.value}`, 'saveHifzNote');
+    const save = classSubjects.saveContext(() => `${hifzMembership.value}:${openHifzNote.value}`, 'saveHifzNote', {
+        key: () => `hifz:${hifzMembership.value}:${entry.id}`,
+        refresh: () => { if (activeTab.value === 'hifz') loadHifz(true); },
+    });
     try {
         const res = await TeacherApiService.put(`${base.value}/hifz/${entry.id}`, { note: note ?? hifzNoteDraft.value });
         save.saved();
+        const applySnapshot = save.snapshot();
         if (classSubjects.enabled.value && save.reconcile() && activeTab.value === 'hifz' && !save.editor() && hifzMembership.value && String(hifzMembership.value) === String(savedStudent)) loadHifz(true);
-        if (!save.editor()) return;
+        if (!save.editor() || !applySnapshot) return;
         if (classSubjects.enabled.value) classSubjects.keepRead.invalidate('loadHifz');
         const saved = res.data?.data;
         const row = hifz.value.find((h) => h.id === entry.id);
@@ -5832,7 +5867,7 @@ const loadHifz = async (preserveEditor: boolean | Event = false) => {
     }
     if (!hifzMembership.value) return;
     hifzLoading.value = true;
-    hifzError.value = '';
+    if (!preserveEditor) hifzError.value = '';
     const keepResponse = classSubjects.keepRead(() => hifzMembership.value, 'loadHifz');
     try {
         const res = await TeacherApiService.get(`${base.value}/members/${hifzMembership.value}/hifz`);

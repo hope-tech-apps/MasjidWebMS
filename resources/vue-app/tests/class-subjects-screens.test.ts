@@ -836,3 +836,189 @@ test('save sweep: a school skill save reconciles a replacement teacher picker', 
         assert.match(next.screen.text(), /Saved after remount \(\+1\)/);
     } finally { next.screen.unmount(); }
 });
+
+for (const failure of ['save', 'refresh']) test(`review3 1 OFF: office skill ${failure} failure keeps main's Swal words`, async () => {
+    let created = false;
+    const { screen, alerts } = await setup('office', { flag: false,
+        read: (url: string) => url.includes('/behavior-skills') && created ? Promise.reject(httpError(422, { message: 'Vocabulary refresh refused.' })) : undefined,
+        write: (_: string, url: string) => {
+            if (!url.endsWith('/behavior-skills')) return undefined;
+            if (failure === 'save') throw httpError(422, { message: 'Skill creation refused.' });
+            created = true; return ok({ id: 80 });
+        } });
+    try {
+        await visit(screen, false, 'Points'); click(exactButton(screen, 'Manage skills')); await flush();
+        type(screen.all((n: Node) => n.props.placeholder === 'Participation')[0], 'New vocabulary'); await flush();
+        submit(screen.all((n: Node) => n.tag === 'form')[0]); await flush();
+        assert.ok(alerts.some(a => a.icon === 'error' && a.title === 'Error!' && a.text === (failure === 'save' ? 'Skill creation refused.' : 'Vocabulary refresh refused.')));
+        type(screen.all((n: Node) => n.props.placeholder === 'Participation')[0], 'Retry'); await flush();
+        assert.equal(exactButton(screen, 'Add').disabled, false);
+    } finally { screen.unmount(); }
+});
+
+const twoDrills = (mastered = 0) => ({ ...arabicDrillTracker(), totals: { mastered, total: 2 },
+    letters: [{ ...arabicDrillTracker().letters[0], drills: [1, 2].map(i => ({ id: `alif.${i}`, label: `Drill ${i}`, text: 'ا', status: i <= mastered ? 'mastered' : 'learning' })) }] });
+const drillButton = (screen: any, label: string) => screen.all((n: Node) => n.tag === 'button' && n.textContent.includes(label) && !n.textContent.startsWith('Note on'))[0];
+for (const realm of ['teacher', 'office'] as const) for (const on of [true, false]) {
+    test(`review3 2 ${on ? 'ON' : 'OFF'}: ${realm} older drill snapshot cannot undo the newest sent save`, async () => {
+        const first = deferred(); const second = deferred(); let writes = 0; let overviews = 0;
+        const { screen } = await setup(realm, { flag: on,
+            read: (url: string) => {
+                if (url.includes('/members/9/letters')) return ok(twoDrills());
+                if (url.includes('/letters?')) overviews++;
+                return undefined;
+            }, write: (_: string, url: string) => url.endsWith('/members/9/letters') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+        try {
+            await visit(screen, on, on ? 'Arabic' : 'Letters'); click(screen.button('Practice student')); await flush();
+            click(screen.all((n: Node) => String(n.props.class).includes('letter-tile'))[0]); await flush();
+            click(drillButton(screen, 'Drill 1')); await flush(); click(drillButton(screen, 'Drill 2')); await flush();
+            assert.equal(writes, 2); const before = overviews;
+            second.resolve(ok(twoDrills(2))); await flush(); assert.match(screen.text(), /2 of 2 mastered/);
+            first.resolve(ok(twoDrills(1))); await flush();
+            assert.match(screen.text(), on ? /2 of 2 mastered/ : /1 of 2 mastered/);
+            if (on) assert.ok(overviews >= before + 2, 'both successes still reconcile the class overview');
+        } finally { screen.unmount(); }
+    });
+}
+
+for (const on of [true, false]) for (const change of ['student', 'skill', 'skill-return', 'none']) {
+    test(`review3 3 ${on ? 'ON' : 'OFF'}: late teacher skill creation after ${change} preserves the award selection`, async () => {
+        const late = deferred();
+        const existing = [8, 9].map(id => ({ id, label: `Existing skill ${id}`, polarity: 'positive', default_points: 1 }));
+        const { screen, calls } = await setup('teacher', { flag: on, data: { students: [student, secondStudent] },
+            read: (url: string) => url.endsWith('/behavior-skills') ? ok(existing) : undefined,
+            write: (_: string, url: string) => url.endsWith('/behavior-skills') ? late.promise : undefined });
+        const skillPicker = () => screen.all((n: Node) => n.tag === 'select' && n.children.some(c => c.textContent.includes('Existing skill')))[0];
+        try {
+            await visit(screen, on, 'Points'); chooseOption(studentPicker(screen), 9); await flush(); chooseOption(skillPicker(), 8); await flush();
+            type(screen.all((n: Node) => n.props.placeholder === 'e.g. Helped without being asked')[0], 'Created skill'); await flush(); click(exactButton(screen, 'Add')); await flush();
+            if (change === 'student') { await visit(screen, on, 'Roster'); await visit(screen, on, 'Points'); chooseOption(studentPicker(screen), 10); await flush(); }
+            if (change !== 'none') { chooseOption(skillPicker(), 9); await flush(); }
+            if (change === 'skill-return') { chooseOption(skillPicker(), 8); await flush(); }
+            late.resolve(ok({ id: 80, label: 'Created skill', polarity: 'positive', default_points: 1 })); await flush();
+            assert.match(screen.text(), /Created skill \(\+1\)/);
+            click(exactButton(screen, 'Give')); await flush();
+            const award = calls.find(c => c.method === 'post' && c.url.endsWith('/awards'));
+            assert.equal(award.body.behavior_skill_id, on && change !== 'none' ? (change === 'skill-return' ? 8 : 9) : 80);
+        } finally { screen.unmount(); }
+    });
+}
+
+for (const action of ['masterAll', 'masterGroup', 'saveDrillNote']) for (const on of [true, false]) {
+    test(`review3 2 sibling ${on ? 'ON' : 'OFF'}: ${action} shares the tracker sequence with a newer drill mark`, async () => {
+        const first = deferred(); const second = deferred(); let writes = 0;
+        const payload = (mastered = 0) => ({ ...twoDrills(mastered), groups: [{ id: 'practice', label: 'Practice', totals: { mastered: 0, total: 2 }, drills: [] }] });
+        const { screen } = await setup('teacher', { flag: on,
+            read: (url: string) => url.includes('/members/9/letters') ? ok(payload()) : undefined,
+            write: (_: string, url: string) => url.includes('/members/9/letters') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+        try {
+            await visit(screen, on, on ? 'Arabic' : 'Letters'); click(screen.button('Practice student')); await flush();
+            click(screen.all((n: Node) => String(n.props.class).includes('letter-tile'))[0]); await flush();
+            if (action === 'masterAll') { click(exactButton(screen, 'Mark all mastered')); await flush(); click(screen.button('Just this stage')); }
+            else if (action === 'masterGroup') { click(exactButton(screen, 'Mark all practice mastered')); await flush(); click(exactButton(screen, 'Yes, mark them mastered')); }
+            else { click(exactButton(screen, 'Note on Drill 1')); await flush(); type(screen.all((n: Node) => n.tag === 'textarea')[0], 'Saved drill note'); await flush(); click(exactButton(screen, 'Save note')); }
+            await flush(); click(drillButton(screen, 'Drill 2')); await flush(); assert.equal(writes, 2);
+            second.resolve(ok(payload(2))); await flush(); first.resolve(ok(payload(1))); await flush();
+            assert.match(screen.text(), on ? /2 of 2 mastered/ : /1 of 2 mastered/);
+        } finally { screen.unmount(); }
+    });
+}
+
+for (const realm of ['teacher', 'office'] as const) for (const on of [true, false]) test(`review3 2 stage ${on ? 'ON' : 'OFF'}: ${realm} applies only the newest sent stage snapshot`, async () => {
+    const first = deferred(); const second = deferred(); let writes = 0;
+    const stages = ['initial', 'one', 'two'].map(id => ({ id, label: `Stage ${id}` }));
+    const overview = (id: string) => ({ students: [student], stage: stages.find(s => s.id === id), stages, total: 2 });
+    const { screen, data } = await setup(realm, { flag: on, data: { arabic_stage: 'initial' },
+        read: (url: string) => url.includes('/letters?') ? ok(overview(writes ? 'two' : 'initial')) : undefined,
+        write: (_: string, url: string) => url.endsWith('/letters/stage') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+    try {
+        await visit(screen, on, on ? 'Arabic' : 'Letters');
+        const picker = screen.all((n: Node) => n.tag === 'select' && n.children.some(c => c.textContent === 'Stage one'))[0];
+        // Two changes before Vue disables the native control can send both writes.
+        picker.value = 'one'; chooseOption(picker, 'one'); picker.value = 'two'; chooseOption(picker, 'two'); await flush(); assert.equal(writes, 2);
+        second.resolve(ok(overview('two'))); await flush(); first.resolve(ok(overview('one'))); await flush();
+        if (realm === 'teacher') assert.equal(data.arabic_stage, on ? 'two' : 'one');
+        else assert.equal(picker.props.value, on ? 'two' : 'one');
+    } finally { screen.unmount(); }
+});
+
+for (const realm of ['teacher', 'office'] as const) test(`review3 2 repair: ${realm} reads after the last pending save rejects the newest snapshot`, async () => {
+    const first = deferred(); const second = deferred(); let writes = 0; let reads = 0; let stored = 0;
+    const { screen } = await setup(realm, {
+        read: (url: string) => { if (url.includes('/members/9/letters')) { reads++; return ok(twoDrills(stored)); } return undefined; },
+        write: (_: string, url: string) => url.endsWith('/members/9/letters') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+    try {
+        await pick(screen, 'Arabic'); click(screen.button('Practice student')); await flush(); click(screen.all((n: Node) => String(n.props.class).includes('letter-tile'))[0]); await flush();
+        click(drillButton(screen, 'Drill 1')); await flush(); click(drillButton(screen, 'Drill 2')); await flush();
+        const before = reads; stored = 1; first.resolve(ok(twoDrills(1))); await flush();
+        assert.equal(reads, before); assert.match(screen.text(), /0 of 2 mastered/);
+        second.reject(httpError(422, { message: 'Newest mark refused.' })); await flush();
+        assert.ok(reads > before); assert.match(screen.text(), /1 of 2 mastered/); assert.match(screen.text(), /Newest mark refused\./);
+    } finally { screen.unmount(); }
+});
+
+for (const on of [true, false]) test(`review3 3 office ${on ? 'ON' : 'OFF'}: creating vocabulary preserves an existing award choice`, async () => {
+    const late = deferred(); let created = false;
+    const skills = [8, 9].map(id => ({ id, label: `Existing skill ${id}`, polarity: 'positive', default_points: 1, is_active: true }));
+    const { screen, calls } = await setup('office', { flag: on,
+        read: (url: string) => url.includes('/behavior-skills') ? ok({ data: created ? [...skills, { ...skills[0], id: 80, label: 'Created skill' }] : skills }) : undefined,
+        write: (_: string, url: string) => url.endsWith('/behavior-skills') ? late.promise : undefined });
+    try {
+        await visit(screen, on, 'Points'); click(exactButton(screen, 'Manage skills')); await flush();
+        type(screen.all((n: Node) => n.props.placeholder === 'Participation')[0], 'Created skill'); await flush(); submit(screen.all((n: Node) => n.tag === 'form')[0]); await flush();
+        click(exactButton(screen, 'Close')); await flush(); click(exactButton(screen, 'Give points')); await flush(); chooseOption(studentPicker(screen), 9); await flush();
+        const picker = screen.all((n: Node) => n.tag === 'select' && n.children.some(c => c.textContent.includes('Existing skill')))[0]; chooseOption(picker, 9); await flush();
+        created = true; late.resolve(ok({ id: 80 })); await flush(); assert.match(screen.text(), /Created skill/);
+        submit(screen.all((n: Node) => n.tag === 'form')[0]); await flush();
+        assert.equal(calls.find(c => c.method === 'post' && c.url.endsWith('/awards')).body.get('behavior_skill_id'), '9');
+    } finally { screen.unmount(); }
+});
+
+for (const on of [true, false]) for (const action of ['edit', 'note']) for (const returned of [true, false]) {
+    test(`review3 2 Hifdh ${on ? 'ON' : 'OFF'}: ${action} reconciles ${returned ? 'returned row' : 'missing snapshot'} and closes its editor`, async () => {
+        const late = deferred(); let stored = false;
+        const { screen } = await setup('teacher', { flag: on,
+            read: (url: string) => url.endsWith('/hifz') ? ok([{ ...row, note: stored ? 'Reconciled note' : row.note }]) : undefined,
+            write: (_: string, url: string) => url.endsWith(action === 'edit' ? '/hifz/7/correct' : '/hifz/7') ? late.promise : undefined });
+        try {
+            await visit(screen, on, on ? "Qur'an" : 'Hifdh'); chooseOption(studentPicker(screen), 9); await flush();
+            click(exactButton(screen, action === 'edit' ? 'Edit entry' : 'Edit note')); await flush();
+            const text = screen.all((n: Node) => action === 'edit' ? n.tag === 'input' && n.props.placeholder === 'e.g. struggled with the waqf on ayah 12' : n.tag === 'textarea' && n.props['aria-label'] === 'Note on this recitation')[0];
+            assert.ok(text, screen.text()); type(text, 'Reconciled note'); await flush(); click(exactButton(screen, action === 'edit' ? 'Save changes' : 'Save note')); await flush();
+            stored = true; late.resolve(ok(returned ? { ...row, note: 'Reconciled note' } : null)); await flush();
+            assert.match(screen.text(), /Reconciled note/); assert.equal(screen.all((n: Node) => n.tag === 'button' && n.textContent === (action === 'edit' ? 'Save changes' : 'Save note')).length, 0);
+        } finally { screen.unmount(); }
+    });
+}
+
+test('review3 2 Hifdh repair preserves the newer edit refusal after a departed edit succeeds', async () => {
+    const first = deferred(); const second = deferred(); let writes = 0; let stored = false;
+    const { screen } = await setup('teacher', {
+        read: (url: string) => url.endsWith('/hifz') ? ok([{ ...row, note: stored ? 'Older edit saved' : row.note }]) : undefined,
+        write: (_: string, url: string) => url.endsWith('/hifz/7/correct') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+    const start = async (note: string) => {
+        click(exactButton(screen, 'Edit entry')); await flush();
+        type(screen.all((n: Node) => n.tag === 'input' && n.props.placeholder === 'e.g. struggled with the waqf on ayah 12')[0], note); await flush();
+        click(exactButton(screen, 'Save changes')); await flush();
+    };
+    try {
+        await pick(screen, "Qur'an"); chooseOption(studentPicker(screen), 9); await flush(); await start('Older edit saved');
+        await pick(screen, 'Roster'); await pick(screen, "Qur'an"); await start('Newer edit'); assert.equal(writes, 2);
+        stored = true; first.resolve(ok({ ...row, note: 'Older edit saved' })); await flush();
+        second.reject(httpError(422, { message: 'Newest edit refused.' })); await flush();
+        assert.match(screen.text(), /Newest edit refused\./); assert.equal(exactButton(screen, 'Save changes').disabled, false);
+    } finally { screen.unmount(); }
+});
+
+for (const on of [true, false]) test(`review3 2 period ${on ? 'ON' : 'OFF'}: older class setting snapshot waits for totals without overwriting the newer period`, async () => {
+    const first = deferred(); const second = deferred(); const totals = deferred(); let writes = 0; let reads = 0;
+    const { screen, data } = await setup('teacher', { flag: on, data: { points_period: 'running' },
+        read: (url: string) => url.includes('/awards/totals') ? (++reads === 1 ? ok({ points_period: 'running' }) : totals.promise) : undefined,
+        write: (_: string, url: string) => url.endsWith('/points-period') ? (++writes === 1 ? first.promise : second.promise) : undefined });
+    try {
+        await visit(screen, on, 'Points'); const input: any = screen.all((n: Node) => n.props.id === 'points-weekly')[0];
+        input.checked = true; input.props.onChange({ target: input }); input.checked = false; input.props.onChange({ target: input }); await flush(); assert.equal(writes, 2);
+        second.resolve(ok({ points_period: 'running' })); await flush(); first.resolve(ok({ points_period: 'weekly' })); await flush();
+        assert.equal(data.points_period, on ? 'running' : 'weekly');
+    } finally { totals.resolve(ok({ points_period: 'running' })); await flush(); screen.unmount(); }
+});

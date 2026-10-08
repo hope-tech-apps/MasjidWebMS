@@ -114,3 +114,31 @@ test('read invalidation rejects only the pre-save channel and allocates nothing'
         h.invalidate('unused');
     } finally { h.dispose(); }
 });
+
+for (const off of [false, true]) test(`review3 snapshots ${off ? 'OFF' : 'ON'}: order belongs to data across save actions, with final repair after a newer failure`, async () => {
+    const disposals: (() => void)[] = [];
+    const { useToolSaveContext } = await loadTs('composables/useToolResponseGuard.ts', {
+        vue: { ...vue, onBeforeUnmount: (fn: () => void) => disposals.push(fn) },
+    });
+    const scope = vue.effectScope(); const student = vue.ref(9); let reads = 0;
+    const capture = scope.run(() => useToolSaveContext(() => !off, () => 'class:2', () => 'letters'));
+    const snapshot = { key: () => `tracker:${student.value}`, refresh: () => { reads++; } };
+    try {
+        const first = capture(() => student.value, 'advance', snapshot);
+        const second = capture(() => student.value, 'masterAll', snapshot);
+        assert.equal(second.snapshot(), true); second.finish();
+        assert.equal(first.snapshot(), off); first.finish(); assert.equal(reads, 0, 'newest applied snapshot needs no repair');
+        const third = capture(() => student.value, 'saveDrillNote', snapshot);
+        const fourth = capture(() => student.value, 'masterGroup', snapshot);
+        assert.equal(third.snapshot(), off); third.finish(); assert.equal(reads, 0, 'wait for the last pending save');
+        fourth.finish(); assert.equal(reads, off ? 0 : 1, 'a rejected newer save still requires reading the older successful write');
+        const other = capture(() => student.value, 'advance', snapshot);
+        const independent = capture(() => student.value, 'setStage', { key: () => 'stage', refresh: () => { reads++; } });
+        assert.equal(other.snapshot(), true); other.finish(); independent.snapshot(); independent.finish();
+        const leaving = capture(() => student.value, 'advance', snapshot);
+        student.value = 10; assert.equal(leaving.snapshot(), off); leaving.finish(); assert.equal(reads, off ? 0 : 1, 'do not repair a different student');
+        const disposed = capture(() => student.value, 'advance', snapshot);
+        disposals.forEach(fn => fn()); scope.stop(); assert.equal(disposed.snapshot(), off); disposed.finish();
+        assert.equal(reads, off ? 0 : 1, 'no read after disposal');
+    } finally { disposals.forEach(fn => fn()); scope.stop(); }
+});
