@@ -68,6 +68,9 @@ export const preservedFeeOf = (fee: Record<string, any>): Record<string, any> =>
  */
 export type ChoicePriceRow = { value: string; amount: number | null; extra: Record<string, any> };
 
+/** A switch on a stored price (`perQuantity`, `reservesDate`), read as the server reads one. */
+export const flagOn = (value: unknown): boolean => value === true || value === 1 || value === '1' || value === 'true';
+
 /** The question a stored fee is priced by, or null when it names none. */
 export const choiceFieldOf = (fee: Record<string, any>): string | null => {
     const field = fee.byChoice && typeof fee.byChoice === 'object' ? (fee.byChoice as Record<string, any>).field : null;
@@ -107,9 +110,13 @@ export type FeeDraft = {
  * pricing is sent: the server refuses countTiers beside an amount or date steps, prices by
  * answer beside any other price, and a quantity question beside a per-entry count.
  *
- *  - 'choice': the question and a price for each of its choices, with the currency and
- *    the quantity question. Sent even when it is incomplete (no question chosen, an empty
- *    price box): the server refuses that, where leaving it out would save the form as FREE.
+ *  - 'choice': the question and a price for each of its choices, with the currency. Sent
+ *    even when it is incomplete (no question chosen, an empty price box): the server
+ *    refuses that, where leaving it out would save the form as FREE. The quantity question
+ *    goes with it ONLY while a price is charged per unit: beside prices that are all charged
+ *    once, the server takes it for the pricing's quantity question all the same, stops
+ *    requiring it and throws its answer away on every registration (a number question left
+ *    over from "a price for each, times a number" must not ride along).
  *  - any other pricing drops `byChoice`: switching an imported iftar form to a flat price
  *    must not leave its levels behind, which the server would refuse beside the amount.
  *  - `perQuantityOf` is sent under 'perQuantity', and under 'dateSteps' charged once per
@@ -126,6 +133,7 @@ export const buildFee = (preservedFee: Record<string, any>, draft: FeeDraft): Re
     if (pricing === 'choice') {
         const stored = preservedFee.byChoice;
         const block = stored !== null && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+        const perUnit = draft.choice.prices.some(row => flagOn(row.extra.perQuantity));
 
         return {
             ...withoutChoice,
@@ -135,7 +143,7 @@ export const buildFee = (preservedFee: Record<string, any>, draft: FeeDraft): Re
                 field: draft.choice.field ?? '',
                 prices: draft.choice.prices.map(row => ({ ...row.extra, value: row.value, amount: row.amount }))
             },
-            ...(draft.perQuantityOf ? { perQuantityOf: draft.perQuantityOf } : {})
+            ...(draft.perQuantityOf && perUnit ? { perQuantityOf: draft.perQuantityOf } : {})
         };
     }
 

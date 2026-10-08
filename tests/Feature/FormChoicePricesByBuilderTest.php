@@ -18,7 +18,11 @@ use Tests\TestCase;
  * These are the documents the builder sends (the whole form, the price rows in the order of the
  * question's choices), and the keys of the refusals it shows beside the question and beside
  * each price: `settings.fee.byChoice.field`, `settings.fee.byChoice.prices` and
- * `settings.fee.byChoice.prices.{i}.amount`. A refusal renamed here goes unshown there.
+ * `settings.fee.byChoice.prices.{i}.amount`. A refusal renamed here would no longer show
+ * beside its box (it would still be listed above the Save button).
+ *
+ * The documents are written out here by hand. That the builder sends these shapes is proved
+ * on its side, by resources/vue-app/tests/form-choice-pricing.test.ts.
  */
 class FormChoicePricesByBuilderTest extends TestCase
 {
@@ -148,9 +152,50 @@ class FormChoicePricesByBuilderTest extends TestCase
         // What the builder sends when the pricing is chosen and nothing else is: see buildFee().
         $doc['settings']['fee']['byChoice'] = ['field' => '', 'prices' => []];
 
-        $this->postJson($this->url(), $doc)->assertStatus(422);
+        $refused = $this->postJson($this->url(), $doc)->assertStatus(422)->json('data');
 
+        $this->assertNotSame([], array_filter(array_keys($refused), fn ($key) => str_starts_with($key, 'settings.fee.byChoice')), 'named under the keys the price block shows');
         $this->assertNull($this->stored());
+    }
+
+    #[Test]
+    public function a_question_that_is_not_a_dropdown_or_choose_one_cannot_set_the_price(): void
+    {
+        $doc = $this->doc();
+        $doc['schema']['sections'][0]['fields'][0]['type'] = 'text';
+        unset($doc['schema']['sections'][0]['fields'][0]['options']);
+
+        $refused = $this->postJson($this->url(), $doc)->assertStatus(422)->json('data');
+
+        $this->assertArrayHasKey('settings.fee.byChoice.field', $refused);
+    }
+
+    #[Test]
+    public function a_price_over_a_million_and_a_twenty_first_price_are_refused_under_the_keys_of_the_price_block(): void
+    {
+        $doc = $this->doc();
+        $doc['settings']['fee']['byChoice']['prices'][0]['amount'] = 1000001;
+
+        $refused = $this->postJson($this->url(), $doc)->assertStatus(422)->json('data');
+        $this->assertArrayHasKey('settings.fee.byChoice.prices.0.amount', $refused);
+
+        $doc = $this->doc();
+        $doc['schema']['sections'][0]['fields'][0]['options'] = array_map(fn ($i) => ['value' => "v{$i}", 'label' => "Choice {$i}"], range(1, 21));
+        $doc['settings']['fee']['byChoice']['prices'] = array_map(fn ($i) => ['value' => "v{$i}", 'amount' => 10], range(1, 21));
+
+        $refused = $this->postJson($this->url(), $doc)->assertStatus(422)->json('data');
+        $this->assertArrayHasKey('settings.fee.byChoice.prices', $refused);
+    }
+
+    #[Test]
+    public function staff_codes_are_refused_beside_their_switch_on_a_form_priced_by_answer(): void
+    {
+        $doc = $this->doc();
+        $doc['settings']['payment'] = ['staffCodes' => true];
+
+        $refused = $this->postJson($this->url(), $doc)->assertStatus(422)->json('data');
+
+        $this->assertArrayHasKey('settings.payment.staffCodes', $refused);
     }
 
     #[Test]

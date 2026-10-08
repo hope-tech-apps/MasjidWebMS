@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { type FeeDraft, buildFee, choiceFieldOf, choicePriceRowsOf, feeAmountOf, feePricingOf, preservedFeeOf } from '../components/forms/formFeePricing.ts';
+import { type FeeDraft, buildFee, choiceFieldOf, choicePriceRowsOf, feeAmountOf, feePricingOf, flagOn, preservedFeeOf } from '../components/forms/formFeePricing.ts';
 
 test('a form priced by the answer to a question reads as that, never as free', () => {
     const iftar = {
@@ -131,6 +131,30 @@ test('prices by answer that are not finished are still sent, so the server refus
     }));
 
     assert.deepEqual(emptyBox?.byChoice.prices, [{ value: 'one', amount: null }]);
+});
+
+test('the number question goes with prices by answer only while one of them is charged per unit', () => {
+    // Left over from "a price for each, times a number": sent beside prices all charged once,
+    // the server stops requiring that question and throws its answer away on every registration.
+    const leftOver = resave({ amount: 17, currency: 'USD', perQuantityOf: 'people' }, {
+        pricing: 'choice',
+        choice: { field: 'children', prices: [{ value: 'one', amount: 425, extra: {} }, { value: 'two', amount: 800, extra: { perQuantity: false } }] },
+    });
+
+    assert.equal('perQuantityOf' in (leftOver ?? {}), false);
+    assert.equal('amount' in (leftOver ?? {}), false);
+
+    const perUnit = resave(IFTAR_FEE);
+    assert.equal(perUnit?.perQuantityOf, 'people', 'an imported per-person level keeps its number question');
+
+    const [individual, quarter] = choicePriceRowsOf(IFTAR_FEE);
+    const noLongerPerUnit = resave(IFTAR_FEE, { choice: { field: 'sponsorship', prices: [{ ...individual, extra: {} }, quarter] } });
+    assert.equal('perQuantityOf' in (noLongerPerUnit ?? {}), false);
+});
+
+test('a switch on a stored price is read as the server reads it', () => {
+    assert.deepEqual([true, 1, '1', 'true'].map(flagOn), [true, true, true, true]);
+    assert.deepEqual([false, 0, '0', '', null, undefined, 'yes'].map(flagOn), [false, false, false, false, false, false, false]);
 });
 
 test('a form priced another way that switches to prices by answer drops its old price', () => {

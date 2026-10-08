@@ -903,7 +903,10 @@ export type FormFeeRule = {
     pricing?: string | null;
     /** The number question the price is multiplied by (Zakat-ul-Fitr per person). */
     perQuantityOf?: string | null;
-    /** Priced by the answer to one choice question (iftar levels). Set only by form:import. */
+    /**
+     * Priced by the answer to one choice question (iftar levels, a price per number of children).
+     * Set in the form builder or by form:import.
+     */
     byChoice?: {
         field: string;
         prices: { value: string; amount: number; perQuantity?: boolean; reservesDate?: boolean }[];

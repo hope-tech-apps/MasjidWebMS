@@ -45,9 +45,37 @@ const afterschool = (overrides: Record<string, any> = {}) => ({
     ...overrides,
 });
 
-async function builder(stored: any, refusal: Record<string, string[]> | null = null) {
+/** Choose a question in the picker by its wording, as a tap on that line does. */
+const pick = (picker: Node, wording: string) => {
+    const option = picker.children.find(child => child.tag === 'option' && child.textContent.trim() === wording);
+    assert.ok(option, `the picker lists "${wording}"`);
+    picker.value = option.props.value;
+    select(picker, option.props.value);
+};
+
+/** The picker's lines, as read. */
+const pickerLines = (picker: Node) => picker.children.filter(child => child.tag === 'option').map(option => option.textContent.trim());
+
+/** A giving form as form:import leaves it: one level charged per person, two that reserve a date. */
+const iftar = () => afterschool({
+    schema: { sections: [{ id: 'giving', title: 'Giving', fields: [
+        { name: 'sponsorship', label: 'Sponsorship', type: 'radio', required: true,
+            options: [{ value: 'individual', label: 'Individual iftar' }, { value: 'quarter', label: 'Quarter of an evening' }, { value: 'half', label: 'Half of an evening' }] },
+        { name: 'people', label: 'Number of people', type: 'number', required: true, min: 1 },
+    ] }] },
+    settings: {
+        fee: { currency: 'USD', perQuantityOf: 'people', byChoice: { field: 'sponsorship', prices: [
+            { value: 'individual', amount: 18, perQuantity: true },
+            { value: 'quarter', amount: 450, reservesDate: true },
+            { value: 'half', amount: 950, reservesDate: true },
+        ] } },
+        reservation: { dates: ['2027-02-10', '2027-02-11'] },
+    },
+});
+
+async function builder(stored: any, refusal: Record<string, string[]> | null = null, optionsSources: any[] = []) {
     const writes: any[] = [];
-    const store = reactive({ fieldTypes: formTypes.FORM_FIELD_TYPES, optionsSources: [],
+    const store = reactive({ fieldTypes: formTypes.FORM_FIELD_TYPES, optionsSources,
         fetchForm: async () => stored, fetchFieldTypes: async () => [], fetchFormOptions: async () => [],
         updateForm: async (_id: number, body: any) => {
             writes.push(JSON.parse(JSON.stringify(body)));
@@ -79,6 +107,19 @@ async function builder(stored: any, refusal: Record<string, string[]> | null = n
     return {
         screen, writes, byId,
         price: (index: number) => byId(`formFeeChoicePrice_${index}`),
+        picker: () => byId('formFeeChoiceField'),
+        /** The Charged column as read: one line of words per row. */
+        charged: (): string[] => {
+            const table = screen.all(n => n.props['data-test'] === 'choice-prices')[0];
+            const out: string[] = [];
+            const walk = (node: Node) => {
+                const cells = node.tag === 'tr' ? node.children.filter(c => c.tag === 'td') : [];
+                if (cells.length) out.push(cells[2].textContent.replace(/\s+/g, ' ').trim());
+                node.children.forEach(walk);
+            };
+            if (table) walk(table);
+            return out;
+        },
         /** The price table as read off the screen: [choice, price in the box] per row. */
         rows: (): [string, string][] => {
             const table = screen.all(n => n.props['data-test'] === 'choice-prices')[0];
@@ -199,7 +240,7 @@ test('a choice whose stored value follows its wording keeps its price while it i
         // The stored value was derived from "Three"; rewording it derives another one.
         type(wordings()[3], 'Three children'); await flush();
 
-        assert.equal(price(3).props.value, 1175);
+        assert.equal(price(3).value, '1175');
         await save();
         const reworded = writes[0].schema.sections[0].fields[0].options[3];
         assert.equal(reworded.label, 'Three children');
@@ -232,35 +273,83 @@ test('an emptied price box, a negative price and a card price under 50 cents eac
     } finally { screen.unmount(); }
 });
 
-test('what an import set on a price (charged per unit, reserves a date) survives a price change', async () => {
-    const iftar = afterschool({
-        schema: { sections: [{ id: 'giving', title: 'Giving', fields: [
-            { name: 'sponsorship', label: 'Sponsorship', type: 'radio', required: true,
-                options: [{ value: 'individual', label: 'Individual iftar' }, { value: 'quarter', label: 'Quarter of an evening' }] },
-            { name: 'people', label: 'Number of people', type: 'number', required: true, min: 1 },
-        ] }] },
-        settings: {
-            fee: { currency: 'USD', perQuantityOf: 'people', byChoice: { field: 'sponsorship', prices: [
-                { value: 'individual', amount: 18, perQuantity: true },
-                { value: 'quarter', amount: 450, reservesDate: true },
-            ] } },
-            reservation: { dates: ['2027-02-10', '2027-02-11'] },
-        },
-    });
-    const { screen, writes, price, save } = await builder(iftar);
+test('what an import set on a price (charged per unit, reserves a date) survives a price change, even through an emptied box', async () => {
+    const { screen, writes, price, charged, byId, save } = await builder(iftar());
     try {
-        assert.match(screen.text(), /For each, by "Number of people"/);
-        assert.match(screen.text(), /reserves a date/);
+        assert.deepEqual(charged(), ['For each, by "Number of people" Reserves a date', 'For each, by "Number of people" Reserves a date', 'For each, by "Number of people" Reserves a date']);
+        assert.deepEqual([0, 1, 2].map(i => [byId(`formFeeChoicePerUnit_${i}`).checked, byId(`formFeeChoiceReserves_${i}`).checked]), [[true, false], [false, true], [false, true]]);
         assert.match(screen.text(), /Dates that can be reserved:\s+2027-02-10, 2027-02-11/);
 
+        // Select all, delete, type: the box is empty for a moment.
+        type(price(0), ''); await flush();
         type(price(0), '20'); await flush();
         await save();
 
         assert.deepEqual(writes[0].settings.fee, { currency: 'USD', perQuantityOf: 'people', byChoice: { field: 'sponsorship', prices: [
             { value: 'individual', amount: 20, perQuantity: true },
             { value: 'quarter', amount: 450, reservesDate: true },
+            { value: 'half', amount: 950, reservesDate: true },
         ] } });
         assert.deepEqual(writes[0].settings.reservation, { dates: ['2027-02-10', '2027-02-11'] });
+    } finally { screen.unmount(); }
+});
+
+test('a level removed and added again can be charged for each and reserve a date again', async () => {
+    const { screen, writes, price, byId, wordings, removeButtons, save } = await builder(iftar());
+    try {
+        click(removeButtons()[0]); await flush();
+        click(screen.button('Add Choice')); await flush();
+        type(wordings()[2], 'Individual iftar'); await flush();
+        type(price(2), '18'); await flush();
+
+        // New: charged once, reserving nothing, until the office says otherwise.
+        assert.deepEqual([byId('formFeeChoicePerUnit_2').checked, byId('formFeeChoiceReserves_2').checked], [false, false]);
+        check(byId('formFeeChoicePerUnit_2'), true); await flush();
+        await save();
+
+        const added = writes[0].schema.sections[0].fields[0].options[2].value;
+        assert.deepEqual(writes[0].settings.fee.byChoice.prices, [
+            { value: 'quarter', amount: 450, reservesDate: true },
+            { value: 'half', amount: 950, reservesDate: true },
+            { value: added, amount: 18, perQuantity: true },
+        ]);
+        assert.equal(writes[0].settings.fee.perQuantityOf, 'people');
+    } finally { screen.unmount(); }
+});
+
+test('with no price charged for each any more, the number question is not sent with the prices', async () => {
+    const { screen, writes, byId, save } = await builder(iftar());
+    try {
+        check(byId('formFeeChoicePerUnit_0'), false); await flush();
+        await save();
+
+        assert.equal('perQuantityOf' in writes[0].settings.fee, false, 'the server would stop asking that question and throw its answers away');
+        assert.deepEqual(writes[0].settings.fee.byChoice.prices[0], { value: 'individual', amount: 18 });
+    } finally { screen.unmount(); }
+});
+
+test('a list of dates that no price reserves stops the save and says what to tick', async () => {
+    const { screen, writes, byId, save } = await builder(iftar());
+    try {
+        check(byId('formFeeChoiceReserves_1'), false); check(byId('formFeeChoiceReserves_2'), false); await flush();
+
+        assert.match(screen.text(), /This form has a list of dates to reserve, and no price reserves one\. Tick "Reserves a date" on the prices that do\./);
+        await save();
+        assert.equal(writes.length, 0);
+
+        check(byId('formFeeChoiceReserves_2'), true); await flush();
+        await save();
+        assert.deepEqual(writes[0].settings.fee.byChoice.prices.map((p: any) => p.reservesDate === true), [false, false, true]);
+    } finally { screen.unmount(); }
+});
+
+test('a form that charges each choice once shows no switches, only "Once"', async () => {
+    const { screen, charged, byId } = await builder(afterschool());
+    try {
+        assert.deepEqual(charged(), ['Once', 'Once', 'Once']);
+        assert.equal(byId('formFeeChoicePerUnit_0'), undefined);
+        assert.equal(byId('formFeeChoiceReserves_0'), undefined);
+        assert.equal(byId('formFeePerQuantity'), undefined);
     } finally { screen.unmount(); }
 });
 
@@ -306,11 +395,11 @@ test('the question that sets the price must be chosen, able to set one, and requ
 
         // Two questions could set the price, so none is chosen for the office.
         assert.match(screen.text(), /Choose the question whose answer sets the price, or choose No price\./);
-        assert.deepEqual(byId('formFeeChoiceField').children.filter(c => c.tag === 'option').map(o => o.textContent.trim()), ['Choose a question', 'Program', 'Shirt size']);
+        assert.deepEqual(pickerLines(byId('formFeeChoiceField')), ['Choose a question', 'Program', 'Shirt size']);
         await save();
         assert.equal(writes.length, 0);
 
-        select(byId('formFeeChoiceField'), 'program'); await flush();
+        pick(byId('formFeeChoiceField'), 'Program'); await flush();
         assert.match(screen.text(), /"Program" must be required, or a registration that leaves it blank would have no price\./);
         assert.deepEqual(rows(), [['Online', ''], ['Hybrid', '']]);
 
@@ -353,7 +442,7 @@ test('a brand-new form is priced by answer from nothing: add the question, its c
         type(wordings()[1], 'Two children'); await flush();
 
         // It is the only question that can set a price, so choosing it is one tap.
-        select(byId('formFeeChoiceField'), 'childrenAndPayment'); await flush();
+        pick(byId('formFeeChoiceField'), 'Children and payment'); await flush();
         assert.deepEqual(rows(), [['One child', ''], ['Two children', '']]);
 
         type(price(0), '425'); type(price(1), '800'); await flush();
@@ -397,7 +486,8 @@ test('a pricing question turned into a text question can no longer set the price
         answerType.value = 'text';
         select(answerType, 'text'); await flush();
 
-        assert.match(screen.text(), /"paymentChoice" is not a dropdown or choose-one question with its own choices outside the repeating sections, so it cannot set the price\./);
+        assert.match(screen.text(), /"Children and payment" is no longer a dropdown or choose-one question with its own choices, so it cannot set the price\. Change its answer type back, or choose another question\./);
+        assert.deepEqual(pickerLines(byId('formFeeChoiceField')), ['Choose a question', 'Children and payment (cannot set the price)']);
         assert.ok(byId('formFeeChoiceField'));
         await save();
         assert.equal(writes.length, 0);
@@ -416,5 +506,259 @@ test('the server\'s refusal of one price shows beside that price and clears when
 
         type(price(1), '410'); await flush();
         assert.doesNotMatch(String(price(1).props.class), /is-invalid/);
+    } finally { screen.unmount(); }
+});
+
+// ------------------------------------------------------------------ found by the review of 2026-10-08
+
+test('a price typed key by key keeps its cents: 425.00 stays 425.00 and is saved as 425', async () => {
+    const { screen, writes, price, save } = await builder(afterschool());
+    try {
+        // What the box reports after each key: "425." reads back as "425", then "425.0", then "425.00".
+        for (const typed of ['4', '42', '425', '425', '425.0']) { type(price(1), typed); await flush(); }
+        assert.equal(price(1).value, '425.0', 'the screen did not write the box back to 425 under the cursor');
+
+        type(price(1), '425.00'); await flush();
+        assert.equal(price(1).value, '425.00');
+
+        for (const typed of ['1', '10', '10', '10.0']) { type(price(0), typed); await flush(); }
+        assert.equal(price(0).value, '10.0');
+        type(price(0), '10.05'); await flush();
+
+        await save();
+        assert.deepEqual(writes[0].settings.fee.byChoice.prices.map((p: any) => p.amount), [10.05, 425, 720]);
+    } finally { screen.unmount(); }
+});
+
+test('a price by number of entries typed key by key keeps its cents too', async () => {
+    const counted = afterschool({
+        schema: { sections: [{ id: 'children', title: 'Children', repeatable: true, minEntries: 1, maxEntries: 5,
+            fields: [{ name: 'childName', label: 'Child name', type: 'text', required: true }] }] },
+        settings: { fee: { currency: 'USD', perEntryOfSection: 'children', countTiers: [{ min: 1, amount: 100, label: '1 child' }] } },
+    });
+    const { screen, byId } = await builder(counted);
+    try {
+        const box = byId('formCountTierAmount0');
+        for (const typed of ['1', '17', '170', '170', '170.0']) { type(box, typed); await flush(); }
+        assert.equal(box.value, '170.0', 'not written back to 170, which made the next key 1700');
+    } finally { screen.unmount(); }
+});
+
+test('a form priced "for each, times a number" switched to prices by answer leaves its number question out', async () => {
+    const perPerson = afterschool({
+        schema: { sections: [{ id: 'giving', title: 'Giving', fields: [
+            { name: 'people', label: 'Number of people', type: 'number', required: true, min: 1 },
+            { name: 'children', label: 'How many children', type: 'select', required: true,
+                options: [{ value: 'one', label: 'One child' }, { value: 'two', label: 'Two children' }] },
+        ] }] },
+        settings: { fee: { amount: 17, currency: 'USD', perQuantityOf: 'people' } },
+    });
+    const { screen, writes, price, charged, byId, save } = await builder(perPerson);
+    try {
+        choose(byId('formFeePricing_choice')); await flush();
+        type(price(0), '425'); type(price(1), '800'); await flush();
+
+        assert.deepEqual(charged(), ['Once', 'Once'], 'no "for each" switch on a form that never charged a choice per unit');
+        await save();
+        assert.deepEqual(writes[0].settings.fee, { currency: 'USD', byChoice: { field: 'children', prices: [
+            { value: 'one', amount: 425 },
+            { value: 'two', amount: 800 },
+        ] } });
+    } finally { screen.unmount(); }
+});
+
+test('the school calendar chosen for the pricing question and a typed list chosen back keeps every price and switch', async () => {
+    const calendar = [{ key: formTypes.SCHOOL_MEETING_DAYS, label: 'The school calendar (meeting days)', available: true }];
+    const { screen, writes, rows, byId, save } = await builder(iftar(), null, calendar);
+    try {
+        choose(byId('form_s0_f0_src_calendar')); await flush();
+        assert.match(screen.text(), /"Sponsorship" is no longer a dropdown or choose-one question with its own choices/);
+
+        choose(byId('form_s0_f0_src_typed')); await flush();
+        assert.deepEqual(rows(), [['Individual iftar', '18'], ['Quarter of an evening', '450'], ['Half of an evening', '950']]);
+        await save();
+        assert.deepEqual(writes[0].settings.fee.byChoice.prices, [
+            { value: 'individual', amount: 18, perQuantity: true },
+            { value: 'quarter', amount: 450, reservesDate: true },
+            { value: 'half', amount: 950, reservesDate: true },
+        ]);
+    } finally { screen.unmount(); }
+});
+
+test('the pricing question keeps setting the price when its answer key is edited by hand', async () => {
+    const { screen, writes, rows, save } = await builder(afterschool());
+    try {
+        const answerKey = screen.all(n => n.tag === 'input' && n.value === 'paymentChoice')[0];
+        assert.ok(answerKey, 'the question editor shows the answer key');
+        type(answerKey, 'howYouPay'); await flush();
+
+        assert.equal(rows().length, 3, 'the price table is still there');
+        assert.doesNotMatch(screen.text(), /cannot set the price/);
+        await save();
+        assert.equal(writes[0].schema.sections[0].fields[0].name, 'howYouPay');
+        assert.equal(writes[0].settings.fee.byChoice.field, 'howYouPay');
+    } finally { screen.unmount(); }
+});
+
+test('a new question elsewhere whose answer key passes through the pricing question\'s does not take the price', async () => {
+    const twoSections = afterschool({
+        schema: { sections: [
+            { id: 'about', title: 'About you', fields: [{ name: 'fullName', label: 'Full name', type: 'text', required: true }] },
+            { id: 'payment', title: 'Payment', fields: [{ name: 'level', label: 'Level', type: 'select', required: true,
+                options: [{ value: 'basic', label: 'Basic' }, { value: 'plus', label: 'Plus' }] }] },
+        ] },
+        settings: { fee: { currency: 'USD', byChoice: { field: 'level', prices: [{ value: 'basic', amount: 50 }, { value: 'plus', amount: 120 }] } } },
+    });
+    const { screen, writes, rows, save } = await builder(twoSections);
+    try {
+        // Add a question in the FIRST section and type "Level of study": at "Level" its key is `level` too.
+        click(screen.all(n => n.tag === 'button' && /Add Question/.test(n.textContent))[0]); await flush();
+        const added = screen.all(n => n.tag === 'input' && n.props.placeholder === 'e.g. Full name')[1];
+        for (const typed of ['L', 'Level', 'Level o', 'Level of study']) { type(added, typed); await flush(); }
+
+        assert.deepEqual(rows(), [['Basic', '50'], ['Plus', '120']]);
+        await save();
+        assert.equal(writes[0].settings.fee.byChoice.field, 'level');
+        assert.equal(writes[0].schema.sections[0].fields[1].name, formTypes.deriveFormIdentifier('Level of study'));
+    } finally { screen.unmount(); }
+});
+
+test('a pricing question that is removed is named by its wording, and another can be chosen', async () => {
+    const { screen, writes, byId, picker, save } = await builder(afterschool());
+    try {
+        click(screen.all(n => n.tag === 'button' && n.props.title === 'Remove Question')[0]); await flush();
+
+        assert.match(screen.text(), /"Children and payment" set the price, and it is no longer a question outside the repeating sections\. Choose another question, or put it back\./);
+        assert.deepEqual(pickerLines(picker()), ['Choose a question', 'Children and payment (cannot set the price)']);
+        assert.ok(byId('formFeeChoiceField'));
+        await save();
+        assert.equal(writes.length, 0);
+    } finally { screen.unmount(); }
+});
+
+test('only a dropdown or choose-one question with its own choices, asked once, is offered to set the price', async () => {
+    const calendar = [{ key: formTypes.SCHOOL_MEETING_DAYS, label: 'The school calendar (meeting days)', available: true }];
+    const mixed = afterschool({
+        schema: { sections: [
+            { id: 'main', title: 'Main', fields: [
+                { name: 'program', label: 'Program', type: 'select', required: true, options: [{ value: 'a', label: 'A' }] },
+                { name: 'pickup', label: 'Pick-up', type: 'radio', required: true, options: [{ value: 'b', label: 'B' }] },
+                { name: 'extras', label: 'Extras', type: 'checkboxGroup', required: false, options: [{ value: 'c', label: 'C' }] },
+                { name: 'day', label: 'Day', type: 'select', required: true, optionsSource: formTypes.SCHOOL_MEETING_DAYS },
+                { name: 'notes', label: 'Notes', type: 'text', required: false },
+            ] },
+            { id: 'children', title: 'Children', repeatable: true, minEntries: 1, maxEntries: 3, fields: [
+                { name: 'grade', label: 'Grade', type: 'select', required: true, options: [{ value: 'k', label: 'K' }] },
+            ] },
+        ] },
+        settings: { fee: { amount: 80, currency: 'USD' } },
+    });
+    const { screen, byId, picker } = await builder(mixed, null, calendar);
+    try {
+        choose(byId('formFeePricing_choice')); await flush();
+        assert.deepEqual(pickerLines(picker()), ['Choose a question', 'Program', 'Pick-up']);
+    } finally { screen.unmount(); }
+});
+
+test('stored prices listed in another order than the choices go to the choices they name', async () => {
+    const stored = afterschool();
+    stored.settings.fee.byChoice.prices.reverse();
+    const { screen, writes, rows, save } = await builder(stored);
+    try {
+        assert.deepEqual(rows(), [['1 child: first month', '150'], ['1 child: full payment', '400'], ['2 children: full payment', '720']]);
+        await save();
+        assert.deepEqual(writes[0].settings.fee.byChoice.prices.map((p: any) => [p.value, p.amount]), [['c1Month', 150], ['c1Full', 400], ['c2Full', 720]]);
+    } finally { screen.unmount(); }
+});
+
+test('a stored price for a choice the question no longer has is left out, and a choice with no stored price waits for one', async () => {
+    const stored = afterschool();
+    stored.settings.fee.byChoice.prices[2] = { value: 'gone', amount: 999 };
+    const { screen, writes, rows, price, save } = await builder(stored);
+    try {
+        assert.deepEqual(rows(), [['1 child: first month', '150'], ['1 child: full payment', '400'], ['2 children: full payment', '']]);
+        assert.equal(screen.button('Save Form').disabled, true);
+
+        type(price(2), '800'); await flush();
+        await save();
+        assert.deepEqual(writes[0].settings.fee.byChoice.prices.map((p: any) => p.value), ['c1Month', 'c1Full', 'c2Full']);
+    } finally { screen.unmount(); }
+});
+
+test('what the server refuses about the prices as a whole, or about a row, is shown in the price block', async () => {
+    const refusal = {
+        'settings.fee.byChoice.prices': ['Every choice of "paymentChoice" needs a price. Missing: c9.'],
+        'settings.fee.byChoice.prices.0.value': ['"c1Month" has two prices. Give each choice one price.'],
+        'settings.reservation': ['No price reserves a date, so the list of dates would never be used.'],
+    };
+    const { screen, price, save } = await builder(afterschool(), refusal);
+    try {
+        await save();
+        const block = screen.all(n => n.props['data-test'] === 'choice-prices')[0].textContent;
+
+        assert.match(block, /Every choice of "paymentChoice" needs a price\. Missing: c9\./);
+        assert.match(block, /"c1Month" has two prices\. Give each choice one price\./);
+        assert.match(block, /No price reserves a date/);
+        assert.match(String(price(0).props.class), /is-invalid/);
+    } finally { screen.unmount(); }
+});
+
+test('a refusal beside one price does not move to another choice when a choice above it is removed', async () => {
+    const refusal = { 'settings.fee.byChoice.prices.1.amount': ['The price for this choice was refused.'] };
+    const { screen, price, removeButtons, save } = await builder(afterschool(), refusal);
+    try {
+        await save();
+        assert.match(String(price(1).props.class), /is-invalid/);
+
+        click(removeButtons()[0]); await flush();
+        assert.doesNotMatch(String(price(0).props.class), /is-invalid/);
+        assert.doesNotMatch(String(price(1).props.class), /is-invalid/, 'it would now sit beside "2 children: full payment"');
+        assert.doesNotMatch(screen.all(n => n.props['data-test'] === 'choice-prices')[0].textContent, /was refused/);
+    } finally { screen.unmount(); }
+});
+
+test('more than twenty choices, and a price over a million, stop the save with words about the choice', async () => {
+    const many = afterschool();
+    many.schema.sections[0].fields[0].options = Array.from({ length: 21 }, (_, i) => ({ value: `v${i}`, label: `Choice number ${i + 1}` }));
+    many.settings.fee.byChoice.prices = many.schema.sections[0].fields[0].options.map((o: any) => ({ value: o.value, amount: 10 }));
+    const { screen, writes, price, removeButtons, save } = await builder(many);
+    try {
+        assert.match(screen.text(), /A question that sets the price can have at most 20 choices\. Remove some, or price the form another way\./);
+        await save();
+        assert.equal(writes.length, 0);
+
+        click(removeButtons()[20]); await flush();
+        assert.doesNotMatch(screen.text(), /at most 20 choices/);
+
+        type(price(0), '1000001'); await flush();
+        assert.match(screen.text(), /Price for "Choice number 1": A price cannot be more than 1,000,000\./);
+        await save();
+        assert.equal(writes.length, 0);
+    } finally { screen.unmount(); }
+});
+
+test('staff cash codes on a form priced by answer are refused before the office prices every choice', async () => {
+    const withCodes = afterschool();
+    withCodes.settings.payment = { staffCodes: true };
+    const { screen, writes, save } = await builder(withCodes);
+    try {
+        assert.match(screen.text(), /Staff codes cannot be used on a form priced per quantity or by the answer to a question yet/);
+        await save();
+        assert.equal(writes.length, 0);
+    } finally { screen.unmount(); }
+});
+
+test('prices by answer show the currency box, and a negative amount left in another pricing does not block them', async () => {
+    const negative = afterschool({ settings: { fee: { amount: -5, currency: 'USD' } } });
+    const { screen, writes, price, byId, save } = await builder(negative);
+    try {
+        choose(byId('formFeePricing_choice')); await flush();
+
+        assert.ok(byId('formFeeCurrency'), 'the currency can be seen and changed here');
+        assert.doesNotMatch(screen.text(), /The fee cannot be negative/);
+        type(price(0), '150'); type(price(1), '425'); type(price(2), '800'); await flush();
+        await save();
+        assert.equal(writes.length, 1);
+        assert.equal('amount' in writes[0].settings.fee, false);
     } finally { screen.unmount(); }
 });

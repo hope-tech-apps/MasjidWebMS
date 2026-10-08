@@ -9335,3 +9335,37 @@ device, browser layout or production cache verification was performed.
      a removal now holds the tab like every other write.
 - Not exercised: the two-connection race on MySQL itself. The lock is the standard InnoDB row lock on a primary
   key; the sequential test shows the chain of copies the lock produces.
+
+## 2026-10-08 — Prices by answer are set and changed in the form builder
+
+- **Asked**: a client changed the price lines of a registration form (one dropdown, "1 child: one semester",
+  "2 children: ...") twice in a morning, and each change was a `form:import`. The owner: "We need to make these
+  things something that the client can just handle by themselves", including setting the pricing up on a new form.
+- **Supersedes** the 2026-09-25 sentence "Only `form:import` sets it up; the builder shows it read-only and saves it
+  back untouched." The server is unchanged: `StoreFormRequest::choiceProblems()` already checked this pricing on the
+  office API. Only the builder had no editor for it.
+- **The price table is the question's own choices.** There is no second list to keep in step: a choice added,
+  reworded, removed or moved under the question is added, reworded, removed or moved in the table. A price is held
+  against the choice itself, not its stored value, which follows the wording as it is typed. The question that sets
+  the price is held the same way, not by its answer key: the key follows the wording, can be edited by hand, and is
+  only unique within a section, so held by name the pricing moved to another question that passed through the key.
+- **An unfinished set of prices is still sent**, so the server refuses it. Left out, the form would save as free.
+- **A price box is bound to the text as typed, never to its number.** A number box redrawn from the number loses
+  "425.0" to "425" under the cursor and the next key makes it 4250. The same redraw existed for prices by number of
+  entries, where every keystroke replaced the list of server refusals; that list is now left alone when nothing in it
+  matches (`dropServerErrors`).
+- **The number question goes with these prices only while one is charged per unit.** A number question left over from
+  "a price for each, times a number" was otherwise sent along, and the server then stops requiring it and drops its
+  answer from every registration.
+- **Charged per unit and reserves a date** are switches on each row, shown only on a form that already has that
+  pricing (set up by `form:import`) or a list of dates. Before, a level removed and typed in again lost them without
+  a word. Setting up a number question or a date list from nothing stays with `form:import`.
+- **Refusals mirrored on the screen**: no question chosen; the question removed, no longer a choice question, or not
+  required; a choice with no price; a negative price; over 1,000,000; more than 20 choices; a card price under 50
+  cents or not in whole cents; staff codes with this pricing; a date list no price reserves.
+- **Reviewed before shipping** by four independent readers and a sceptic for each (26 findings, all reproduced, none
+  refuted). The four that mattered: cents typed key by key saved ten times too high; the left-over number question;
+  switches lost through the school-calendar toggle and through remove-and-add; the pricing re-pointed by another
+  question's answer key. Each has a test that fails on the reviewed commit.
+- **Not built**: a per-child price worked out from the children listed (the form still asks the family to pick its
+  line); the native apps were not checked against this pricing.

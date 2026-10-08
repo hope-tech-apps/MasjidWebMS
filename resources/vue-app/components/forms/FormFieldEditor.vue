@@ -548,12 +548,14 @@ const calendarHint = computed(() => {
 /**
  * The typed choices set aside when the calendar is picked, so switching straight back
  * does not make someone retype them. Only in memory: a sourced question saves no options.
+ * The choices themselves are kept, not copies: the form builder holds a price against each
+ * choice (prices by answer), and a copy would come back with its price gone.
  */
 const stashedOptions = ref<FormFieldOption[] | null>(null);
 
 const useCalendarChoices = () => {
     if (props.field.options?.length) {
-        stashedOptions.value = props.field.options.map(option => ({ ...option }));
+        stashedOptions.value = props.field.options;
     }
     props.field.options = [];
     props.field.optionsSource = SCHOOL_MEETING_DAYS;

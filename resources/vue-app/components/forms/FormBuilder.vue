@@ -361,15 +361,15 @@
                                     id="formFeeChoiceField"
                                     class="form-select"
                                     :class="{ 'is-invalid': !!fieldIssue('settings.fee.byChoice.field') }"
-                                    v-model="draft.settings.feeChoiceField"
-                                    @change="clearChoiceErrors()"
+                                    :value="choicePickerValue"
+                                    @change="pickChoiceQuestion(($event.target as HTMLSelectElement).value)"
                                 >
-                                    <option :value="null">Choose a question</option>
-                                    <option v-for="question in choiceQuestions" :key="question.name" :value="question.name">
-                                        {{ question.label || question.name }}
+                                    <option value="">Choose a question</option>
+                                    <option v-for="(question, questionIndex) in choiceQuestions" :key="questionIndex" :value="String(questionIndex)">
+                                        {{ questionWording(question) }}
                                     </option>
-                                    <option v-if="draft.settings.feeChoiceField && !choiceQuestion" :value="draft.settings.feeChoiceField">
-                                        {{ draft.settings.feeChoiceField }} (cannot set the price)
+                                    <option v-if="choiceQuestionHeld && !choiceQuestion" value="held">
+                                        {{ questionWording(heldQuestion ?? choiceQuestionHeld) }} (cannot set the price)
                                     </option>
                                 </select>
                                 <div v-if="fieldIssue('settings.fee.byChoice.field')" class="invalid-feedback d-block">
@@ -380,6 +380,42 @@
                                     the repeating sections, first. Each of its choices then gets a price here.
                                 </small>
                             </div>
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label" for="formFeeCurrency">Currency</label>
+                                <input
+                                    id="formFeeCurrency"
+                                    type="text"
+                                    class="form-control text-uppercase"
+                                    :class="{ 'is-invalid': !!fieldIssue('settings.fee.currency') }"
+                                    maxlength="3"
+                                    v-model.trim="draft.settings.feeCurrency"
+                                    @input="clearServerError('settings.fee.currency')"
+                                    placeholder="USD"
+                                />
+                                <div v-if="fieldIssue('settings.fee.currency')" class="invalid-feedback d-block">
+                                    {{ fieldIssue('settings.fee.currency') }}
+                                </div>
+                            </div>
+                            <!-- Only a form that charges a price per unit (set up by form:import) has a number
+                                 question to name; every other form charges each choice once. -->
+                            <div v-if="choiceOffersPerUnit" class="col-md-5 mb-3">
+                                <label class="form-label" for="formFeePerQuantity">"For each" prices are multiplied by the answer to</label>
+                                <select
+                                    id="formFeePerQuantity"
+                                    class="form-select"
+                                    :class="{ 'is-invalid': !!fieldIssue('settings.fee.perQuantityOf') }"
+                                    v-model="draft.settings.feePerQuantityOf"
+                                    @change="clearServerError('settings.fee.perQuantityOf')"
+                                >
+                                    <option :value="null">Choose a number question</option>
+                                    <option v-for="question in quantityQuestions" :key="question.name" :value="question.name">
+                                        {{ question.label || question.name }}
+                                    </option>
+                                </select>
+                                <div v-if="fieldIssue('settings.fee.perQuantityOf')" class="invalid-feedback d-block">
+                                    {{ fieldIssue('settings.fee.perQuantityOf') }}
+                                </div>
+                            </div>
                         </div>
 
                         <template v-if="choiceQuestion">
@@ -388,41 +424,68 @@
                                 reword or remove a choice, change the choices under that question; every choice needs
                                 a price.
                             </p>
-                            <table v-if="choicePricing.levels.length" class="table table-sm align-middle mb-2">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">Choice</th>
-                                        <th scope="col" style="width: 12rem;">Price ({{ (draft.settings.feeCurrency || 'USD').toUpperCase() }})</th>
-                                        <th scope="col">Charged</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr v-for="level in choicePricing.levels" :key="level.index">
-                                        <td>
-                                            <label class="mb-0" :for="`formFeeChoicePrice_${level.index}`">{{ level.label }}</label>
-                                        </td>
-                                        <td>
-                                            <input
-                                                :id="`formFeeChoicePrice_${level.index}`"
-                                                type="number"
-                                                class="form-control form-control-sm"
-                                                :class="{ 'is-invalid': !!choicePriceIssue(level.index) }"
-                                                min="0"
-                                                step="0.01"
-                                                :value="level.amount ?? ''"
-                                                placeholder="Enter a price"
-                                                @input="setChoicePrice(level.option, toNumberOrNull(($event.target as HTMLInputElement).value))"
-                                            />
-                                            <div v-if="choicePriceIssue(level.index)" class="invalid-feedback d-block">
-                                                {{ choicePriceIssue(level.index) }}
-                                            </div>
-                                        </td>
-                                        <td>
-                                            {{ level.perQuantity ? `For each, by "${quantityQuestionLabel}"` : 'Once' }}<span v-if="level.reservesDate"> · reserves a date</span>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                            <div v-if="choicePricing.levels.length" class="table-responsive">
+                                <table class="table table-sm align-middle mb-2">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Choice</th>
+                                            <th scope="col" style="min-width: 8rem;">Price ({{ (draft.settings.feeCurrency || 'USD').toUpperCase() }})</th>
+                                            <th scope="col">Charged</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="level in choicePricing.levels" :key="level.index">
+                                            <td>
+                                                <label class="mb-0 text-break" :for="`formFeeChoicePrice_${level.index}`">{{ level.label }}</label>
+                                            </td>
+                                            <td>
+                                                <!-- Bound to the text as typed, never to the number: a number box
+                                                     redrawn from the number loses "425.0" to "425" under the cursor,
+                                                     and the next key makes it 4250. -->
+                                                <input
+                                                    :id="`formFeeChoicePrice_${level.index}`"
+                                                    type="number"
+                                                    class="form-control form-control-sm"
+                                                    :class="{ 'is-invalid': !!choicePriceIssue(level.index) }"
+                                                    min="0"
+                                                    step="0.01"
+                                                    :value="level.text"
+                                                    placeholder="Enter a price"
+                                                    @input="setChoicePrice(level.option, ($event.target as HTMLInputElement).value)"
+                                                />
+                                                <div v-if="choicePriceIssue(level.index)" class="invalid-feedback d-block">
+                                                    {{ choicePriceIssue(level.index) }}
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div v-if="choiceOffersPerUnit" class="form-check mb-0">
+                                                    <input
+                                                        :id="`formFeeChoicePerUnit_${level.index}`"
+                                                        class="form-check-input"
+                                                        type="checkbox"
+                                                        :checked="level.perQuantity"
+                                                        @change="setChoiceSwitch(level.option, 'perQuantity', ($event.target as HTMLInputElement).checked)"
+                                                    />
+                                                    <label class="form-check-label" :for="`formFeeChoicePerUnit_${level.index}`">
+                                                        For each, by "{{ quantityQuestionLabel }}"
+                                                    </label>
+                                                </div>
+                                                <div v-if="choicePricing.dates !== null" class="form-check mb-0">
+                                                    <input
+                                                        :id="`formFeeChoiceReserves_${level.index}`"
+                                                        class="form-check-input"
+                                                        type="checkbox"
+                                                        :checked="level.reservesDate"
+                                                        @change="setChoiceSwitch(level.option, 'reservesDate', ($event.target as HTMLInputElement).checked)"
+                                                    />
+                                                    <label class="form-check-label" :for="`formFeeChoiceReserves_${level.index}`">Reserves a date</label>
+                                                </div>
+                                                <template v-if="!choiceOffersPerUnit && choicePricing.dates === null">Once</template>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
                             <div v-else class="alert alert-warning py-2 small mb-2">
                                 "{{ choicePricing.questionLabel }}" has no choices yet. Add its choices under the question, then price each one here.
                             </div>
@@ -1238,7 +1301,7 @@ import {
     uniqueFormIdentifier
 } from '@/core/types/data/masjid-related/Form';
 import FormFieldEditor from '@/components/forms/FormFieldEditor.vue';
-import { type ChoicePriceRow, type FeePricing, buildFee, choiceFieldOf, choicePriceRowsOf, feePricingOf, preservedFeeOf } from '@/components/forms/formFeePricing';
+import { type ChoicePriceRow, type FeePricing, buildFee, choiceFieldOf, choicePriceRowsOf, feePricingOf, flagOn, preservedFeeOf } from '@/components/forms/formFeePricing';
 import FormStaffCodesModal from '@/components/forms/FormStaffCodesModal.vue';
 import { useFormsStore } from '@/stores/masjid/formsStore';
 import { useConnectStore } from '@/stores/masjid/connectStore';
@@ -1340,8 +1403,6 @@ type DraftSettings = {
     feePerEntryOfSection: string | null;
     /** settings.fee.perQuantityOf: the number question the price is multiplied by, or null. */
     feePerQuantityOf: string | null;
-    /** settings.fee.byChoice.field: the choice question whose answer sets the price, or null. */
-    feeChoiceField: string | null;
     feePricing: FeePricing;
     feeTiers: DraftTier[];
     feeCountTiers: DraftCountTier[];
@@ -1399,6 +1460,10 @@ const IDENTITY_SLOTS = [
 
 /** FormPayment::MIN_CHARGE_MINOR: Stripe's smallest card charge. */
 const MIN_CHARGE_MINOR = 50;
+
+/** StoreFormRequest: settings.fee.byChoice.prices is `max:20`, and each amount `max:1000000`. */
+const MAX_CHOICE_PRICES = 20;
+const MAX_PRICE = 1000000;
 
 const PRICING_MODES: { value: FeePricing; label: string; help: string }[] = [
     {
@@ -1542,7 +1607,6 @@ const blankSettings = (): DraftSettings => ({
     feeCurrency: 'USD',
     feePerEntryOfSection: null,
     feePerQuantityOf: null,
-    feeChoiceField: null,
     feePricing: 'none',
     feeTiers: [],
     feeCountTiers: [],
@@ -1604,15 +1668,28 @@ const preserved = ref<Preserved>(blankPreserved());
 /**
  * The price of each choice of the pricing question while the form is open, held against the
  * choice itself and not its stored value: the stored value follows the wording as it is
- * typed, and a reworded or reordered choice must keep its price. `extra` is what the builder
- * has no control for on a stored price (charged per unit, reserves a date).
+ * typed, and a reworded or reordered choice must keep its price. `text` is what the box
+ * shows, exactly as typed, and `amount` the number it means (null while it means none).
+ * `extra` is everything else on a stored price: its switches (charged per unit, reserves a
+ * date) and any key the builder has no control for, saved back as loaded.
  */
-type ChoicePrice = { amount: number | null; extra: Record<string, any> };
+type ChoicePrice = { text: string; amount: number | null; extra: Record<string, any> };
 
 const choicePriceByOption = shallowRef(new Map<object, ChoicePrice>());
 
 const choicePriceOf = (option: FormFieldOption): ChoicePrice =>
-    choicePriceByOption.value.get(toRaw(option)) ?? { amount: null, extra: {} };
+    choicePriceByOption.value.get(toRaw(option)) ?? { text: '', amount: null, extra: {} };
+
+/**
+ * The question whose answer sets the price (settings.fee.byChoice.field), held as the
+ * question itself and not its answer key. The key follows the wording as it is typed and
+ * can be edited by hand, and keys are only unique within a section: held by name, the
+ * pricing would move to another question that passes through the same key, or be lost.
+ */
+const choiceQuestionHeld = shallowRef<FormField | null>(null);
+
+/** Whether the stored form charged a price per unit: only such a form offers that switch. */
+const storedChargedPerUnit = ref(false);
 
 /** The 422's field errors, keyed as the server named them, for the inline messages. */
 const serverFieldErrorsByKey = ref<Record<string, string[]>>({});
@@ -1810,6 +1887,8 @@ const load = async () => {
     serverFieldErrorsByKey.value = {};
     preserved.value = blankPreserved();
     choicePriceByOption.value = new Map();
+    choiceQuestionHeld.value = null;
+    storedChargedPerUnit.value = false;
 
     if (!props.formId) {
         draft.value = blankDraft();
@@ -1878,7 +1957,6 @@ const load = async () => {
                     ? fee.perEntryOfSection
                     : null,
                 feePerQuantityOf: typeof fee.perQuantityOf === 'string' && fee.perQuantityOf ? fee.perQuantityOf : null,
-                feeChoiceField: choiceFieldOf(fee),
                 feePricing: pricingOf(fee),
                 feeTiers: (Array.isArray(fee.tiers) ? fee.tiers : []).map(toDraftTier),
                 feeCountTiers: (Array.isArray(fee.countTiers) ? fee.countTiers : []).map(toDraftCountTier),
@@ -1896,14 +1974,24 @@ const load = async () => {
             }
         };
 
-        // Each stored price goes to the choice it names. One naming a choice the question no
-        // longer has is left out: the server refuses it (StoreFormRequest::choiceProblems()).
+        // The pricing question is found once, by the key the stored fee names (as the server
+        // finds it: the first such question outside the repeating sections), and held from
+        // then on. Each stored price goes to the choice it names, whatever order the two lists
+        // are in. One naming a choice the question no longer has is left out: the server
+        // refuses it (StoreFormRequest::choiceProblems()).
+        const pricedBy = choiceFieldOf(fee);
+        const question = pricedBy ? flatQuestions.value.find(field => field.name === pricedBy) : undefined;
+        const rows = choicePriceRowsOf(fee);
         const stored = new Map<object, ChoicePrice>();
-        choicePriceRowsOf(fee).forEach(row => {
-            const option = choiceQuestion.value?.options?.find(candidate => candidate.value === row.value);
-            if (option) stored.set(toRaw(option), { amount: row.amount, extra: row.extra });
+
+        rows.forEach(row => {
+            const option = question?.options?.find(candidate => candidate.value === row.value);
+            if (option) stored.set(toRaw(option), { text: row.amount === null ? '' : String(row.amount), amount: row.amount, extra: row.extra });
         });
+
+        choiceQuestionHeld.value = question ? toRaw(question) : null;
         choicePriceByOption.value = stored;
+        storedChargedPerUnit.value = rows.some(row => flagOn(row.extra.perQuantity));
     } catch (error: any) {
         console.error('Load form error: ', error);
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not load this form.' });
@@ -1985,7 +2073,7 @@ const buildPayload = (): FormPayload => {
         perQuantityOf: draftSettings.feePerQuantityOf,
         tiers: pricing === 'dateSteps' ? draftSettings.feeTiers.map(buildTier) : [],
         countTiers: pricing === 'count' ? draftSettings.feeCountTiers.map(buildCountTier) : [],
-        choice: { field: draftSettings.feeChoiceField, prices: pricing === 'choice' ? choicePriceRows() : [] }
+        choice: { field: heldQuestion.value?.name?.trim() || null, prices: pricing === 'choice' ? choicePriceRows() : [] }
     });
 
     if (fee) settings.fee = fee as FormFeeRule;
@@ -2271,8 +2359,6 @@ const retargetFieldName = (section: FormSchemaSection, previous: string, next: s
         settings.identityName = follow(settings.identityName);
         settings.identityEmail = follow(settings.identityEmail);
         settings.identityPhone = follow(settings.identityPhone);
-
-        if (settings.feeChoiceField === previous) settings.feeChoiceField = next;
     }
 
     draft.value.sections.forEach(other => {
@@ -2515,7 +2601,7 @@ const problems = computed<string[]>(() => {
 
     const pricing = draft.value.settings.feePricing;
 
-    if (pricing !== 'count' && pricing !== 'none' && draft.value.settings.feeAmount !== null && draft.value.settings.feeAmount < 0) {
+    if (pricing !== 'count' && pricing !== 'none' && pricing !== 'choice' && draft.value.settings.feeAmount !== null && draft.value.settings.feeAmount < 0) {
         found.push('The fee cannot be negative.');
     }
 
@@ -2595,15 +2681,29 @@ const flatQuestions = computed(() =>
 const canSetPrice = (field: FormField): boolean =>
     (field.type === 'select' || field.type === 'radio') && !field.optionsSource;
 
+/** A question as the office knows it: its wording, else its answer key. */
+const questionWording = (field: FormField): string => field.label?.trim() || field.name?.trim() || 'A question with no wording yet';
+
 /** The questions a price can follow. */
-const choiceQuestions = computed(() => flatQuestions.value.filter(field => canSetPrice(field) && !!field.name?.trim()));
+const choiceQuestions = computed(() => flatQuestions.value.filter(canSetPrice));
+
+/** The held question while it is still in the form, outside the repeating sections; else null. */
+const heldQuestion = computed<FormField | null>(() => {
+    const held = choiceQuestionHeld.value;
+
+    return held ? flatQuestions.value.find(field => toRaw(field) === held) ?? null : null;
+});
 
 /** The question the price follows, or null when none is chosen or the chosen one cannot set a price. */
-const choiceQuestion = computed<FormField | null>(() => {
-    const name = draft.value.settings.feeChoiceField;
-    const question = name ? flatQuestions.value.find(field => field.name === name) : undefined;
+const choiceQuestion = computed<FormField | null>(() =>
+    heldQuestion.value && canSetPrice(heldQuestion.value) ? heldQuestion.value : null
+);
 
-    return question && canSetPrice(question) ? question : null;
+/** What the picker shows as chosen: a place in the list, 'held' for a question that cannot set a price, '' for none. */
+const choicePickerValue = computed(() => {
+    if (choiceQuestion.value) return String(choiceQuestions.value.indexOf(choiceQuestion.value));
+
+    return choiceQuestionHeld.value ? 'held' : '';
 });
 
 /**
@@ -2614,9 +2714,10 @@ const choiceQuestion = computed<FormField | null>(() => {
 const choicePricing = computed(() => {
     const question = choiceQuestion.value;
     const reservation = asRecord(preserved.value.settings.reservation);
+    const hasDates = preserved.value.settings.reservation !== null && typeof preserved.value.settings.reservation === 'object';
 
     return {
-        questionLabel: question?.label || draft.value.settings.feeChoiceField || '',
+        questionLabel: question ? questionWording(question) : '',
         levels: (question?.options ?? []).map((option, index) => {
             const price = choicePriceOf(option);
 
@@ -2624,18 +2725,35 @@ const choicePricing = computed(() => {
                 option,
                 index,
                 label: option.label?.trim() || option.value?.trim() || `Choice ${index + 1}`,
+                text: price.text,
                 amount: price.amount,
-                perQuantity: price.extra.perQuantity === true,
-                reservesDate: price.extra.reservesDate === true
+                perQuantity: flagOn(price.extra.perQuantity),
+                reservesDate: flagOn(price.extra.reservesDate)
             };
         }),
-        dates: Array.isArray(reservation.dates) ? reservation.dates.filter((date: unknown): date is string => typeof date === 'string') : null
+        // null when the form has no list of dates: then no price can reserve one.
+        dates: hasDates
+            ? (Array.isArray(reservation.dates) ? reservation.dates.filter((date: unknown): date is string => typeof date === 'string') : [])
+            : null
     };
 });
 
+/**
+ * Whether a price can be charged per unit here. Only on a form that already does, or did
+ * when it was opened: that pricing needs a number question and is set up by form:import,
+ * and offering it everywhere would put a switch nobody asked for on every row.
+ */
+const choiceOffersPerUnit = computed(() =>
+    storedChargedPerUnit.value || choicePricing.value.levels.some(level => level.perQuantity)
+);
+
 /** What a save sends for the prices by answer: a row per choice, in the question's order. */
 const choicePriceRows = (): ChoicePriceRow[] =>
-    (choiceQuestion.value?.options ?? []).map(option => ({ value: (option.value ?? '').trim(), ...choicePriceOf(option) }));
+    (choiceQuestion.value?.options ?? []).map(option => {
+        const price = choicePriceOf(option);
+
+        return { value: (option.value ?? '').trim(), amount: price.amount, extra: price.extra };
+    });
 
 /**
  * The section that prices by number of entries count, when it has no maximum of 1 or more.
@@ -2804,6 +2922,11 @@ const paymentIssues = computed<Record<string, string>>(() => {
         issues['settings.payment.staffPriceOverride'] = 'Enable staff codes before enabling staff price overrides.';
     }
 
+    // StoreFormRequest::staffCodeProblems(), said before the office prices every choice.
+    if (s.paymentStaffCodes && s.feePricing === 'choice') {
+        issues['settings.payment.staffCodes'] = 'Staff codes cannot be used on a form priced per quantity or by the answer to a question yet: the staff screen cannot show how much to collect. Turn staff codes off.';
+    }
+
     const pricing = s.feePricing;
 
     const link = s.whatsappUrl.trim();
@@ -2854,23 +2977,46 @@ const paymentIssues = computed<Record<string, string>>(() => {
     // Prices by answer (StoreFormRequest::choiceProblems()): a question that can set a price,
     // required so nobody registers without one, and a price for every one of its choices.
     if (pricing === 'choice') {
-        const question = choiceQuestion.value;
+        const held = choiceQuestionHeld.value;
+        const question = heldQuestion.value;
 
-        if (!s.feeChoiceField) {
+        if (!held) {
             issues['settings.fee.byChoice.field'] = 'Choose the question whose answer sets the price, or choose No price.';
         } else if (!question) {
-            issues['settings.fee.byChoice.field'] = `"${s.feeChoiceField}" is not a dropdown or choose-one question with its own choices outside the repeating sections, so it cannot set the price. Choose another question.`;
+            issues['settings.fee.byChoice.field'] = `"${questionWording(held)}" set the price, and it is no longer a question outside the repeating sections. Choose another question, or put it back.`;
+        } else if (!canSetPrice(question)) {
+            issues['settings.fee.byChoice.field'] = `"${questionWording(question)}" is no longer a dropdown or choose-one question with its own choices, so it cannot set the price. Change its answer type back, or choose another question.`;
         } else if (!question.required) {
-            issues['settings.fee.byChoice.field'] = `"${question.label || question.name}" must be required, or a registration that leaves it blank would have no price. Switch on Required for that question.`;
+            issues['settings.fee.byChoice.field'] = `"${questionWording(question)}" must be required, or a registration that leaves it blank would have no price. Switch on Required for that question.`;
         }
 
-        choicePricing.value.levels.forEach(level => {
+        const levels = choicePricing.value.levels;
+
+        if (levels.length > MAX_CHOICE_PRICES) {
+            issues['settings.fee.byChoice.prices'] = `A question that sets the price can have at most ${MAX_CHOICE_PRICES} choices. Remove some, or price the form another way.`;
+        }
+
+        levels.forEach(level => {
+            const key = `settings.fee.byChoice.prices.${level.index}.amount`;
+
             if (level.amount === null) {
-                issues[`settings.fee.byChoice.prices.${level.index}.amount`] = 'Every choice needs a price.';
+                issues[key] = 'Every choice needs a price.';
             } else if (level.amount < 0) {
-                issues[`settings.fee.byChoice.prices.${level.index}.amount`] = 'A price cannot be negative.';
+                issues[key] = 'A price cannot be negative.';
+            } else if (level.amount > MAX_PRICE) {
+                issues[key] = 'A price cannot be more than 1,000,000.';
             }
         });
+
+        // A price charged per unit needs its number question; a list of dates needs a price
+        // that reserves one. The server says both, under these keys.
+        if (levels.some(level => level.perQuantity) && !quantityQuestions.value.some(field => field.name === s.feePerQuantityOf)) {
+            issues['settings.fee.perQuantityOf'] = 'Choose the number question the "For each" prices are multiplied by, or untick "For each" on those prices.';
+        }
+
+        if (choicePricing.value.dates !== null && levels.length > 0 && !levels.some(level => level.reservesDate)) {
+            issues['settings.reservation'] = 'This form has a list of dates to reserve, and no price reserves one. Tick "Reserves a date" on the prices that do.';
+        }
     }
 
     if (pricing === 'dateSteps' && s.feeAmount === null && s.feeTiers.length === 0) {
@@ -2941,21 +3087,25 @@ const paymentIssues = computed<Record<string, string>>(() => {
 const fieldIssue = (key: string): string | null =>
     paymentIssues.value[key] ?? (serverFieldErrorsByKey.value[key]?.join(' ') || null);
 
-/** An edited field's server refusal no longer describes it. */
-const clearServerError = (key: string) => {
-    if (!serverFieldErrorsByKey.value[key]) return;
+/**
+ * Forgets the server's refusals whose key matches, and leaves the list alone when none
+ * does. Replacing it redraws the screen, and a redraw writes every number box back from its
+ * number: under the cursor "10.0" becomes "10", and the next key makes it 105.
+ */
+const dropServerErrors = (matches: (key: string) => boolean) => {
+    const dropped = Object.keys(serverFieldErrorsByKey.value).filter(matches);
+    if (!dropped.length) return;
 
     const remaining = { ...serverFieldErrorsByKey.value };
-    delete remaining[key];
+    dropped.forEach(key => delete remaining[key]);
     serverFieldErrorsByKey.value = remaining;
 };
+
+/** An edited field's server refusal no longer describes it. */
+const clearServerError = (key: string) => dropServerErrors(candidate => candidate === key);
 
 /** Price-step refusals are keyed by position, which adding or removing a step shifts. */
-const clearTierErrors = () => {
-    const remaining = { ...serverFieldErrorsByKey.value };
-    Object.keys(remaining).filter(key => key.startsWith('settings.fee.tiers.')).forEach(key => delete remaining[key]);
-    serverFieldErrorsByKey.value = remaining;
-};
+const clearTierErrors = () => dropServerErrors(key => key.startsWith('settings.fee.tiers.'));
 
 const addTier = () => {
     if (draft.value.settings.feeTiers.length >= 10) return;
@@ -2970,13 +3120,8 @@ const removeTier = (index: number) => {
 };
 
 /** Notify-email refusals are keyed by position, which adding or removing one shifts. */
-const clearNotifyEmailErrors = () => {
-    const remaining = { ...serverFieldErrorsByKey.value };
-    Object.keys(remaining)
-        .filter(key => key === 'settings.notifyEmails' || key.startsWith('settings.notifyEmails.'))
-        .forEach(key => delete remaining[key]);
-    serverFieldErrorsByKey.value = remaining;
-};
+const clearNotifyEmailErrors = () =>
+    dropServerErrors(key => key === 'settings.notifyEmails' || key.startsWith('settings.notifyEmails.'));
 
 const addNotifyEmail = () => {
     if (draft.value.settings.notifyEmails.length >= MAX_NOTIFY_EMAILS) return;
@@ -2991,43 +3136,76 @@ const removeNotifyEmail = (index: number) => {
 };
 
 /** Refusals about the fee no longer describe it once its pricing changes. */
-const clearFeeErrors = () => {
-    const remaining = { ...serverFieldErrorsByKey.value };
-    Object.keys(remaining).filter(key => key === 'settings.fee' || key.startsWith('settings.fee.')).forEach(key => delete remaining[key]);
-    serverFieldErrorsByKey.value = remaining;
-};
+const clearFeeErrors = () => dropServerErrors(key => key === 'settings.fee' || key.startsWith('settings.fee.'));
 
 /** Rows are keyed by position and checked against each other, so any edit clears them all. */
-const clearCountTierErrors = () => {
-    const remaining = { ...serverFieldErrorsByKey.value };
-    Object.keys(remaining).filter(key => key === 'settings.fee' || key.startsWith('settings.fee.countTiers')).forEach(key => delete remaining[key]);
-    serverFieldErrorsByKey.value = remaining;
-};
+const clearCountTierErrors = () => dropServerErrors(key => key === 'settings.fee' || key.startsWith('settings.fee.countTiers'));
 
 /** The server's refusals about the prices by answer are keyed by position, which any edit to them can shift. */
-const clearChoiceErrors = () => {
-    const remaining = { ...serverFieldErrorsByKey.value };
-    Object.keys(remaining).filter(key => key === 'settings.fee' || key.startsWith('settings.fee.byChoice')).forEach(key => delete remaining[key]);
-    serverFieldErrorsByKey.value = remaining;
+const clearChoiceErrors = () =>
+    dropServerErrors(key => key === 'settings.fee' || key.startsWith('settings.fee.byChoice') || key === 'settings.reservation');
+
+const pickChoiceQuestion = (picked: string) => {
+    // 'held' is the question that can no longer set a price: choosing it again changes nothing.
+    if (picked !== 'held') {
+        const question = picked === '' ? undefined : choiceQuestions.value[Number(picked)];
+        choiceQuestionHeld.value = question ? toRaw(question) : null;
+    }
+
+    clearChoiceErrors();
 };
 
-const setChoicePrice = (option: FormFieldOption, amount: number | null) => {
+const replaceChoicePrice = (option: FormFieldOption, price: ChoicePrice) => {
     const prices = new Map(choicePriceByOption.value);
-    prices.set(toRaw(option), { ...choicePriceOf(option), amount });
+    prices.set(toRaw(option), price);
     choicePriceByOption.value = prices;
     clearChoiceErrors();
 };
 
-/** Everything said about one choice's price: its amount first, then what an imported price carries. */
+/** `text` is the box's own value, kept as typed ("425.0" stays "425.0" while its number is 425). */
+const setChoicePrice = (option: FormFieldOption, text: string) => {
+    const held = choicePriceOf(option);
+    if (held.text === text) return;
+
+    replaceChoicePrice(option, { ...held, text, amount: toNumberOrNull(text) });
+};
+
+/** A price's switch: charged per unit, or reserves a date. Off is the key gone, as a new price has it. */
+const setChoiceSwitch = (option: FormFieldOption, key: 'perQuantity' | 'reservesDate', on: boolean) => {
+    const held = choicePriceOf(option);
+    const extra = { ...held.extra };
+
+    if (on) extra[key] = true;
+    else delete extra[key];
+
+    replaceChoicePrice(option, { ...held, extra });
+    clearServerError('settings.fee.perQuantityOf');
+};
+
+// A choice added, removed or moved under the question shifts every row: a refusal the
+// server keyed by position would then sit beside another choice.
+watch(() => (choiceQuestion.value?.options ?? []).map(option => toRaw(option)), (now, before) => {
+    if (now.length !== before.length || now.some((option, index) => option !== before[index])) clearChoiceErrors();
+});
+
+/** Everything said about one choice's price: its amount first, then what the server says of the row. */
 const choicePriceIssue = (index: number): string | null =>
     ['amount', 'value', 'perQuantity', 'reservesDate']
         .map(part => fieldIssue(`settings.fee.byChoice.prices.${index}.${part}`))
         .filter((message): message is string => !!message)
         .join(' ') || null;
 
-/** A refusal of the prices as a whole (a choice with no price, a price for a choice that is gone). */
+/**
+ * What is said of the prices as a whole: a choice with no price, too many choices, a list of
+ * dates no price reserves; and the number question, when its own picker is not on screen.
+ */
 const choiceBlockIssue = computed<string | null>(() =>
-    [fieldIssue('settings.fee.byChoice'), fieldIssue('settings.fee.byChoice.prices')]
+    [
+        fieldIssue('settings.fee.byChoice'),
+        fieldIssue('settings.fee.byChoice.prices'),
+        fieldIssue('settings.reservation'),
+        choiceOffersPerUnit.value ? null : fieldIssue('settings.fee.perQuantityOf')
+    ]
         .filter((message): message is string => !!message)
         .join(' ') || null
 );
@@ -3048,8 +3226,8 @@ const setPricing = (pricing: FeePricing) => {
     }
 
     // With one question that can set a price there is only one to choose.
-    if (pricing === 'choice' && !s.feeChoiceField && choiceQuestions.value.length === 1) {
-        s.feeChoiceField = choiceQuestions.value[0].name;
+    if (pricing === 'choice' && !choiceQuestionHeld.value && choiceQuestions.value.length === 1) {
+        choiceQuestionHeld.value = toRaw(choiceQuestions.value[0]);
     }
 
     if (pricing === 'count' && !s.feeCountTiers.length) {
