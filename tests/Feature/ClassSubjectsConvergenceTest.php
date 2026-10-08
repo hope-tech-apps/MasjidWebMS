@@ -118,13 +118,13 @@ it('does not capture orphan work on rename add or merge but explicitly attaches 
     expect($plan->fresh()->class_subject_id)->toBe($id);
 });
 
-it('blocks reactivation after office edits and rolls every school write back on blockers', function () {
+it('preserves office choices without retranslating after deliberate disable', function () {
     ($this->activate)(); $science = ClassSubject::where('name', 'Science')->firstOrFail();
     $this->staff->fresh()->update(['class_subject_ids' => [$science->id]]);
-    CapabilityWriter::apply($this->org->fresh(), ['class_subjects' => false], null);
+    \App\Support\ClassSubjectDisabler::run($this->org->fresh(), false, [$this->staff->id]);
     $before = DB::table('class_subjects')->get()->toJson();
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->org->id, '--enable' => true])->assertFailed();
-    expect($this->org->fresh()->hasCapability('class_subjects'))->toBeFalse();
+    $this->artisan('class-subjects:initialize', ['--masjid' => $this->org->id, '--enable' => true])->assertSuccessful();
+    expect($this->org->fresh()->hasCapability('class_subjects'))->toBeTrue();
     expect(DB::table('class_subjects')->get()->toJson())->toBe($before);
     expect($this->staff->fresh()->class_subject_ids)->toBe([$science->id]);
 });
@@ -164,7 +164,7 @@ it('keeps general lesson plans shared even with no subjects assigned', function 
 it('keeps unmatched work unmatched after reactivation and links only fresh off work', function () {
     $old = ($this->work)('History'); ($this->activate)();
     ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => 'History']);
-    CapabilityWriter::apply($this->org->fresh(), ['class_subjects' => false], null);
+    \App\Support\ClassSubjectDisabler::run($this->org->fresh());
     $fresh = ($this->work)('History'); ($this->activate)();
     expect($old->fresh()->class_subject_id)->toBeNull();
     expect($fresh->fresh()->class_subject_id)->toBe(ClassSubject::where('name', 'History')->value('id'));
@@ -263,7 +263,7 @@ it('applies the same id assignment matrix to every held tool route', function (s
 
 it('ignores unknown off id input even if activation commits during that dispatched save', function () {
     ($this->activate)(); $ids = $this->staff->fresh()->class_subject_ids;
-    CapabilityWriter::apply($this->org->fresh(), ['class_subjects' => false], null);
+    \App\Support\ClassSubjectDisabler::run($this->org->fresh());
     $events = GroupStaff::getEventDispatcher();
     GroupStaff::setEventDispatcher(clone $events);
     try {
@@ -332,12 +332,12 @@ it('ignores feature ids and writes only legacy snapshots on saved work while off
     expect($row->fresh()->class_subject_link_checked_at)->toBeNull();
 })->with(['grades', 'plans']);
 
-it('blocks activation of historical ids whose office edit history is unknown', function () {
+it('preserves historical translated ids even without an audit snapshot', function () {
     $this->staff->update(['subjects' => null]);
     $subject = ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => 'Science']);
     // An older version could have edited these IDs without recording this version's edit fact.
     DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode([$subject->id]), 'class_subjects_mapped_at' => now()]);
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->org->id, '--enable' => true])->expectsOutputToContain('unknown activation provenance')->assertFailed();
-    expect($this->org->fresh()->hasCapability('class_subjects'))->toBeFalse();
+    $this->artisan('class-subjects:initialize', ['--masjid' => $this->org->id, '--enable' => true])->assertSuccessful();
+    expect($this->org->fresh()->hasCapability('class_subjects'))->toBeTrue();
     expect($this->staff->fresh()->class_subject_ids)->toBe([$subject->id]);
 });

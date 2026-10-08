@@ -34,7 +34,7 @@ trait HasClassSubjectWork
             if ($this->exists) {
                 $current = static::where('masjid_id', $orgId)->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
                 if ((int) $current->group_id !== (int) $group->id) throw ValidationException::withMessages(['subject' => ['Saved work cannot move to another class.']]);
-                $general = $this instanceof LessonPlan && SubjectKey::clean($current->subject) === null;
+                $general = $this instanceof LessonPlan && $current->class_subject_id === null && SubjectKey::clean($current->subject) === null;
                 abort_unless(SubjectFence::allowsWork($limits, $current->class_subject_id, $general), 404);
                 $this->setRawAttributes($current->getAttributes(), true);
                 $this->setRawAttributes(array_replace($this->getAttributes(), $dirty));
@@ -42,7 +42,8 @@ trait HasClassSubjectWork
             if (! $this->exists || $this->isDirty(['subject', 'class_subject_id'])) {
                 $name = SubjectKey::clean($this->subject);
                 if ($name === null && (! array_key_exists('class_subject_id', $dirty) || $this->class_subject_id === null)) {
-                    if (! ($this instanceof LessonPlan) && $limits !== null) SubjectFence::refuse(null);
+                    // General plans stay shared, but publishing named work to the whole class is an all-subjects choice.
+                    if ($limits !== null && (! ($this instanceof LessonPlan) || ($this->exists && ! $general))) SubjectFence::refuse(null);
                     $this->class_subject_id = null;
                     $this->subject = null;
                 } else {

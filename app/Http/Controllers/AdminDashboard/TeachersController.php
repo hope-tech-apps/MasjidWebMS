@@ -1280,9 +1280,12 @@ class TeachersController extends Controller
         return ['class_subject_ids' => $row === null || ($row->class_subjects_mapped_at === null && $row->class_subject_ids_edited_at === null) ? [] : $row->class_subject_ids];
     }
 
+    private array $subjectModes = [];
+
     private function subjectsOn(): bool
     {
-        return \App\Support\ClassSubjectMode::enabled($this->tenant->get());
+        $id = $this->tenant->get();
+        return $this->subjectModes[$id ?? 0] ??= \App\Support\ClassSubjectMode::enabled($id);
     }
 
     private function assignmentMap($rows): array

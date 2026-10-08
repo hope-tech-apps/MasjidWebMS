@@ -28,6 +28,21 @@ use Illuminate\Support\Facades\Auth;
  */
 abstract class TeacherController extends Controller
 {
+    /** One capability decision per organisation in this controller/request. */
+    protected array $classSubjectsByOrganisation = [];
+
+    protected function classSubjectsEnabled(int|string|null $masjidId): bool
+    {
+        if ($masjidId === null) return false;
+        return $this->classSubjectsByOrganisation[(int) $masjidId] ??= \App\Support\ClassSubjectMode::rememberResponseMode((int) $masjidId, \App\Support\ClassSubjectMode::enabled($masjidId));
+    }
+
+    protected function classSubjectsForGroup(int $groupId): bool
+    {
+        $orgId = app(\App\Support\TenantContext::class)->get() ?? Group::withoutMasjidScope()->whereKey($groupId)->value('masjid_id');
+        return $this->classSubjectsEnabled($orgId);
+    }
+
     /** @var array<int, string> the school's today, by organisation, for this request */
     private array $todayByOrganisation = [];
 
@@ -96,7 +111,7 @@ abstract class TeacherController extends Controller
      */
     protected function classPayload(Group $group, ?int $unreadMessages = null): array
     {
-        if (\App\Support\ClassSubjectMode::enabled($group->masjid_id)) {
+        if ($this->classSubjectsEnabled($group->masjid_id)) {
             return $this->classPayloadWithClassSubjects($group, $unreadMessages);
         }
 

@@ -85,15 +85,15 @@ it('seeds a normalized grade union, catalogue order, missing guide subjects and 
     'literal range' => [['10th'], []],
 ]);
 
-it('preselects guide spellings and default tools without rewriting combined columns', function () {
+it('preselects guide spellings and default tools while skipping redundant joint columns', function () {
     foreach (["Qur’an", 'Arabic', 'ELA', 'Islamic Studies'] as $name) ($this->catalogue)($name);
     foreach (["Qur'an", 'Arabic Language', 'English Language Arts', "Qur'an & Islamic Studies"] as $name) ($this->guide)($name);
     ($this->enable)();
-    expect(ClassSubject::count())->toBe(5);
+    expect(ClassSubject::count())->toBe(4);
     expect(ClassSubject::where('name', 'Arabic')->first()->toArray())->toMatchArray(['tool' => 'arabic_letters', 'guide_subject' => 'Arabic Language']);
     expect(ClassSubject::where('name', 'ELA')->first()->tool)->toBe('english_letters');
     expect(ClassSubject::where('name_key', 'quran')->first()->tool)->toBe('hifdh');
-    expect(ClassSubject::where('name', "Qur'an & Islamic Studies")->first()->tool)->toBeNull();
+    expect(ClassSubject::where('name', "Qur'an & Islamic Studies")->exists())->toBeFalse();
 });
 
 it('blocks an unmapped legacy restriction and reports the class and missing subject without writing', function () {
@@ -117,7 +117,7 @@ it('dry runs without writes, maps legacy restrictions, and preserves all data on
     $subject->update(['name' => 'Language Practice', 'hidden_at' => now(), 'position' => 8]);
     $snapshot = DB::table('class_subjects')->get()->toJson();
     $assignments = DB::table('group_staff')->get()->toJson();
-    CapabilityWriter::apply($this->school, ['class_subjects' => false], $this->office->id);
+    \App\Support\ClassSubjectDisabler::run($this->school->fresh());
     ($this->catalogue)('New Science');
     ($this->enable)();
     $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id, '--dry-run' => true])->assertSuccessful();
@@ -390,7 +390,7 @@ it('keeps initialization metadata and a disabled grant out of existing organizat
     expect($after)->toBe($before);
     ($this->enable)();
     expect($this->school->fresh()->append(Masjid::ADMIN_APPENDS)->toArray()['capabilities']['class_subjects'])->toBeTrue();
-    CapabilityWriter::apply($this->school, ['class_subjects' => false], $this->office->id);
+    \App\Support\ClassSubjectDisabler::run($this->school->fresh());
     expect($this->school->fresh()->append(Masjid::ADMIN_APPENDS)->toArray()['capabilities'])->not->toHaveKey('class_subjects');
     expect($this->school->fresh()->toArray()['capability_overrides'])->toBeNull();
 });

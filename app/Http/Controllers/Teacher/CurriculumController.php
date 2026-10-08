@@ -51,7 +51,7 @@ class CurriculumController extends TeacherController
 
     public function index(Request $request, $masjid_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::enabled((int) $masjid_id)) {
+        if ($this->classSubjectsEnabled((int) $masjid_id)) {
             return $this->indexWithClassSubjects($request, $masjid_id);
         }
 
@@ -278,7 +278,7 @@ class CurriculumController extends TeacherController
 
     private function limits(Request $request): ?array
     {
-        if (\App\Support\ClassSubjectMode::enabled((int) $request->route('masjid_id'))) {
+        if ($this->classSubjectsEnabled((int) $request->route('masjid_id'))) {
             return $this->limitsWithClassSubjects($request);
         }
 
@@ -293,13 +293,12 @@ class CurriculumController extends TeacherController
             if ($request->filled('group_id')) {
                 $group = \App\Models\Group::findOrFail((int) $request->query('group_id'));
                 abort_unless(app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
-                return SubjectFence::limitsForIds(SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id), $group, true);
+                return $this->curriculumLimitsForGroup($request, $group);
             }
             $ids = []; $keys = [];
             foreach (\App\Models\Group::whereIn('id', app(\App\Support\GroupAudience::class)->leaderGroupIdsFor($request->user()))->get() as $group) {
                 if (! SubjectFence::usesClassSubjects($group)) continue;
-                $limits = SubjectFence::limitsForIds(SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id), $group, true);
-                if ($limits === null) return null;
+                $limits = $this->curriculumLimitsForGroup($request, $group);
                 $ids = [...$ids, ...$limits['class_subject_ids']];
                 $keys = [...$keys, ...$limits['keys']];
             }
@@ -308,6 +307,14 @@ class CurriculumController extends TeacherController
         return $request->filled('group_id')
             ? SubjectFence::limitsFor($request->user(), (int) $request->query('group_id'))
             : null;
+    }
+
+    /** All in one class means only that class's guide links, including on a scoped request. */
+    private function curriculumLimitsForGroup(Request $request, \App\Models\Group $group): array
+    {
+        $ids = SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id);
+        if ($ids === null) $ids = \App\Models\ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->pluck('id')->all();
+        return SubjectFence::limitsForIds($ids, $group, true);
     }
 
     /**
@@ -369,7 +376,7 @@ class CurriculumController extends TeacherController
      */
     private function subjectsFor(Request $request, ?string $grade): \Illuminate\Support\Collection
     {
-        if (\App\Support\ClassSubjectMode::enabled((int) $request->route('masjid_id'))) {
+        if ($this->classSubjectsEnabled((int) $request->route('masjid_id'))) {
             return $this->subjectsForWithClassSubjects($request, $grade);
         }
 
@@ -449,7 +456,7 @@ class CurriculumController extends TeacherController
      */
     public function standards(Request $request, $masjid_id): JsonResponse
     {
-        if (\App\Support\ClassSubjectMode::enabled((int) $masjid_id)) {
+        if ($this->classSubjectsEnabled((int) $masjid_id)) {
             return $this->standardsWithClassSubjects($request, $masjid_id);
         }
 

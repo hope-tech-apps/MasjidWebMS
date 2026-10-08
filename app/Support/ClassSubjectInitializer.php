@@ -61,21 +61,24 @@ final class ClassSubjectInitializer
     {
         if (! $dryRun && ! $enable) throw ValidationException::withMessages(['enable' => ['Initialization only occurs with --enable. Use --dry-run to preview without writing.']]);
         return app(TenantContext::class)->runWithout(function () use ($org, $dryRun) {
-            return DB::transaction(function () use ($org, $dryRun) {
+            if ($dryRun) {
+                $fresh = Masjid::whereKey($org->id)->firstOrFail();
+                self::assertSchool($fresh);
+                return self::report($fresh)[1];
+            }
+            return DB::transaction(function () use ($org) {
                 // First statement is a current, unique-PK school mutex, before consistent reads.
                 $locked = Masjid::whereKey($org->id)->lockForUpdate()->firstOrFail();
-                if ($locked->orgType() !== Masjid::ORG_TYPE_SCHOOL) throw ValidationException::withMessages(['masjid' => ['Class subjects activation requires a school.']]);
-                $alreadyOn = SchoolSettings::classSubjects($locked);
-                $groups = self::featureGroups($locked)->orderBy('id')->get();
-                $report = $groups->map(fn ($group) => self::previewGroup($group, $alreadyOn))->all();
-                if ($dryRun || $alreadyOn || collect($report)->contains(fn ($r) => $r['blocked'] !== [])) return $report;
+                self::assertSchool($locked);
+                [$groups, $report] = self::report($locked);
+                if (SchoolSettings::classSubjects($locked) || collect($report)->contains(fn ($r) => $r['blocked'] !== [])) return $report;
                 foreach ($groups as $group) {
                     $group = Group::withTrashed()->whereKey($group->id)->lockForUpdate()->firstOrFail();
                     self::initializeGroup($group);
                     $subjects = self::currentSubjects($group);
                     foreach (self::currentStaff($group) as $staff) {
-                        // Repeat under current row locks; an office edit must not be overwritten.
-                        if (($blocker = self::translationBlocker($staff)) !== null) throw ValidationException::withMessages(['class_subject_ids' => [$blocker]]);
+                        // Once IDs have authority, neither legacy edits nor holder moves translate them again.
+                        if (! self::needsTranslation($staff)) continue;
                         $ids = self::mapLegacy($group, $staff->subjects, $subjects);
                         DB::table('group_staff')->where('masjid_id', $locked->id)->where('id', $staff->id)->update([
                             'class_subject_ids' => $ids === null ? null : json_encode($ids),
@@ -96,29 +99,37 @@ final class ClassSubjectInitializer
         });
     }
 
-    private static function translationBlocker(GroupStaff $staff): ?string
+    private static function assertSchool(Masjid $org): void
     {
-        if ($staff->class_subject_ids_edited_at !== null) return "Teacher #{$staff->user_id}: office-edited IDs block reactivation. No subjects changed.";
-        if ($staff->getRawOriginal('class_subjects_translated_from') === null
-            && ($staff->class_subjects_mapped_at !== null || $staff->class_subject_ids !== null)) {
-            return "Teacher #{$staff->user_id}: unknown activation provenance blocks translation. No subjects changed.";
-        }
-        return null;
+        if ($org->orgType() !== Masjid::ORG_TYPE_SCHOOL) throw ValidationException::withMessages(['masjid' => ['Class subjects activation requires a school.']]);
+    }
+
+    /** A mapped row or a new ON office choice already has permanent ID authority. */
+    private static function needsTranslation(GroupStaff $staff): bool
+    {
+        return $staff->class_subjects_mapped_at === null && $staff->class_subject_ids_edited_at === null;
+    }
+
+    /** Shared plain-read report, recomputed under the school mutex for activation. */
+    private static function report(Masjid $org): array
+    {
+        $groups = self::featureGroups($org)->orderBy('id')->get();
+        return [$groups, $groups->map(fn ($group) => self::previewGroup($group, SchoolSettings::classSubjects($org)))->all()];
     }
 
     private static function previewGroup(Group $group, bool $alreadyOn): array
     {
         $existing = ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->get();
-        $creates = []; $blocked = [];
+        $creates = []; $blocked = []; $combined = [];
         if ($existing->isEmpty() && $group->class_subjects_initialized_at === null) {
-            try { $creates = self::startingList($group); }
+            try { $plan = self::startingPlan($group); $creates = $plan['subjects']; $combined = $plan['combined_columns']; }
             catch (ValidationException $e) { foreach ($e->errors() as $messages) $blocked = [...$blocked, ...$messages]; }
         }
         $subjects = $existing->isNotEmpty() ? $existing : collect($creates)->map(fn ($fields, $i) =>
             (new ClassSubject($fields))->forceFill(['id' => -($i + 1), 'name_key' => SubjectKey::for($fields['name'])]));
         $report = ['class' => $group->name, 'class_id' => $group->id, 'archived' => $group->trashed(), 'subjects_added' => count($creates),
             'assignments_mapped' => 0, 'creates' => $creates, 'assignments' => [], 'losses' => [], 'blocked' => $blocked,
-            'saved_work_links' => [], 'orphaned_work' => []];
+            'saved_work_links' => [], 'orphaned_work' => [], 'combined_columns' => $combined];
         foreach (ClassSubjectSavedWork::rows($group) as $row) {
             if ($row['general']) continue;
             $subject = ClassSubjectSavedWork::matchingSubject($row['key'], $subjects);
@@ -131,9 +142,8 @@ final class ClassSubjectInitializer
         }
         foreach (GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->orderBy('id')->get() as $staff) {
             $ids = $staff->class_subject_ids;
-            if (! $alreadyOn) {
+            if (! $alreadyOn && self::needsTranslation($staff)) {
                 $report['assignments_mapped']++;
-                if (($blocker = self::translationBlocker($staff)) !== null) $report['blocked'][] = $blocker;
                 $ids = $staff->subjects === null || $staff->subjects === [] ? null : [];
                 foreach ($staff->subjects ?? [] as $legacyKey) {
                     try { $ids = [...$ids, ...self::mapLegacy($group, [$legacyKey], $subjects)]; }
@@ -143,7 +153,7 @@ final class ClassSubjectInitializer
             }
             $selected = $ids === null ? $subjects : $subjects->whereIn('id', $ids);
             $report['assignments'][] = ['teacher_id' => $staff->user_id, 'legacy' => $staff->subjects,
-                'names' => $ids === null ? ['all subjects'] : $selected->pluck('name')->all(), 'will_map' => ! $alreadyOn];
+                'names' => $ids === null ? ['all subjects'] : $selected->pluck('name')->all(), 'will_map' => ! $alreadyOn && self::needsTranslation($staff)];
             $legacy = $staff->subjects ?: null;
             foreach (['hifdh' => ['quran', 'Hifdh'], 'arabic_letters' => ['arabic', 'Arabic letters and daily notes'], 'english_letters' => ['arabic', 'English letters']] as $tool => [$old, $label]) {
                 if (($legacy === null || in_array($old, $legacy, true)) && ! $selected->contains('tool', $tool)) $report['losses'][] = "LOSS Teacher #{$staff->user_id}: {$label}";
@@ -218,22 +228,35 @@ final class ClassSubjectInitializer
 
     public static function startingList(Group $group, bool $currentGradesOnly = false): array
     {
+        return self::startingPlan($group, $currentGradesOnly)['subjects'];
+    }
+
+    private static function startingPlan(Group $group, bool $currentGradesOnly = false): array
+    {
         $grades = $group->memberships()->participants()->current()->pluck('grade_label')->all();
         if ($grades === [] && ! $currentGradesOnly) $grades = $group->subject_seed_grades ?? [];
         $keys = array_map(fn ($g) => GradeLevel::key($g), $grades);
         $all = $keys === [] || in_array(null, $keys, true);
         $applies = fn ($g) => $all || in_array(GradeLevel::key($g), $keys, true);
-        $guide = CurriculumWeek::where('masjid_id', $group->masjid_id)->select('grade_label', 'subject')->distinct()->orderBy('subject')->get()
-            ->filter(fn ($row) => $applies($row->grade_label))->pluck('subject')->unique()->values();
+        $guideRows = CurriculumWeek::where('masjid_id', $group->masjid_id)->select('grade_label', 'subject')->distinct()->orderBy('subject')->get()
+            ->filter(fn ($row) => $applies($row->grade_label));
+        $guide = $guideRows->pluck('subject')->unique()->values();
         $names = [];
-        foreach (SchoolSubject::where('masjid_id', $group->masjid_id)->orderBy('position')->orderBy('name')->get() as $subject) {
+        foreach (SchoolSubject::where('masjid_id', $group->masjid_id)->orderBy('position')->orderBy('id')->get() as $subject) {
             if ($all || empty($subject->grade_labels) || collect($subject->grade_labels)->contains($applies)) $names[] = $subject->name;
         }
-        $out = []; $seen = []; $tools = [];
+        $out = []; $seen = []; $tools = []; $combined = [];
+        $existingKeys = ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->pluck('name_key')->all();
+        $candidateKeys = array_unique([...$existingKeys, ...array_map(fn ($name) => SubjectKey::for($name), [...$names, ...$guide])]);
         foreach ([...$names, ...$guide] as $name) {
             $name = SubjectKey::clean($name);
             if ($name === null) continue;
             $key = SubjectKey::for($name);
+            $parts = preg_split('/\s*(?:&|\band\b|\/|,)\s*/iu', $name);
+            if ($guide->contains(fn ($column) => SubjectKey::for($column) === $key) && count($parts) > 1 && collect($parts)->every(fn ($part) => SubjectKey::clean($part) !== null && in_array(SubjectKey::for($part), $candidateKeys, true))) {
+                $combined[$name] = ['name' => $name, 'grades' => $guideRows->filter(fn ($row) => SubjectKey::for($row->subject) === $key)->pluck('grade_label')->unique()->values()->all()];
+                continue;
+            }
             $aliases = self::aliases($key);
             if (array_intersect($aliases, $seen) !== []) continue;
             $seen = [...$seen, ...$aliases];
@@ -245,6 +268,6 @@ final class ClassSubjectInitializer
             if ($tool !== null) $tools[$tool] = $name;
             $out[] = ['name' => $name, 'guide_subject' => $matches->count() === 1 ? $matches->first() : null, 'tool' => $tool];
         }
-        return $out;
+        return ['subjects' => $out, 'combined_columns' => array_values($combined)];
     }
 }
