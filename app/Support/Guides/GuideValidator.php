@@ -112,21 +112,29 @@ class GuideValidator
         finally { libxml_clear_errors(); libxml_use_internal_errors($old); }
         $faqs = [];
         foreach ($dom->getElementsByTagName('details') as $el) {
-            if ($el->hasAttribute('data-faq')) $faqs[] = $el->getAttribute('id');
+            if (! $el->hasAttribute('data-faq')) continue;
+            $summary = $el->getElementsByTagName('summary')->item(0);
+            $markup = '';
+            if ($summary) foreach ($summary->childNodes as $child) $markup .= $dom->saveHTML($child);
+            // Match the release tool: tags separate words, entities decode, whitespace collapses.
+            $plain = html_entity_decode(preg_replace('/<[^>]+>/', ' ', $markup), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $faqs[$el->getAttribute('id')] = trim(preg_replace('/\s+/u', ' ', $plain));
         }
+        $parsed = GuideAskText::parse($text, $file);
+        if ($parsed['title'] !== $meta['title']) $this->fail('ask-title', $file);
+        $titles = array_column($meta['tasks'], 'title', 'id');
         $tasks = $questions = [];
-        foreach (explode("\n", $text) as $line) {
-            if (! str_starts_with($line, '###')) continue;
-            if (! preg_match('/^### (Task|Common question) \[(.+)\]: (.+)$/uD', $line, $match)) $this->fail('ask-heading', $file);
-            if ($match[1] === 'Task') {
-                if (in_array($match[2], $tasks, true) || ! in_array($match[2], array_column($meta['tasks'], 'id'), true)) $this->fail('ask-task', $file);
-                $tasks[] = $match[2];
+        foreach ($parsed['blocks'] as $block) {
+            $id = $block['id'];
+            if ($block['kind'] === 'Task') {
+                if (in_array($id, $tasks, true) || ! isset($titles[$id]) || $block['title'] !== $titles[$id]) $this->fail('ask-task', $file);
+                $tasks[] = $id;
             } else {
-                if (in_array($match[2], $questions, true) || ! in_array($match[2], $faqs, true)) $this->fail('ask-faq', $file);
-                $questions[] = $match[2];
+                if (in_array($id, $questions, true) || ! isset($faqs[$id]) || $block['title'] !== $faqs[$id]) $this->fail('ask-faq', $file);
+                $questions[] = $id;
             }
         }
-        if (array_diff(array_column($meta['tasks'], 'id'), $tasks)) $this->fail('ask-task-missing', $file);
+        if (array_diff(array_keys($titles), $tasks)) $this->fail('ask-task-missing', $file);
     }
 
     private function checkFile(string $root, string $file, array $meta): void

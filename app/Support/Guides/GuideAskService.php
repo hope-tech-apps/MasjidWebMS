@@ -30,7 +30,7 @@ class GuideAskService
     public function contact(string $reader): string { return (string) config('guide_ask.contacts.'.$reader); }
     public function fallback(string $reader): string { return "I don't know that one. Please reach out to ".$this->contact($reader).' and ask.'; }
     public function failure(string $reader): string { return 'That did not work. Try again, or reach out to '.$this->contact($reader).'.'; }
-    public function resting(string $reader): string { return "The guide's question box is resting for today. Try again tomorrow, or reach out to ".$this->contact($reader).'.'; }
+    public function resting(string $reader, string $cap = 'organisation'): string { if ($cap === 'platform') return "The guide's question box is resting for now. Please reach out to ".$this->contact($reader).'.'; return "The guide's question box is resting for today. Try again tomorrow, or reach out to ".$this->contact($reader).'.'; }
 
     /** Limits and retention belong to the HTTP boundary, never to a grading run. */
     public function answer(array $manifest, array $books, string $reader, string $question, ?string $model = null): array
@@ -38,13 +38,17 @@ class GuideAskService
         if (trim((string) config('services.anthropic.key')) === '' || ! $this->hasText($manifest, $books) || ! isset(config('guide_ask.readers')[$reader])) throw new RuntimeException('Guide ask unavailable');
         $instruction = file_get_contents(resource_path('guides/ask-instructions.txt'));
         if ($instruction === false) throw new RuntimeException('Guide ask unavailable');
-        $texts = [];
+        $texts = []; $sources = [];
         foreach ($books as $book) {
             $meta = $manifest['books'][$book];
             $path = $this->releases->file($manifest['version'], $meta['ask']);
             $text = $path ? @file_get_contents($path) : false;
             if ($text === false || strlen($text) !== ($meta['ask_bytes'] ?? null) || ! hash_equals($meta['ask_sha256'] ?? '', hash('sha256', $text))) throw new RuntimeException('Guide ask unavailable');
             $texts[] = $text;
+            foreach ($meta['tasks'] as $task) $sources[] = ['kind' => 'tasks', 'book' => $book, 'id' => $task['id'], 'title' => $task['title']];
+            foreach (GuideAskText::parse($text, $meta['ask'])['blocks'] as $block) {
+                if ($block['kind'] === 'Common question') $sources[] = ['kind' => 'questions', 'book' => $book, 'id' => $block['id'], 'title' => $block['title']];
+            }
         }
         $stable = strtr($instruction, ['{reader}' => (string) config('guide_ask.readers.'.$reader), '{contact}' => $this->contact($reader)])."\n\n".implode("\n\n", $texts);
         $response = $this->client()->messages->create(
@@ -60,18 +64,42 @@ class GuideAskService
         foreach ($response->content as $block) if ($block->type === 'text') $parts[] = $block->text;
         $answer = trim(implode("\n", $parts));
         if ($answer === '') throw new RuntimeException('Guide answer empty');
-        $unknown = $answer === $this->fallback($reader);
-        $tasks = [];
-        if (! $unknown) foreach ($books as $book) foreach ($manifest['books'][$book]['tasks'] as $task) {
-            // Match a complete title in prose; never interpret model links or ids.
-            $pattern = '/(?<![\\p{L}\\p{N}_])'.preg_quote($task['title'], '/').'(?![\\p{L}\\p{N}_])/iu';
-            if (preg_match($pattern, $answer)) $tasks[] = ['book' => $book, 'id' => $task['id'], 'title' => $task['title']];
-        }
+        $fallback = $this->fallback($reader);
+        $normalized = preg_replace('/^[\s"\'“”‘’«»]+|[\s"\'“”‘’«»]+$/u', '', $answer);
+        $unknown = $normalized === rtrim($fallback, '.') || str_starts_with($normalized, $fallback);
+        if ($unknown) $answer = $fallback;
+        $links = $unknown ? ['tasks' => [], 'questions' => []] : $this->links($answer, $sources);
         $usage = $response->usage;
-        return ['answer' => $answer, 'unknown' => $unknown, 'tasks' => $tasks, 'usage' => [
+        return ['answer' => $answer, 'unknown' => $unknown, 'tasks' => $links['tasks'], 'questions' => $links['questions'], 'usage' => [
             'input' => $usage->inputTokens, 'output' => $usage->outputTokens,
             'cache_creation' => $usage->cacheCreationInputTokens ?? 0, 'cache_read' => $usage->cacheReadInputTokens ?? 0,
         ]];
+    }
+
+    /** Resolve longest overlapping title spans, then preserve manifest/book order. */
+    private function links(string $answer, array $sources): array
+    {
+        $occurrences = [];
+        foreach ($sources as $index => $source) {
+            $pattern = '/(?<![\\p{L}\\p{N}_])'.preg_quote($source['title'], '/').'(?![\\p{L}\\p{N}_])/iu';
+            preg_match_all($pattern, $answer, $matches, PREG_OFFSET_CAPTURE);
+            foreach ($matches[0] as [$text, $start]) $occurrences[] = ['index' => $index, 'start' => $start, 'end' => $start + strlen($text)];
+        }
+        usort($occurrences, fn ($a, $b) => ($b['end'] - $b['start']) <=> ($a['end'] - $a['start']) ?: $a['start'] <=> $b['start']);
+        $spans = []; $matched = [];
+        foreach ($occurrences as $hit) {
+            foreach ($spans as $span) {
+                // Identical titles in multiple permitted books may share the same span.
+                if ($span['start'] === $hit['start'] && $span['end'] === $hit['end']) continue;
+                if ($hit['start'] < $span['end'] && $hit['end'] > $span['start']) continue 2;
+            }
+            $spans[] = $hit; $matched[$hit['index']] = true;
+        }
+        $links = ['tasks' => [], 'questions' => []];
+        foreach ($sources as $index => $source) if (isset($matched[$index])) {
+            $kind = $source['kind']; unset($source['kind']); $links[$kind][] = $source;
+        }
+        return $links;
     }
 
     /** Same SDK/key as the Assistant. Its PSR-18 transport needs its OWN timeout. */

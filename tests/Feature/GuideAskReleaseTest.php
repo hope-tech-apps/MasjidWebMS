@@ -29,7 +29,7 @@ class GuideAskReleaseTest extends TestCase
 
     public static function invalid(): array
     {
-        return array_map(fn ($rule) => [$rule], ['path', 'unlisted', 'missing', 'hash', 'bytes', 'no-hash', 'no-bytes', 'orphan-meta', 'bytes-type', 'size', 'utf8', 'nul', 'cr', 'del', 'c1', 'extra-task', 'missing-task', 'duplicate-task', 'extra-faq', 'duplicate-faq', 'fake-heading']);
+        return array_map(fn ($rule) => [$rule], ['path', 'unlisted', 'missing', 'hash', 'bytes', 'no-hash', 'no-bytes', 'orphan-meta', 'bytes-type', 'size', 'utf8', 'nul', 'cr', 'del', 'c1', 'extra-task', 'missing-task', 'duplicate-task', 'extra-faq', 'duplicate-faq', 'fake-heading', 'task-title', 'faq-title', 'book-title', 'multiline-body', 'double-gap', 'faq-before-task', 'extra-tail']);
     }
 
     #[Test, DataProvider('invalid')]
@@ -38,6 +38,13 @@ class GuideAskReleaseTest extends TestCase
         $file = $this->source.'/admin/ask.txt'; $text = file_get_contents($file);
         $m = json_decode(file_get_contents($this->source.'/manifest.json'), true); $meta = &$m['books']['admin'];
         switch ($rule) {
+            case 'task-title': $text = str_replace('Admin Sprout task', 'private phrase', $text); break;
+            case 'faq-title': $text = str_replace('Why a pebble?', 'private phrase?', $text); break;
+            case 'book-title': $text = str_replace('=== Admin guide ===', '=== private phrase ===', $text); break;
+            case 'multiline-body': $text = str_replace('Silver fern.', "Silver\nfern.", $text); break;
+            case 'double-gap': $text = str_replace("\n\n", "\n\n\n", $text); break;
+            case 'faq-before-task': $parts = explode("\n\n", rtrim($text, "\n")); $text = implode("\n\n", [$parts[0], $parts[3], $parts[1], $parts[2]])."\n"; break;
+            case 'extra-tail': $text .= "\n"; break;
             case 'path': $meta['ask'] = 'school/ask.txt'; break;
             case 'unlisted': file_put_contents($this->source.'/admin/other.txt', 'private phrase'); break;
             case 'missing': unlink($file); break;
@@ -60,7 +67,7 @@ class GuideAskReleaseTest extends TestCase
             case 'duplicate-faq': $text .= "\n### Common question [faq-pebble]: Why?\nprivate phrase"; break;
             case 'fake-heading': $text .= "\n### Task invented\nprivate phrase"; break;
         }
-        if (in_array($rule, ['size', 'utf8', 'nul', 'cr', 'del', 'c1', 'extra-task', 'missing-task', 'duplicate-task', 'extra-faq', 'duplicate-faq', 'fake-heading'])) {
+        if (in_array($rule, ['size', 'utf8', 'nul', 'cr', 'del', 'c1', 'extra-task', 'missing-task', 'duplicate-task', 'extra-faq', 'duplicate-faq', 'fake-heading', 'task-title', 'faq-title', 'book-title', 'multiline-body', 'double-gap', 'faq-before-task', 'extra-tail'])) {
             file_put_contents($file, $text); $meta['ask_bytes'] = strlen($text); $meta['ask_sha256'] = hash('sha256', $text);
         }
         file_put_contents($this->source.'/manifest.json', json_encode($m));

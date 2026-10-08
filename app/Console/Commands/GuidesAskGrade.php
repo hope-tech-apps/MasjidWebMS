@@ -11,7 +11,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 class GuidesAskGrade extends Command
 {
     protected $signature = 'guides:ask-test {test-set : External JSON grading set}
-        {--model= : Override the configured guide model} {--limit= : Maximum number of questions}
+        {--model= : Override the configured guide model} {--limit= : Required maximum number of questions (1-100)} {--yes : Confirm calls to the paid API}
         {--input-price= : USD per million uncached input tokens} {--output-price= : USD per million output tokens}
         {--cache-read-price= : USD per million cached input tokens} {--cache-write-price= : USD per million cache creation tokens}';
     protected $description = 'Grade the installed guide through the real answer path, without limits or storage';
@@ -27,8 +27,8 @@ class GuidesAskGrade extends Command
                 $this->error('The test set names a different release. Select that installed release first.'); return self::FAILURE;
             }
             $limit = $this->option('limit');
-            if ($limit !== null && (! ctype_digit((string) $limit) || (int) $limit < 1)) throw new \RuntimeException;
-            $questions = $limit === null ? $set['questions'] : array_slice($set['questions'], 0, (int) $limit);
+            if ($limit === null || ! ctype_digit((string) $limit) || (int) $limit < 1 || (int) $limit > 100) throw new \RuntimeException;
+            $questions = array_slice($set['questions'], 0, (int) $limit);
             $prices = [];
             foreach (['input', 'output', 'cache-read', 'cache-write'] as $key) {
                 $value = $this->option($key.'-price');
@@ -45,14 +45,19 @@ class GuidesAskGrade extends Command
         } catch (Throwable) {
             $this->error('Invalid test set, options, or unavailable guide text.'); return self::FAILURE;
         }
+        $model = $this->option('model') ?? (string) config('guide_ask.model');
+        $this->output->writeln('Model: '.$model.'; '.count($questions).' question(s); this calls the paid API.', OutputInterface::OUTPUT_RAW);
+        if (! $this->option('yes') && (! $this->input->isInteractive() || ! $this->confirm('Call the paid API for these questions?', false))) {
+            $this->error('No calls made. Confirm interactively or pass --yes.'); return self::FAILURE;
+        }
         $passed = 0; $totals = ['input' => 0, 'output' => 0, 'cache_creation' => 0, 'cache_read' => 0]; $hits = 0;
         foreach ($questions as $index => $q) {
             // Questions and answers are printed here only; no logger or retention path.
             $this->output->writeln(($index + 1).'. '.$q['q'], OutputInterface::OUTPUT_RAW);
             try {
-                $result = $ask->answer($manifest, $q['guides'], $q['who'], $q['q'], $this->option('model'));
+                $result = $ask->answer($manifest, $q['guides'], $q['who'], $q['q'], $model);
                 $this->output->writeln($result['answer'], OutputInterface::OUTPUT_RAW);
-                $ok = $q['expect'] === 'unknown' ? $result['unknown'] : ! $result['unknown'] && (bool) array_intersect($q['tasks'], array_column($result['tasks'], 'id'));
+                $ok = $q['expect'] === 'unknown' ? $result['unknown'] : ! $result['unknown'] && (bool) array_intersect($q['tasks'], array_column([...$result['tasks'], ...$result['questions']], 'id'));
                 foreach ($q['must_say'] ?? [] as $phrase) if (! str_contains($result['answer'], $phrase)) $ok = false;
                 foreach ($totals as $key => $value) $totals[$key] += $result['usage'][$key];
                 if ($result['usage']['cache_read'] > 0) $hits++;

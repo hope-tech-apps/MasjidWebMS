@@ -17,14 +17,11 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
-use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
-use Psr\Http\Client\ClientInterface;
-use Psr\Http\Message\RequestInterface;
-use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Console\Output\BufferedOutput;
 use Tests\TestCase;
+use Tests\Support\GuideAskTransport as AskTransport;
 
 class GuideAskTest extends TestCase
 {
@@ -153,19 +150,32 @@ class GuideAskTest extends TestCase
     }
 
     #[Test]
-    public function limits_fail_closed_when_locked_and_cache_flush_resets_spend(): void
+    public function in_flight_lock_refuses_and_cache_flush_does_not_reset_spend(): void
     {
-        $this->install(); $this->signIn();
-        $lock = Cache::lock('guide-ask:reserve', 5); $this->assertTrue($lock->get());
-        $this->postJson($this->url(), ['question' => 'How?'])->assertStatus(503);
+        $this->install(); $user = $this->signIn();
+        $lock = Cache::lock('guide-ask:in-flight:'.$user->id, 30); $this->assertTrue($lock->get());
+        $this->postJson($this->url(), ['question' => 'How?'])->assertStatus(429)->assertJsonPath('message', 'Too many questions just now. Try again in a minute.');
         $this->assertSame([], $this->transport->requests); $lock->release();
         config(['guide_ask.platform_per_month' => 1]);
         $this->postJson($this->url(), ['question' => 'How?'])->assertOk();
         $this->postJson($this->url(), ['question' => 'How?'])->assertStatus(429);
         Cache::flush();
-        $this->postJson($this->url(), ['question' => 'How?'])->assertOk();
-        $this->assertCount(2, $this->transport->requests);
+        $this->postJson($this->url(), ['question' => 'How?'])->assertStatus(429);
+        $this->assertCount(1, $this->transport->requests);
     }
+
+    #[Test, DataProvider('durableCaps')]
+    public function cache_flush_cannot_reopen_either_spending_cap(string $setting): void
+    {
+        $this->install(); $this->signIn(); config(['guide_ask.'.$setting => 1]);
+        $this->postJson($this->url(), ['question' => 'How?'])->assertOk();
+        $this->postJson($this->url(), ['question' => 'How?'])->assertStatus(429);
+        Cache::flush();
+        $this->postJson($this->url(), ['question' => 'How?'])->assertStatus(429);
+        $this->assertCount(1, $this->transport->requests);
+    }
+
+    public static function durableCaps(): array { return [['organisation_per_day'], ['platform_per_month']]; }
 
     #[Test]
     public function typed_question_is_not_trimmed_and_no_contact_name_is_copied_into_the_resource(): void
@@ -240,14 +250,14 @@ class GuideAskTest extends TestCase
     }
 
     #[Test]
-    public function unknown_is_the_only_stored_result_and_has_exactly_four_columns(): void
+    public function unknown_has_four_content_columns_and_an_auto_increment_row_key(): void
     {
         $this->install(); $this->signIn();
         $fallback = "I don't know that one. Please reach out to your Manara support contact and ask.";
         $this->transport->answer = '  '.$fallback."\n";
         $this->postJson($this->url(), ['question' => 'Where is my missing thing?'])->assertOk()->assertJsonPath('unknown', true)->assertJsonPath('answer', $fallback)->assertJsonPath('tasks', []);
         $columns = Schema::getColumnListing('guide_unanswered_questions'); sort($columns);
-        $this->assertSame(['books', 'created_at', 'question', 'release_version'], $columns);
+        $this->assertSame(['books', 'created_at', 'id', 'question', 'release_version'], $columns);
         $this->assertSame('text', Schema::getColumnType('guide_unanswered_questions', 'question'));
         $this->assertSame('text', Schema::getColumnType('guide_unanswered_questions', 'release_version'));
         $this->assertDatabaseHas('guide_unanswered_questions', ['question' => 'Where is my missing thing?', 'books' => 'admin+school', 'release_version' => 'd1-1234abcd']);
@@ -276,7 +286,7 @@ class GuideAskTest extends TestCase
         $this->post($this->url(), ['question' => 'How?'], ['Accept' => 'application/json'])->assertOk();
     }
 
-    public static function caps(): array { return [['person_per_minute', 'Too many questions just now. Try again in a minute.'], ['organisation_per_day', "The guide's question box is resting for today. Try again tomorrow, or reach out to your Manara support contact."], ['platform_per_month', "The guide's question box is resting for today. Try again tomorrow, or reach out to your Manara support contact."]]; }
+    public static function caps(): array { return [['person_per_minute', 'Too many questions just now. Try again in a minute.'], ['organisation_per_day', "The guide's question box is resting for today. Try again tomorrow, or reach out to your Manara support contact."], ['platform_per_month', "The guide's question box is resting for now. Please reach out to your Manara support contact."]]; }
 
     #[Test, DataProvider('caps')]
     public function caps_refuse_before_model_and_reset_at_their_window(string $setting, string $message): void
@@ -319,6 +329,8 @@ class GuideAskTest extends TestCase
             ['question' => "New <info>private</info>\nquestion", 'created_at' => now(), 'books' => 'admin+school', 'release_version' => 'd1-1234abcd'],
         ]);
         $out = new BufferedOutput; Artisan::call('guides:ask-export', [], $out); $text = $out->fetch();
+        $records = array_map(fn ($line) => json_decode($line, true), explode("\n", trim($text)));
+        foreach ($records as $record) $this->assertSame(['question', 'created_at', 'books', 'release_version'], array_keys($record));
         $this->assertStringContainsString('New <info>private</info>', $text); $this->assertStringContainsString('admin+school', $text); $this->assertStringContainsString('d1-1234abcd', $text);
         $this->artisan('guides:ask-prune')->assertExitCode(0); $this->assertDatabaseCount('guide_unanswered_questions', 1);
         config(['guide_ask.retention_days' => 0]); $this->artisan('guides:ask-prune')->assertExitCode(1); $this->assertDatabaseCount('guide_unanswered_questions', 1);
@@ -330,42 +342,195 @@ class GuideAskTest extends TestCase
         $this->transport->answers = ['Open Admin Sprout task.', "I don't know that one. Please reach out to your school office and ask."];
         config(['guide_ask.enabled' => false, 'guide_ask.person_per_minute' => 0, 'guide_ask.platform_per_month' => 0]);
         $out = new BufferedOutput;
-        $this->assertSame(0, Artisan::call('guides:ask-test', ['test-set' => $file, '--model' => 'fixture-model'], $out));
+        $this->assertSame(0, Artisan::call('guides:ask-test', ['test-set' => $file, '--model' => 'fixture-model', '--limit' => 2, '--yes' => true], $out));
         $text = $out->fetch(); foreach (['PASS', '2/2', 'not computed', 'cache_read', 'cache_creation', 'How?', 'Open Admin', '"input":200', '"output":20', '"cache_creation":50', '"cache_read":100', 'cache hits: 2'] as $word) $this->assertStringContainsString($word, $text);
         $this->assertSame('fixture-model', $this->transport->requests[0]['model']);
         $this->assertDatabaseCount('guide_unanswered_questions', 1);
         $this->transport->answer = 'Wrong'; $out = new BufferedOutput;
-        $this->assertSame(1, Artisan::call('guides:ask-test', ['test-set' => $file, '--limit' => 1, '--input-price' => 1, '--output-price' => 2, '--cache-read-price' => 0.1, '--cache-write-price' => 1.25], $out));
+        $this->assertSame(1, Artisan::call('guides:ask-test', ['test-set' => $file, '--yes' => true, '--limit' => 1, '--input-price' => 1, '--output-price' => 2, '--cache-read-price' => 0.1, '--cache-write-price' => 1.25], $out));
         $text = $out->fetch();
         $this->assertStringContainsString('FAIL', $text);
         $this->assertStringContainsString('$0.000156', $text);
         $this->assertCount(3, $this->transport->requests);
         $this->transport->answer = 'Admin Sprout task.'; $out = new BufferedOutput;
-        $this->assertSame(1, Artisan::call('guides:ask-test', ['test-set' => $file, '--limit' => 1], $out));
+        $this->assertSame(1, Artisan::call('guides:ask-test', ['test-set' => $file, '--yes' => true, '--limit' => 1], $out));
         $this->assertStringContainsString('FAIL', $out->fetch()); // Correct task but missing must_say.
         $this->transport->answer = 'Open Admin Sprout task.'; $out = new BufferedOutput;
         $this->assertSame(1, Artisan::call('guides:ask-test', ['test-set' => $file, '--limit' => 0], $out));
         $this->assertCount(4, $this->transport->requests); // Invalid options spend nothing.
     }
-}
 
-final class AskTransport implements ClientInterface
-{
-    public array $requests = [];
-    public string $answer = 'Open Admin Sprout task.';
-    public array $answers = [];
-    public string $mode = 'ok';
-
-    public function sendRequest(RequestInterface $request): ResponseInterface
+    #[Test]
+    public function both_spending_caps_are_durable_atomic_conditional_reservations(): void
     {
-        $this->requests[] = json_decode((string) $request->getBody(), true);
-        if ($this->mode === 'timeout') throw new \GuzzleHttp\Exception\ConnectException('Sensitive question in timeout', $request);
-        if ($this->mode === 'error') return new Response(500, [], json_encode(['type' => 'error', 'error' => ['type' => 'api_error', 'message' => 'Sensitive question']]));
-        return new Response(200, ['Content-Type' => 'application/json'], json_encode([
-            'id' => 'msg_fixture', 'type' => 'message', 'role' => 'assistant', 'model' => 'fixture-model',
-            'stop_reason' => $this->mode === 'truncated' ? 'max_tokens' : 'end_turn', 'stop_sequence' => null,
-            'content' => [['type' => 'text', 'text' => $this->mode === 'empty' ? '' : (array_shift($this->answers) ?? $this->answer)]],
-            'usage' => ['input_tokens' => 100, 'output_tokens' => 10, 'cache_creation_input_tokens' => 25, 'cache_read_input_tokens' => 50],
-        ]));
+        $limits = app(\App\Support\Guides\GuideAskLimits::class);
+        $queries = [];
+        DB::listen(function ($q) use (&$queries) { if (str_contains($q->sql, 'guide_ask_counters')) $queries[] = $q->sql; });
+        $this->assertTrue($limits->reserveBucket('org:42', '2026-10-07', 1));
+        $this->assertFalse($limits->reserveBucket('org:42', '2026-10-07', 1));
+        Cache::flush();
+        $this->assertFalse($limits->reserveBucket('org:42', '2026-10-07', 1));
+        $this->assertTrue($limits->reserveBucket('platform', '2026-10-01', 1));
+        $this->assertFalse($limits->reserveBucket('platform', '2026-10-01', 1));
+        $this->assertFalse($limits->reserveBucket('platform', '2026-11-01', 0));
+        $this->assertCount(5, $queries);
+        foreach ($queries as $sql) {
+            $this->assertStringStartsWith('insert into', strtolower($sql));
+            $this->assertStringContainsString('where', strtolower($sql));
+        }
+        $this->assertDatabaseCount('guide_ask_counters', 2);
+        $this->assertDatabaseHas('guide_ask_counters', ['scope_key' => 'org:42', 'period' => '2026-10-07', 'count' => 1]);
+        $columns = Schema::getColumnListing('guide_ask_counters'); sort($columns);
+        $this->assertSame(['count', 'id', 'period', 'scope_key'], $columns);
+        $this->assertGreaterThan(0, DB::table('guide_ask_counters')->value('id'));
+    }
+
+    #[Test]
+    public function in_flight_lock_lasts_beyond_five_seconds_and_releases_after_failure(): void
+    {
+        $this->install(); $user = $this->signIn();
+        config(['guide_ask.person_per_minute' => 20, 'guide_ask.timeout' => 20]);
+        $baseline = DB::transactionLevel();
+        $this->transport->onRequest = function () use ($baseline) {
+            $this->assertSame($baseline, DB::transactionLevel(), 'No spending transaction spans the paid API call.');
+            $this->travel(19)->seconds();
+            $this->postJson($this->url(), ['question' => 'Second call?'])->assertStatus(429)
+                ->assertJsonPath('message', 'Too many questions just now. Try again in a minute.');
+        };
+        $this->postJson($this->url(), ['question' => 'First call?'])->assertOk();
+        $this->assertCount(1, $this->transport->requests);
+        $this->transport->mode = 'timeout';
+        $this->postJson($this->url(), ['question' => 'Failure?'])->assertStatus(503);
+        $lock = Cache::lock('guide-ask:in-flight:'.$user->id, 30);
+        $this->assertTrue($lock->get()); $lock->release();
+        $this->assertDatabaseHas('guide_ask_counters', ['scope_key' => 'platform', 'count' => 2]);
+    }
+
+    public static function fallbacks(): array
+    {
+        $fallback = "I don't know that one. Please reach out to your Manara support contact and ask.";
+        return [['"'.$fallback.'"'], ["‘".rtrim($fallback, '.')."’"], [rtrim($fallback, '.')], [$fallback.' Admin Sprout task. Why a pebble?']];
+    }
+
+    #[Test, DataProvider('fallbacks')]
+    public function fallback_variants_are_canonical_unknown_without_links(string $reply): void
+    {
+        $this->install(); $this->signIn(); $this->transport->answer = $reply;
+        $this->postJson($this->url(), ['question' => 'Unknown?'])->assertOk()->assertJsonPath('unknown', true)
+            ->assertJsonPath('answer', app(GuideAskService::class)->fallback('office'))->assertJsonPath('tasks', [])->assertJsonPath('questions', []);
+        $this->assertDatabaseCount('guide_unanswered_questions', 1);
+    }
+
+    #[Test]
+    public function mentioning_contact_does_not_make_an_answer_unknown(): void
+    {
+        $this->install(); $this->signIn();
+        $this->transport->answer = 'Ask your Manara support contact about Admin Sprout task.';
+        $this->postJson($this->url(), ['question' => 'How?'])->assertOk()->assertJsonPath('unknown', false)->assertJsonCount(1, 'tasks');
+        $this->assertDatabaseCount('guide_unanswered_questions', 0);
+    }
+
+    #[Test]
+    public function common_question_links_come_only_from_sent_books_and_grade_as_expected_ids(): void
+    {
+        $m = json_decode(file_get_contents($this->source.'/manifest.json'), true);
+        foreach (['page' => 'page.html', 'ask' => 'ask.txt'] as $key => $fileName) {
+            $filePath = $this->source.'/admin/'.$fileName;
+            $text = str_replace('Why a pebble?', 'Why an office pebble?', file_get_contents($filePath));
+            file_put_contents($filePath, $text);
+            $m['books']['admin'][$key.'_sha256'] = hash('sha256', $text); $m['books']['admin'][$key.'_bytes'] = strlen($text);
+        }
+        file_put_contents($this->source.'/manifest.json', json_encode($m));
+        $this->install(); $this->signIn('Teacher');
+        $this->transport->answer = 'Why an office pebble? Why a pebble? invented-id https://example.invalid/faq-missing-student';
+        $this->postJson($this->url('teacher'), ['question' => 'Why?'])->assertOk()->assertJsonPath('tasks', [])
+            ->assertJsonPath('questions', [['book' => 'teacher', 'id' => 'faq-pebble', 'title' => 'Why a pebble?']]);
+        $file = $this->source.'/grade-faq.json';
+        file_put_contents($file, json_encode(['questions' => [['who' => 'teacher', 'guides' => ['teacher'], 'q' => 'Why?', 'expect' => 'answer', 'tasks' => ['faq-pebble']]]]));
+        $out = new BufferedOutput;
+        $this->assertSame(0, Artisan::call('guides:ask-test', ['test-set' => $file, '--limit' => 1, '--yes' => true], $out));
+        $this->assertStringContainsString('1/1 passed', $out->fetch());
+        $this->assertDatabaseCount('guide_unanswered_questions', 0);
+    }
+
+    #[Test]
+    public function nested_titles_link_the_longest_match_and_independent_short_title(): void
+    {
+        $m = json_decode(file_get_contents($this->source.'/manifest.json'), true);
+        $m['books']['admin']['tasks'][0]['title'] = 'Add a student';
+        $m['books']['admin']['tasks'][1]['title'] = 'Add a student to a class';
+        $page = file_get_contents($this->source.'/admin/page.html');
+        $page = str_replace(['Admin Sprout task', 'Admin Ripple task'], ['Add a student', 'Add a student to a class'], $page);
+        file_put_contents($this->source.'/admin/page.html', $page);
+        $m['books']['admin']['page_sha256'] = hash('sha256', $page); $m['books']['admin']['page_bytes'] = strlen($page);
+        $text = str_replace(['Admin Sprout task', 'Admin Ripple task'], ['Add a student', 'Add a student to a class'], file_get_contents($this->source.'/admin/ask.txt'));
+        file_put_contents($this->source.'/admin/ask.txt', $text);
+        $m['books']['admin']['ask_sha256'] = hash('sha256', $text); $m['books']['admin']['ask_bytes'] = strlen($text);
+        file_put_contents($this->source.'/manifest.json', json_encode($m));
+        $this->install(); $this->signIn();
+        $this->transport->answer = 'Open Add a student to a class.';
+        $this->postJson($this->url(), ['question' => 'How?'])->assertOk()->assertJsonPath('tasks', [['book' => 'admin', 'id' => 'ripple', 'title' => 'Add a student to a class']]);
+        $this->transport->answer .= ' Then use Add a student.';
+        $this->postJson($this->url(), ['question' => 'How again?'])->assertOk()->assertJsonCount(2, 'tasks');
+    }
+
+    #[Test]
+    public function grading_requires_an_explicit_bounded_limit_and_paid_call_consent(): void
+    {
+        $this->install();
+        $file = $this->source.'/grade-consent.json';
+        file_put_contents($file, json_encode(['questions' => [['who' => 'office', 'guides' => ['admin'], 'q' => 'How?', 'expect' => 'answer', 'tasks' => ['sprout']]]]));
+        foreach ([[], ['--limit' => 101, '--yes' => true], ['--limit' => 1, '--no-interaction' => true, '--model' => 'costly-fixture']] as $options) {
+            $out = new BufferedOutput;
+            $this->assertSame(1, Artisan::call('guides:ask-test', ['test-set' => $file] + $options, $out));
+            $text = $out->fetch();
+            if (isset($options['--model'])) foreach (['costly-fixture', '1 question', 'this calls the paid API'] as $word) $this->assertStringContainsString($word, $text);
+        }
+        $this->assertSame([], $this->transport->requests);
+        $out = new BufferedOutput;
+        $this->assertSame(0, Artisan::call('guides:ask-test', ['test-set' => $file, '--limit' => 1, '--yes' => true, '--model' => 'fixture-model'], $out));
+        $this->assertCount(1, $this->transport->requests);
+    }
+
+    #[Test]
+    public function interactive_grading_confirms_the_echoed_model_before_calls(): void
+    {
+        $this->install();
+        $file = $this->source.'/grade-interactive.json';
+        file_put_contents($file, json_encode(['questions' => [['who' => 'office', 'guides' => ['admin'], 'q' => 'How?', 'expect' => 'answer', 'tasks' => ['sprout']]]]));
+        $this->artisan('guides:ask-test', ['test-set' => $file, '--limit' => 1, '--model' => 'fixture-model'])
+            ->expectsOutput('Model: fixture-model; 1 question(s); this calls the paid API.')
+            ->expectsConfirmation('Call the paid API for these questions?', 'no')->assertExitCode(1);
+        $this->assertSame([], $this->transport->requests);
+        $this->artisan('guides:ask-test', ['test-set' => $file, '--limit' => 1, '--model' => 'fixture-model'])
+            ->expectsOutput('Model: fixture-model; 1 question(s); this calls the paid API.')
+            ->expectsConfirmation('Call the paid API for these questions?', 'yes')->assertExitCode(0);
+        $this->assertCount(1, $this->transport->requests);
+    }
+
+    #[Test]
+    public function missing_spending_database_fails_closed_without_call_or_logging(): void
+    {
+        $this->install(); $this->signIn(); Schema::drop('guide_ask_counters'); Log::spy();
+        $this->postJson($this->url(), ['question' => 'Sensitive question'])->assertStatus(503)
+            ->assertJsonPath('message', 'That did not work. Try again, or reach out to your Manara support contact.');
+        $this->assertSame([], $this->transport->requests); $this->assertDatabaseCount('guide_unanswered_questions', 0);
+        Log::shouldNotHaveReceived('error'); Log::shouldNotHaveReceived('warning');
+    }
+
+    #[Test]
+    public function prune_removes_expired_periods_but_preserves_both_current_allowances(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-07 12:00:00', 'UTC'));
+        DB::table('guide_ask_counters')->insert([
+            ['scope_key' => 'org:42', 'period' => '2026-10-06', 'count' => 2],
+            ['scope_key' => 'org:42', 'period' => '2026-10-07', 'count' => 3],
+            ['scope_key' => 'platform', 'period' => '2026-09-01', 'count' => 4],
+            ['scope_key' => 'platform', 'period' => '2026-10-01', 'count' => 5],
+        ]);
+        $this->artisan('guides:ask-prune')->assertExitCode(0);
+        $this->assertDatabaseCount('guide_ask_counters', 2);
+        $this->assertDatabaseHas('guide_ask_counters', ['scope_key' => 'platform', 'period' => '2026-10-01', 'count' => 5]);
+        $this->assertDatabaseHas('guide_ask_counters', ['scope_key' => 'org:42', 'period' => '2026-10-07', 'count' => 3]);
     }
 }

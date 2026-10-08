@@ -55,9 +55,12 @@ class GuidesController extends Controller
         abort_unless($ask->available($manifest, $books), 404);
         $request->validate(['question' => ['required', 'string', 'min:'.config('guide_ask.min_chars'), 'max:'.config('guide_ask.max_chars')]]);
         $reader = match ($request->user()->type) { 'Teacher' => 'teacher', 'LunchStaff' => 'lunch', default => 'office' };
+        $lock = null;
         try {
+            $lock = $limits->inFlight($request->user()->id);
+            if (! $lock) return response()->json(['message' => 'Too many questions just now. Try again in a minute.'], 429)->header('Cache-Control', 'private, no-store');
             $limit = $limits->reserve($request->user()->id, app(TenantContext::class)->get());
-            if ($limit) return response()->json(['message' => $limit === 'person' ? 'Too many questions just now. Try again in a minute.' : $ask->resting($reader)], 429)->header('Cache-Control', 'private, no-store');
+            if ($limit) return response()->json(['message' => $limit === 'person' ? 'Too many questions just now. Try again in a minute.' : $ask->resting($reader, $limit)], 429)->header('Cache-Control', 'private, no-store');
             $result = $ask->answer($manifest, $books, $reader, $request->input('question'));
             if ($result['unknown']) GuideUnansweredQuestion::query()->insert([
                 'question' => $request->input('question'), 'created_at' => now(),
@@ -68,6 +71,9 @@ class GuidesController extends Controller
         } catch (Throwable) {
             // SDK/SQL exceptions may quote the question or answer. Never report them.
             return response()->json(['message' => $ask->failure($reader)], 503)->header('Cache-Control', 'private, no-store');
+        } finally {
+            // Release failures must not expose SDK/SQL content or mask the response.
+            try { $lock?->release(); } catch (Throwable) {}
         }
     }
 

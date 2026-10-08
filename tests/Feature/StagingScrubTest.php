@@ -328,11 +328,13 @@ class StagingScrubTest extends TestCase
             'question' => 'Private made-up question', 'created_at' => now(),
             'books' => 'admin+school', 'release_version' => 'd1-1234abcd',
         ]);
+        DB::table('guide_ask_counters')->insert(['scope_key' => 'org:'.$this->masjidA->id, 'period' => now()->utc()->format('Y-m-d'), 'count' => 1]);
         app(TenantContext::class)->set($this->masjidA->id);
         $this->app->detectEnvironment(fn () => 'staging');
         config(['app.env' => 'staging', 'database.connections.sqlite.database' => 'masjids_staging']);
         $this->artisan('staging:scrub', ['--i-understand-this-destroys-personal-data' => true])->assertExitCode(0);
         $this->assertDatabaseCount('guide_unanswered_questions', 0);
+        $this->assertDatabaseCount('guide_ask_counters', 0);
     }
 
     #[Test]

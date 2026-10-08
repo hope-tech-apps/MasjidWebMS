@@ -3,52 +3,40 @@
         <h2 id="guide-ask-title">Ask the guide</h2>
         <form autocomplete="off" @submit.prevent="send">
             <label for="guide-question">Your question</label>
-            <textarea id="guide-question" v-model="question" class="form-control" rows="2" required
-                      :minlength="minChars" :maxlength="maxChars" :disabled="waiting" />
-            <button class="btn btn-outline-secondary" type="submit" :disabled="waiting || question.trim().length < minChars">Ask</button>
+            <textarea id="guide-question" v-model="state.question" class="form-control" rows="2" required
+                      :minlength="minChars" :maxlength="maxChars" :disabled="state.waiting" />
+            <button class="btn btn-outline-secondary" type="submit" :disabled="state.waiting || state.question.trim().length < minChars">Ask</button>
         </form>
         <div role="status" aria-live="polite" aria-atomic="true">
-            <p v-if="waiting">Asking the guide…</p>
-            <p v-else-if="error" class="guide-answer">{{ error }}</p>
-            <p v-else-if="result" class="guide-answer">{{ result.answer }}</p>
+            <p v-if="state.waiting">Asking the guide…</p>
+            <p v-else-if="state.error" class="guide-answer">{{ state.error }}</p>
+            <p v-else-if="state.result" class="guide-answer">{{ state.result.answer }}</p>
         </div>
-        <template v-if="result?.tasks.length">
+        <template v-if="sources.length">
             <p>From the guide:</p>
-            <ul><li v-for="task in result.tasks" :key="`${task.book}:${task.id}`">
-                <a :href="path(task.book, task.id)" @click.prevent="navigate(path(task.book, task.id))">{{ task.title }}</a>
+            <ul><li v-for="task in sources" :key="`${task.kind}:${task.book}:${task.id}`">
+                <a :href="path(task.book, task.kind === 'task' ? task.id : undefined, task.kind === 'question' ? task.id : undefined)" @click.prevent="navigate(path(task.book, task.kind === 'task' ? task.id : undefined, task.kind === 'question' ? task.id : undefined))">{{ task.title }}</a>
             </li></ul>
         </template>
     </section>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue';
-interface Answer { answer: string; unknown: boolean; tasks: { book: string; id: string; title: string }[] }
+import { computed } from 'vue';
+interface Source { book: string; id: string; title: string }
+interface Answer { answer: string; unknown: boolean; tasks: Source[]; questions: Source[] }
 const props = defineProps<{
-    request: (question: string, signal: AbortSignal) => Promise<Answer>;
-    path: (book: string, task?: string) => string;
+    state: { question: string; waiting: boolean; error: string; result: Answer | null };
+    send: () => void;
+    path: (book: string, task?: string, faq?: string) => string;
     navigate: (target: string) => void;
     minChars: number;
     maxChars: number;
 }>();
-const question = ref('');
-const waiting = ref(false);
-const error = ref('');
-const result = ref<Answer | null>(null);
-let controller: AbortController | null = null;
-let active = true;
-const send = async () => {
-    if (waiting.value || question.value.trim().length < props.minChars || question.value.length > props.maxChars) return;
-    waiting.value = true; error.value = ''; result.value = null;
-    controller = new AbortController();
-    try {
-        const answer = await props.request(question.value, controller.signal);
-        if (active) result.value = answer;
-    } catch (failure) {
-        if (active) error.value = failure instanceof Error ? failure.message : 'That did not work. Try again.';
-    } finally { if (active) waiting.value = false; }
-};
-onBeforeUnmount(() => { active = false; controller?.abort(); question.value = ''; result.value = null; });
+const sources = computed(() => [
+    ...(props.state.result?.tasks ?? []).map(task => ({ ...task, kind: 'task' })),
+    ...(props.state.result?.questions ?? []).map(question => ({ ...question, kind: 'question' })),
+]);
 </script>
 
 <style scoped>

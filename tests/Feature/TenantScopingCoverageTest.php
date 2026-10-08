@@ -88,8 +88,12 @@ final class TenantScopingCoverageTest extends TestCase
      * Verified against the built schema on 2026-08-12, not copied forward.
      */
     private const DECLINED = [
+        \App\Models\GuideAskCounter::class => [
+            'reason' => 'Global spending ledger: one platform bucket plus organisation buckets named in scope_key. No question/actor data or HTTP read surface. Tenant scoping would hide the platform cap; endpoint derives organisation from the authorized TenantContext. Atomic reservations and CLI pruning are platform operations; staging clears these counts.',
+            'has_masjid_id_column' => false,
+        ],
         \App\Models\GuideUnansweredQuestion::class => [
-            'reason' => 'Platform-wide unanswered guide feedback with exactly four fields, no tenant or actor identity. Only CLI export/prune reads it; attaching a masjid_id would contradict the retention contract. The endpoint authorizes guide access before writing.',
+            'reason' => 'Platform-wide unanswered guide feedback with exactly four content fields plus a row primary key, no tenant or actor identity. Only CLI export/prune reads it; attaching a masjid_id would contradict the retention contract. The endpoint authorizes guide access before writing.',
             'has_masjid_id_column' => false,
         ],
         MasjidUser::class => [

@@ -184,6 +184,29 @@ class GuidesTest extends TestCase
                 $this->assertTrue(file_get_contents($source.'/'.$book.'/'.$path) === $picture->getContent(), 'Exact installed picture bytes must reach the reader.');
                 $picture->assertHeader('X-Content-Type-Options', 'nosniff');
             }
+            if (isset($manifest['books']['admin']['ask'])) {
+                config(['guide_ask.enabled' => true, 'services.anthropic.key' => 'fake-key']);
+                $transport = new \Tests\Support\GuideAskTransport;
+                $client = new \Anthropic\Client(apiKey: 'fake-key', requestOptions: ['transporter' => $transport, 'maxRetries' => 0]);
+                $ask = new class(app(GuideReleases::class), $client) extends \App\Support\Guides\GuideAskService {
+                    public function __construct(GuideReleases $releases, private \Anthropic\Client $fake) { parent::__construct($releases); }
+                    protected function client(): \Anthropic\Client { return $this->fake; }
+                };
+                $this->app->instance(\App\Support\Guides\GuideAskService::class, $ask);
+                foreach ([['MasjidAdmin', 'admin', true, ['admin', 'school'], 'office'], ['SuperAdmin', 'admin', false, ['admin'], 'office'], ['Teacher', 'teacher', true, ['teacher'], 'teacher'], ['LunchStaff', 'lunch', true, ['lunch'], 'lunch']] as [$kind, $realm, $classes, $sent, $reader]) {
+                    $this->org->update(['crm_enabled' => $classes]);
+                    app('auth')->forgetGuards(); app(TenantContext::class)->forgetTenant();
+                    $this->withToken($this->token($kind));
+                    $this->getJson($this->url($realm))->assertJsonPath('ask_available', true);
+                    $this->postJson($this->url($realm, '/ask'), ['question' => 'A made-up question?'])->assertOk()->assertJsonPath('questions', []);
+                    $instruction = strtr(file_get_contents(resource_path('guides/ask-instructions.txt')), ['{reader}' => config('guide_ask.readers.'.$reader), '{contact}' => $ask->contact($reader)]);
+                    $expected = $instruction."\n\n".implode("\n\n", array_map(fn ($book) => file_get_contents($source.'/'.$manifest['books'][$book]['ask']), $sent));
+                    $body = end($transport->requests);
+                    $this->assertTrue($body['system'] === [['type' => 'text', 'text' => $expected, 'cache_control' => ['type' => 'ephemeral']]], 'Exact authorized ask bytes, in order, reach the fake SDK.');
+                    $this->assertSame([['role' => 'user', 'content' => 'A made-up question?']], $body['messages']);
+                }
+                $this->assertCount(4, $transport->requests);
+            }
             app('auth')->forgetGuards(); app(TenantContext::class)->forgetTenant();
             $this->withToken($this->token('Teacher'));
             $path = array_key_first($manifest['books']['admin']['files']);

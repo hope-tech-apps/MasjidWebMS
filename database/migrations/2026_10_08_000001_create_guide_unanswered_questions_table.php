@@ -9,6 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('guide_unanswered_questions', function (Blueprint $table) {
+            $table->id();
             $table->text('question');
             $table->timestamp('created_at')->index();
             $table->string('books', 32);

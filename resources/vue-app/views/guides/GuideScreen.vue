@@ -15,7 +15,7 @@
                 <button class="btn btn-outline-secondary" type="button" @click="query = ''">Clear search</button>
                 <button class="btn btn-outline-secondary" type="button" :aria-pressed="String(theme === 'dark')" @click="toggleTheme">Dark guide: {{ theme === 'dark' ? 'on' : 'off' }}</button>
             </div>
-            <GuideAsk v-if="askAvailable" :key="askAccount" :request="askQuestion" :path="path" :navigate="navigate"
+            <GuideAsk v-if="askAvailable" :key="askAccount" :state="askState" :send="askQuestion" :path="path" :navigate="navigate"
                       :min-chars="askMinChars" :max-chars="askMaxChars" />
             <div class="guide-columns">
                 <details class="guide-contents-panel" :open="contentsOpen" @toggle="contentsToggled">
@@ -46,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/authStore';
 import GuideApiService from '@/core/services/GuideApiService';
@@ -75,7 +75,26 @@ const askMinChars = ref(3);
 const askMaxChars = ref(500);
 const askFailure = ref('');
 const askAccount = computed(() => `${props.realm}:${organisationId.value}:${auth.user?.id}:${auth.token}`);
-const askQuestion = (question: string, signal: AbortSignal) => GuideApiService.ask(`/api/${props.realm}/masjids/${organisationId.value}/guides/ask`, question, signal, askFailure.value);
+// The screen survives book/task navigation; the box can remount without losing its lock.
+const askState = reactive({ question: '', waiting: false, error: '', result: null as any });
+let askController: AbortController | null = null;
+let askGeneration = 0;
+const clearAsk = () => {
+    askGeneration++; askController?.abort(); askController = null;
+    askState.question = ''; askState.waiting = false; askState.error = ''; askState.result = null;
+};
+const askQuestion = async () => {
+    if (!askAvailable.value || askState.waiting || askState.question.trim().length < askMinChars.value || askState.question.length > askMaxChars.value) return;
+    const run = ++askGeneration;
+    askState.waiting = true; askState.error = ''; askState.result = null;
+    askController = new AbortController();
+    try {
+        const answer = await GuideApiService.ask(`/api/${props.realm}/masjids/${organisationId.value}/guides/ask`, askState.question, askController.signal, askFailure.value);
+        if (run === askGeneration) askState.result = answer;
+    } catch (failure) {
+        if (run === askGeneration) askState.error = failure instanceof Error ? failure.message : askFailure.value;
+    } finally { if (run === askGeneration) { askState.waiting = false; askController = null; } }
+};
 const page = ref<GuidePage | null>(null);
 const items = ref<GuideItem[]>([]);
 const query = ref('');
@@ -131,6 +150,7 @@ const faqs = computed(() => items.value.filter(item => item.kind === 'faq' && `$
 const organisationId = computed(() => props.realm === 'lunch' ? auth.user?.masjid?.id : auth.dashboardMasjidId);
 let controller: AbortController | null = null;
 let generation = 0;
+watch(() => [askAccount.value, auth.isAuthenticated, auth.user?.type], clearAsk);
 const fetchPicture = ref<(path: string, signal: AbortSignal) => Promise<Blob>>(async () => { throw new Error('Guide unavailable'); });
 watch(() => [route.fullPath, navigationRead.value, organisationId.value, auth.user?.type, auth.user?.id, auth.token, auth.isAuthenticated], async () => {
     const run = ++generation;
@@ -159,7 +179,7 @@ watch(() => [route.fullPath, navigationRead.value, organisationId.value, auth.us
     } catch { if (run === generation) unavailable.value = true; }
     finally { if (run === generation) busy.value = false; }
 }, { immediate: true });
-onBeforeUnmount(() => { generation++; controller?.abort(); stopSystem(); stopCompact(); themeObserver?.disconnect(); });
+onBeforeUnmount(() => { clearAsk(); generation++; controller?.abort(); stopSystem(); stopCompact(); themeObserver?.disconnect(); });
 </script>
 
 <style scoped>

@@ -11,7 +11,7 @@ const auth = vue.reactive({ user: { type: 'MasjidAdmin', id: 1 }, dashboardMasji
 const books = [{ book: 'admin', title: 'Admin guide', version: 'd1-1234abcd' }, { book: 'school', title: 'School guide', version: 'd1-1234abcd' }];
 const html = readFileSync(new URL('../../../tests/fixtures/guides/d1-1234abcd/admin/page.html', import.meta.url), 'utf8');
 async function screen(available = true, error?: string) {
-    route.params.book = 'admin'; route.params.task = ''; route.fullPath = '/masjid/help/admin'; auth.dashboardMasjidId = 1;
+    route.params.book = 'admin'; route.params.task = ''; route.query = {}; route.fullPath = '/masjid/help/admin'; auth.dashboardMasjidId = 1;
     const pending = deferred<any>(); const calls: any[] = [];
     const ask = await compileSfc('components/guides/GuideAsk.vue', {});
     const viewer = await compileSfc('components/guides/GuideViewer.vue', {});
@@ -23,7 +23,7 @@ async function screen(available = true, error?: string) {
     const api = { json: async (url: string) => ({ data: url.endsWith('/guides') ? books : { version: 'd1-1234abcd', title: 'Help', html, css: '.mg {color:black}', tasks: [] }, ask_available: available, ask_min_chars: 3, ask_max_chars: 500 }),
         picture: async () => new Blob(), ask: (url: string, question: string, signal: AbortSignal) => { calls.push({ url, question, signal }); return error ? Promise.reject(new Error(error)) : pending.promise; } };
     const s = await mountSfc('views/guides/GuideScreen.vue', { realm: 'admin' }, {
-        'vue-router': { useRoute: () => route, useRouter: () => ({ push: (path: string) => { route.fullPath = path; route.params.book = path.split('/')[3]; route.params.task = path.split('/')[4] || ''; } }) },
+        'vue-router': { useRoute: () => route, useRouter: () => ({ push: (path: string) => { route.fullPath = path; route.params.book = path.split('?')[0].split('/')[3]; route.params.task = path.split('?')[0].split('/')[4] || ''; route.query = Object.fromEntries(new URLSearchParams(path.split('?')[1] || ''));  } }) },
         '@/stores/authStore': { useAuthStore: () => auth }, '@/core/services/GuideApiService': { default: api },
         '@/components/guides/GuideAsk.vue': { default: ask }, '@/components/guides/GuideContent.vue': { default: content },
         '@/core/guides/guidePaths': await loadTs('core/guides/guidePaths.ts', {}),
@@ -57,7 +57,7 @@ test('Fallback appears verbatim without links and can be asked again', async () 
     pending.resolve({ answer, unknown: true, tasks: [] }); await flush(); assert.match(s.text(), new RegExp(answer.replace(/[.?]/g, '\\$&')));
     assert.doesNotMatch(s.text(), /From the guide:/); submit(s); await flush(); assert.equal(calls.length, 2); s.unmount();
 });
-for (const message of ['Too many questions just now. Try again in a minute.', "The guide's question box is resting for today. Try again tomorrow, or reach out to your Manara support contact.", 'That did not work. Try again, or reach out to your Manara support contact.']) {
+for (const message of ["The guide's question box is resting for now. Please reach out to your Manara support contact.", 'Too many questions just now. Try again in a minute.', "The guide's question box is resting for today. Try again tomorrow, or reach out to your Manara support contact.", 'That did not work. Try again, or reach out to your Manara support contact.']) {
     test('Screen shows refusal verbatim: ' + message, async () => {
         const { s } = await screen(true, message); type(s.all((n: any) => n.tag === 'textarea')[0], 'How?'); submit(s); await flush();
         assert.ok(s.text().includes(message)); assert.equal(s.button('Ask').disabled, false); s.unmount();
@@ -82,4 +82,22 @@ test('Ask transport sends JSON with bearer, no browser persistence, and preserve
         globalThis.fetch = (async () => ({ ok: false, json: async () => ({ message: 'Too many questions just now. Try again in a minute.' }) })) as any;
         await assert.rejects(api.ask('/ask', 'How?'), /Too many questions just now/);
     } finally { globalThis.fetch = oldFetch; globalThis.localStorage = oldStorage; }
+});
+
+test('Changing guide tabs preserves waiting and blocks a second ask until completion', async () => {
+    const { s, pending, calls } = await screen();
+    type(s.all((n: any) => n.tag === 'textarea')[0], 'How?'); submit(s); await flush();
+    click(s.all((n: any) => n.tag === 'a' && n.textContent === 'School guide')[0]); await flush();
+    assert.equal(calls[0].signal.aborted, false);
+    assert.equal(s.all((n: any) => n.tag === 'textarea')[0].props.disabled, true);
+    assert.equal(s.button('Ask').props.disabled, true); submit(s); assert.equal(calls.length, 1);
+    pending.resolve({ answer: 'Open Sprout task.', unknown: false, tasks: [], questions: [] }); await flush();
+    assert.match(s.text(), /Open Sprout task/); assert.equal(s.button('Ask').disabled, false); s.unmount();
+});
+test('Common question source links open and focus the question through in-app navigation', async () => {
+    const { s, pending } = await screen(); type(s.all((n: any) => n.tag === 'textarea')[0], 'Why?'); submit(s);
+    pending.resolve({ answer: 'Why a pebble?', unknown: false, tasks: [], questions: [{ book: 'admin', id: 'faq-pebble', title: 'Why a pebble?' }] }); await flush();
+    assert.match(s.text(), /From the guide:/);
+    const link = s.all((n: any) => n.tag === 'a' && n.textContent === 'Why a pebble?' && n.props.href === '/masjid/help/admin?faq=faq-pebble')[0];
+    assert.ok(link); click(link); await flush(); assert.equal(route.fullPath, '/masjid/help/admin?faq=faq-pebble'); assert.equal(document.activeElement?.getAttribute('id'), 'faq-pebble'); assert.equal(document.activeElement?.hasAttribute('open'), true); s.unmount();
 });
