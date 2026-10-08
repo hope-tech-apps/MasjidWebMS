@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { type FeeDraft, buildFee, feeAmountOf, feePricingOf, preservedFeeOf } from '../components/forms/formFeePricing.ts';
+import { type FeeDraft, buildFee, choiceFieldOf, choicePriceRowsOf, feeAmountOf, feePricingOf, preservedFeeOf } from '../components/forms/formFeePricing.ts';
 
 test('a form priced by the answer to a question reads as that, never as free', () => {
     const iftar = {
@@ -61,6 +61,7 @@ const draftFor = (fee: Record<string, any>, overrides: Partial<FeeDraft>): FeeDr
     perQuantityOf: fee.perQuantityOf ?? null,
     tiers: fee.tiers ?? [],
     countTiers: fee.countTiers ?? [],
+    choice: { field: choiceFieldOf(fee), prices: choicePriceRowsOf(fee) },
     ...overrides,
 });
 
@@ -88,6 +89,70 @@ test('an imported form priced by answer saves its levels back exactly as loaded'
     assert.deepEqual(fee?.byChoice, IFTAR_FEE.byChoice);
     assert.equal(fee?.perQuantityOf, 'people');
     assert.equal(fee?.currency, 'USD');
+});
+
+test('a price by answer changed in the builder is what a save sends, and what an import set on it stays', () => {
+    const rows = choicePriceRowsOf(IFTAR_FEE);
+    rows[1] = { ...rows[1], amount: 500 };
+
+    const fee = resave(IFTAR_FEE, { choice: { field: 'sponsorship', prices: rows } });
+
+    assert.deepEqual(fee?.byChoice, {
+        field: 'sponsorship',
+        prices: [
+            { value: 'individual', amount: 18, perQuantity: true },
+            { value: 'quarter', amount: 500, reservesDate: true },
+        ],
+    });
+    assert.equal(fee?.perQuantityOf, 'people', 'the number question the per-unit price is multiplied by stays');
+});
+
+test('the prices sent are the rows as they stand: a new choice is priced, a removed one is gone, in the order given', () => {
+    const [individual] = choicePriceRowsOf(IFTAR_FEE);
+
+    const fee = resave(IFTAR_FEE, {
+        choice: { field: 'sponsorship', prices: [{ value: 'half', amount: 900, extra: {} }, individual] },
+    });
+
+    assert.deepEqual(fee?.byChoice.prices, [
+        { value: 'half', amount: 900 },
+        { value: 'individual', amount: 18, perQuantity: true },
+    ]);
+});
+
+test('prices by answer that are not finished are still sent, so the server refuses them and the form is never saved as free', () => {
+    const noQuestion = buildFee({}, draftFor({}, { pricing: 'choice', choice: { field: null, prices: [] } }));
+
+    assert.deepEqual(noQuestion?.byChoice, { field: '', prices: [] });
+
+    const emptyBox = buildFee({}, draftFor({}, {
+        pricing: 'choice',
+        choice: { field: 'children', prices: [{ value: 'one', amount: null, extra: {} }] },
+    }));
+
+    assert.deepEqual(emptyBox?.byChoice.prices, [{ value: 'one', amount: null }]);
+});
+
+test('a form priced another way that switches to prices by answer drops its old price', () => {
+    const fee = resave({ amount: 80, currency: 'USD', perEntryOfSection: 'students' }, {
+        pricing: 'choice',
+        choice: { field: 'children', prices: [{ value: 'one', amount: 425, extra: {} }, { value: 'two', amount: 800, extra: {} }] },
+    });
+
+    assert.equal('amount' in (fee ?? {}), false, 'the server refuses prices by answer beside a flat amount');
+    assert.equal('perEntryOfSection' in (fee ?? {}), false, 'and beside charging per entry');
+    assert.deepEqual(fee?.byChoice, { field: 'children', prices: [{ value: 'one', amount: 425 }, { value: 'two', amount: 800 }] });
+});
+
+test('stored prices by answer read into one row each: text that is a number is one, anything else is an empty box', () => {
+    const rows = choicePriceRowsOf({
+        byChoice: { field: 'children', prices: [{ value: 'one', amount: '425.00' }, { value: 'two', amount: '' }, { amount: 5 }, null] },
+    });
+
+    assert.deepEqual(rows, [{ value: 'one', amount: 425, extra: {} }, { value: 'two', amount: null, extra: {} }]);
+    assert.equal(choiceFieldOf({ byChoice: { field: 'children', prices: [] } }), 'children');
+    assert.equal(choiceFieldOf({ amount: 15 }), null);
+    assert.deepEqual(choicePriceRowsOf({ amount: 15 }), []);
 });
 
 test('date steps charged per person keep their number question through a save', () => {

@@ -5,9 +5,10 @@
  * as that choice.
  *
  * 'perQuantity': the price x a number question's answer (settings.fee.perQuantityOf).
- * 'choice': priced by the answer to a choice question (settings.fee.byChoice), which only
- * form:import sets up; the builder offers it only for a form that already has it, and
- * saves it back untouched (Ramadan giving, 2026-09-25).
+ * 'choice': priced by the answer to a choice question (settings.fee.byChoice; Ramadan
+ * giving, 2026-09-25). The builder picks the question and edits each choice's price
+ * (2026-10-08); what it has no control for on a price (charged per unit, reserves a date,
+ * both set by form:import) is saved back untouched.
  */
 export type FeePricing = 'none' | 'flat' | 'perEntry' | 'dateSteps' | 'count' | 'perQuantity' | 'choice';
 
@@ -42,8 +43,8 @@ export const feePricingOf = (fee: Record<string, any>): FeePricing => {
 
 /**
  * The `settings.fee` keys the builder edits itself. Everything else in a stored fee (a key
- * the builder has no control for, such as the imported prices by answer) is carried through
- * a save untouched (preservedFeeOf()). A key missing from here would be carried through
+ * the builder has no control for) is carried through a save untouched (preservedFeeOf()).
+ * `byChoice` is carried too, and rebuilt from the price rows by buildFee(). A key missing from here would be carried through
  * AND written, so switching pricing away from it could never remove it: a "price for each"
  * switched to a flat price would still be multiplied by its number question.
  *
@@ -60,6 +61,29 @@ const without = (record: Record<string, any>, keys: readonly string[]): Record<s
 /** What of a stored fee a save carries through untouched: every key the builder does not edit. */
 export const preservedFeeOf = (fee: Record<string, any>): Record<string, any> => without(fee, MANAGED_FEE_KEYS);
 
+/**
+ * One price by answer as the builder holds it: the choice's stored value, its price (null
+ * while the box is empty), and the keys of the stored price the builder has no control for
+ * (`perQuantity`, `reservesDate`), which go back as loaded.
+ */
+export type ChoicePriceRow = { value: string; amount: number | null; extra: Record<string, any> };
+
+/** The question a stored fee is priced by, or null when it names none. */
+export const choiceFieldOf = (fee: Record<string, any>): string | null => {
+    const field = fee.byChoice && typeof fee.byChoice === 'object' ? (fee.byChoice as Record<string, any>).field : null;
+
+    return typeof field === 'string' && field ? field : null;
+};
+
+/** The stored prices by answer (settings.fee.byChoice.prices), one row each, in stored order. */
+export const choicePriceRowsOf = (fee: Record<string, any>): ChoicePriceRow[] => {
+    const prices = fee.byChoice && typeof fee.byChoice === 'object' ? (fee.byChoice as Record<string, any>).prices : null;
+
+    return (Array.isArray(prices) ? prices : [])
+        .filter((price): price is Record<string, any> => price !== null && typeof price === 'object' && typeof price.value === 'string')
+        .map(price => ({ value: price.value, amount: feeAmountOf(price.amount), extra: without(price, ['value', 'amount']) }));
+};
+
 /** The builder's fee choices, as buildFee() reads them. Tiers arrive already built. */
 export type FeeDraft = {
     pricing: FeePricing;
@@ -71,6 +95,11 @@ export type FeeDraft = {
     tiers: Record<string, any>[];
     /** The prices by number of entries, built; read only under 'count'. */
     countTiers: Record<string, any>[];
+    /**
+     * The prices by answer, read only under 'choice': the question, and one row for each of
+     * its choices as they stand now, in the question's order.
+     */
+    choice: { field: string | null; prices: ChoicePriceRow[] };
 };
 
 /**
@@ -78,8 +107,9 @@ export type FeeDraft = {
  * pricing is sent: the server refuses countTiers beside an amount or date steps, prices by
  * answer beside any other price, and a quantity question beside a per-entry count.
  *
- *  - 'choice': the imported prices by answer go back exactly as loaded (the builder has no
- *    editor for them), with the currency and the quantity question.
+ *  - 'choice': the question and a price for each of its choices, with the currency and
+ *    the quantity question. Sent even when it is incomplete (no question chosen, an empty
+ *    price box): the server refuses that, where leaving it out would save the form as FREE.
  *  - any other pricing drops `byChoice`: switching an imported iftar form to a flat price
  *    must not leave its levels behind, which the server would refuse beside the amount.
  *  - `perQuantityOf` is sent under 'perQuantity', and under 'dateSteps' charged once per
@@ -94,9 +124,17 @@ export const buildFee = (preservedFee: Record<string, any>, draft: FeeDraft): Re
     if (pricing === 'none') return null;
 
     if (pricing === 'choice') {
+        const stored = preservedFee.byChoice;
+        const block = stored !== null && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+
         return {
-            ...preservedFee,
+            ...withoutChoice,
             currency,
+            byChoice: {
+                ...block,
+                field: draft.choice.field ?? '',
+                prices: draft.choice.prices.map(row => ({ ...row.extra, value: row.value, amount: row.amount }))
+            },
             ...(draft.perQuantityOf ? { perQuantityOf: draft.perQuantityOf } : {})
         };
     }
