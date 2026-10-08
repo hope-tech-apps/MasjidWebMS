@@ -6,10 +6,14 @@
             @headerButtonClick="openYearModal(null)"
         >
             <div class="container w-100">
-                <p class="text-muted small mb-4">
+                <p v-if="!calendarTermsOn" class="text-muted small mb-4">
                     Set each school year once, with its first and last day. Classes meet on the weekday of the
                     first day, every week until the last day. Then mark the days there is no school. Teachers,
                     families and sign-up forms all read this one calendar.
+                </p>
+
+                <p v-else class="text-muted small mb-4">
+                    Set each year's dates and meeting weekdays. Then add dated terms and mark days with no school.
                 </p>
 
                 <!-- Loading -->
@@ -70,7 +74,7 @@
                                         {{ formatDay(selectedYear.first_day) }} – {{ formatDay(selectedYear.last_day) }}
                                     </div>
                                     <div class="small mt-2">
-                                        <i class="bi bi-arrow-repeat me-1"></i>Meets every {{ weekday(selectedYear.meeting_weekday) }}
+                                        <i class="bi bi-arrow-repeat me-1"></i>Meets every {{ calendarTermsOn ? configuredMeetingWeekdays(selectedYear as ConfiguredSchoolYear).map(weekday).join(', ') : weekday(selectedYear.meeting_weekday) }}
                                         <span class="text-muted">
                                             · {{ openCount }} school day{{ openCount === 1 ? '' : 's' }}
                                             · {{ closedCount }} with no school
@@ -87,6 +91,16 @@
                                 </div>
                             </div>
                         </div>
+
+                        <section v-if="calendarTermsOn && selectedYear.terms?.length" class="mb-4">
+                            <h3 class="h6">Terms</h3>
+                            <ul class="list-group">
+                                <li v-for="term in selectedYear.terms" :key="term.id" class="list-group-item d-flex flex-wrap justify-content-between gap-2">
+                                    <span class="fw-semibold" dir="auto">{{ term.name }}</span>
+                                    <span class="text-muted small">{{ formatDay(term.starts_on) }} – {{ formatDay(term.ends_on) }}</span>
+                                </li>
+                            </ul>
+                        </section>
 
                         <p class="small text-muted mb-3">
                             Click a school day to mark it as no school. Click a no-school day to change its reason
@@ -134,9 +148,9 @@
         <Teleport to="body">
             <div v-if="yearModalOpen" class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);"
                  role="dialog" aria-modal="true" aria-labelledby="schoolYearModalTitle" @click.self="closeYearModal">
-                <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-dialog modal-dialog-centered" :class="{ 'modal-dialog-scrollable': calendarTermsOn }">
                     <div class="modal-content">
-                        <form @submit.prevent="saveYear">
+                        <form :class="calendarTermsOn ? 'calendar-year-form' : undefined" @submit.prevent="saveYear">
                             <div class="modal-header">
                                 <h5 id="schoolYearModalTitle" class="modal-title">
                                     {{ editingYear ? 'Edit school year' : 'Add school year' }}
@@ -173,8 +187,73 @@
                                     </div>
                                 </div>
 
+                                <template v-if="calendarTermsOn">
+                                    <fieldset class="mt-3">
+                                        <legend class="form-label fs-6">Days school meets</legend>
+                                        <div class="d-flex flex-wrap gap-3">
+                                            <div v-for="day in weekdays" :key="day" class="form-check">
+                                                <input :id="`meetingWeekday${day}`" v-model="configuredWeekdays" :value="day" type="checkbox" class="form-check-input">
+                                                <label :for="`meetingWeekday${day}`" class="form-check-label">{{ weekday(day) }}</label>
+                                            </div>
+                                        </div>
+                                        <div v-if="yearFieldErrors.meeting_weekdays" class="text-danger small" role="alert">{{ yearFieldErrors.meeting_weekdays }}</div>
+                                    </fieldset>
+                                    <div class="mt-3">
+                                        <label for="schoolTermSystem" class="form-label">Term system</label>
+                                        <select id="schoolTermSystem" v-model="termSystem" class="form-select">
+                                            <option :value="null">No term system selected</option>
+                                            <option value="quarters">Quarters</option>
+                                            <option value="semesters">Semesters</option>
+                                            <option value="trimesters">Trimesters</option>
+                                        </select>
+                                        <div v-if="yearFieldErrors.term_system" class="text-danger small" role="alert">{{ yearFieldErrors.term_system }}</div>
+                                    </div>
+                                    <section class="mt-4" aria-labelledby="schoolTermsTitle">
+                                        <h6 id="schoolTermsTitle">Terms</h6>
+                                        <p class="form-text">Terms can have gaps. Positions stay the same when a term is removed.</p>
+                                        <p v-if="!editingYear" class="form-text">Save the school year to add terms.</p>
+                                        <template v-else>
+                                            <div v-if="termBanner" class="alert alert-danger small" role="alert">{{ termBanner }}</div>
+                                            <div v-for="term in configuredTerms" :key="term.id" class="border rounded p-2 mb-2">
+                                                <div class="fw-semibold text-break">{{ term.position }}. {{ term.name }}</div>
+                                                <div class="small text-break">{{ formatDay(term.starts_on, 'short') }} to {{ formatDay(term.ends_on, 'short') }}</div>
+                                                <div class="d-flex flex-wrap gap-2 mt-2">
+                                                    <button type="button" class="btn btn-sm btn-light" :disabled="savingTerm || savingYear" @click="editTerm(term)">Edit term</button>
+                                                    <button type="button" class="btn btn-sm btn-outline-danger" :disabled="savingTerm || savingYear" @click="removeTerm(term)">Remove term</button>
+                                                </div>
+                                            </div>
+                                            <div class="mb-2">
+                                                <label for="schoolTermName" class="form-label">Term name</label>
+                                                <input id="schoolTermName" v-model="termForm.name" class="form-control" maxlength="80">
+                                                <div v-if="termErrors.name" class="text-danger small">{{ termErrors.name }}</div>
+                                            </div>
+                                            <div class="row g-2">
+                                                <div class="col-sm-6">
+                                                    <label for="schoolTermStart" class="form-label">Term starts</label>
+                                                    <input id="schoolTermStart" v-model="termForm.starts_on" type="date" class="form-control">
+                                                    <div v-if="termErrors.starts_on" class="text-danger small">{{ termErrors.starts_on }}</div>
+                                                </div>
+                                                <div class="col-sm-6">
+                                                    <label for="schoolTermEnd" class="form-label">Term ends</label>
+                                                    <input id="schoolTermEnd" v-model="termForm.ends_on" type="date" class="form-control">
+                                                    <div v-if="termErrors.ends_on" class="text-danger small">{{ termErrors.ends_on }}</div>
+                                                </div>
+                                            </div>
+                                            <div class="mt-2">
+                                                <label for="schoolTermPosition" class="form-label">Position</label>
+                                                <input id="schoolTermPosition" v-model="termForm.position" type="number" min="1" max="255" class="form-control">
+                                                <div v-if="termErrors.position" class="text-danger small">{{ termErrors.position }}</div>
+                                            </div>
+                                            <div class="d-flex flex-wrap gap-2 mt-2">
+                                                <button type="button" class="btn btn-sm btn-primary" :disabled="savingTerm || savingYear" @click="saveTerm">{{ editingTermId ? 'Save term' : 'Add term' }}</button>
+                                                <button v-if="editingTermId" type="button" class="btn btn-sm btn-light" :disabled="savingTerm" @click="clearTerm">Cancel term edit</button>
+                                            </div>
+                                        </template>
+                                    </section>
+                                </template>
+
                                 <!-- The weekday is TAKEN from the first day, so say so while they pick it. -->
-                                <div class="alert alert-light border small py-2 mt-3 mb-0">
+                                <div v-if="!calendarTermsOn" class="alert alert-light border small py-2 mt-3 mb-0">
                                     <i class="bi bi-arrow-repeat me-1"></i>
                                     <template v-if="firstWeekday !== null">
                                         <strong>Meets every {{ weekday(firstWeekday) }}.</strong>
@@ -193,7 +272,7 @@
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-secondary" :disabled="savingYear" @click="closeYearModal">Cancel</button>
-                                <button type="submit" class="btn btn-success" :disabled="!canSaveYear">
+                                <button type="submit" class="btn btn-success" :disabled="!canSaveYear || (calendarTermsOn && savingTerm)">
                                     <span v-if="savingYear" class="spinner-border spinner-border-sm me-1" role="status"></span>
                                     {{ editingYear ? 'Save changes' : 'Add school year' }}
                                 </button>
@@ -277,6 +356,9 @@
                                 <p class="mb-2">
                                     This removes the school year {{ formatDay(deleteTarget.first_day) }} – {{ formatDay(deleteTarget.last_day) }}.
                                 </p>
+                                <p v-if="calendarTermsOn" class="small mb-2">
+                                    Its dated terms will also be deleted. Report cards are kept with their original year text and quarter number.
+                                </p>
                                 <p class="text-muted small mb-0">
                                     Teachers and families will stop seeing these dates, and a sign-up question that lists
                                     school days will have none to offer until another year is added.
@@ -322,6 +404,7 @@ import {
     weekdayName,
     weekdayOfIso,
 } from '@/core/types/data/masjid-related/SchoolCalendar';
+import { readConfiguredCalendar, configuredMeetingWeekdays, ConfiguredSchoolYear, ConfiguredYearPayload, SchoolTerm, TermSystem } from '@/core/types/data/masjid-related/SchoolCalendarConfiguration';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 
@@ -344,6 +427,7 @@ const LOCALE = 'en-US';
 
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
+const calendarTermsOn = computed(() => masjidStore.masjid?.capabilities?.school_calendar_terms === true);
 
 /** dashboardMasjidId survives a hard refresh that has not yet hydrated masjidStore (see formsStore). */
 const masjidId = computed(() => authStore.dashboardMasjidId ?? masjidStore.masjid?.id ?? null);
@@ -381,7 +465,25 @@ const weekday = (n: number) => weekdayName(n, LOCALE);
  * just added or edited); otherwise the current choice is kept while it exists.
  */
 const applyPayload = (res: AxiosResponse | undefined, prefer?: (y: SchoolYear) => boolean): boolean => {
+    if (calendarTermsOn.value) return applyConfiguredPayload(res, prefer);
+
     const next = readSchoolCalendar(res?.data?.data);
+    if (!next) return false;
+
+    calendar.value = next;
+
+    const preferred = prefer ? next.years.find(prefer) : undefined;
+    if (preferred) {
+        selectedYearId.value = preferred.id;
+    } else if (!next.years.some((y) => y.id === selectedYearId.value)) {
+        selectedYearId.value = defaultYear(next.years, next.today)?.id ?? null;
+    }
+
+    return true;
+};
+
+const applyConfiguredPayload = (res: AxiosResponse | undefined, prefer?: (y: SchoolYear) => boolean): boolean => {
+    const next = readConfiguredCalendar(res?.data?.data);
     if (!next) return false;
 
     calendar.value = next;
@@ -421,6 +523,7 @@ const afterWrite = async (res: AxiosResponse, prefer?: (y: SchoolYear) => boolea
 };
 
 watch(masjidId, (id) => { if (id) load(); }, { immediate: true });
+watch(calendarTermsOn, () => { if (masjidId.value) load(); });
 
 // ------------------------------------------------------------------ errors
 
@@ -468,6 +571,9 @@ const yearForm = ref<SchoolYearPayload>({ label: '', first_day: '', last_day: ''
 const yearFieldErrors = ref<Record<string, string>>({});
 const yearBanner = ref('');
 const savingYear = ref(false);
+const configuredWeekdays = ref<number[]>([]);
+const termSystem = ref<TermSystem | null>(null);
+const weekdays = [0, 1, 2, 3, 4, 5, 6];
 
 const firstWeekday = computed(() => weekdayOfIso(yearForm.value.first_day));
 const lastWeekday = computed(() => weekdayOfIso(yearForm.value.last_day));
@@ -479,6 +585,8 @@ const yearOrderProblem = computed(() =>
 
 /** Advice, not a block: the server decides, and its refusal is shown word for word. */
 const lastDayWeekdayNote = computed(() => {
+    if (calendarTermsOn.value) return '';
+
     const first = firstWeekday.value;
     const last = lastWeekday.value;
     if (first === null || last === null || first === last || yearOrderProblem.value) return '';
@@ -494,6 +602,8 @@ const canSaveYear = computed(() =>
     && !yearOrderProblem.value);
 
 const openYearModal = (year: SchoolYear | null) => {
+    if (calendarTermsOn.value) return openConfiguredYearModal(year);
+
     editingYear.value = year;
     yearForm.value = year
         ? { label: year.label, first_day: year.first_day, last_day: year.last_day }
@@ -503,13 +613,34 @@ const openYearModal = (year: SchoolYear | null) => {
     yearModalOpen.value = true;
 };
 
+const openConfiguredYearModal = (year: SchoolYear | null) => {
+    editingYear.value = year;
+    yearForm.value = year
+        ? { label: year.label, first_day: year.first_day, last_day: year.last_day }
+        : { label: '', first_day: '', last_day: '' };
+    const configured = year as ConfiguredSchoolYear | null;
+    configuredWeekdays.value = configured ? [...configuredMeetingWeekdays(configured)] : [1, 2, 3, 4, 5];
+    termSystem.value = configured?.term_system ?? null;
+    termForm.value = { name: '', starts_on: '', ends_on: '', position: 1 };
+    editingTermId.value = null;
+    termErrors.value = {};
+    termBanner.value = '';
+    yearFieldErrors.value = {};
+    yearBanner.value = '';
+    yearModalOpen.value = true;
+};
+
 const closeYearModal = () => {
+    if (calendarTermsOn.value && savingTerm.value) return;
+
     if (savingYear.value) return;
     yearModalOpen.value = false;
     editingYear.value = null;
 };
 
 const saveYear = async () => {
+    if (calendarTermsOn.value) return saveConfiguredYear();
+
     if (!canSaveYear.value) return;
 
     const editing = editingYear.value;
@@ -539,6 +670,47 @@ const saveYear = async () => {
         });
     } catch (error) {
         const split = splitErrors(error, ['label', 'first_day', 'last_day'],
+            editing ? 'Could not save the school year.' : 'Could not add the school year.');
+        yearFieldErrors.value = split.fields;
+        yearBanner.value = split.banner;
+    } finally {
+        savingYear.value = false;
+    }
+};
+
+const saveConfiguredYear = async () => {
+    if (savingTerm.value) return;
+    if (!canSaveYear.value) return;
+
+    const editing = editingYear.value;
+    const payload: ConfiguredYearPayload = {
+        label: yearForm.value.label.trim(),
+        first_day: yearForm.value.first_day,
+        last_day: yearForm.value.last_day,
+        meeting_weekdays: [...configuredWeekdays.value].sort((a, b) => a - b),
+        term_system: termSystem.value,
+    };
+
+    savingYear.value = true;
+    yearFieldErrors.value = {};
+    yearBanner.value = '';
+    try {
+        const res = editing
+            ? await ApiService.put(endpoint(`/years/${editing.id}`), payload)
+            : await ApiService.post(endpoint('/years'), payload);
+
+        yearModalOpen.value = false;
+        editingYear.value = null;
+        await afterWrite(res, (y) => (editing ? y.id === editing.id : y.first_day === payload.first_day));
+
+        Swal.fire({
+            icon: 'success',
+            title: editing ? 'School year saved' : 'School year added',
+            timer: 2500,
+            showConfirmButton: false,
+        });
+    } catch (error) {
+        const split = splitErrors(error, ['label', 'first_day', 'last_day', 'meeting_weekdays', 'term_system'],
             editing ? 'Could not save the school year.' : 'Could not add the school year.');
         yearFieldErrors.value = split.fields;
         yearBanner.value = split.banner;
@@ -587,6 +759,55 @@ const confirmDeleteYear = async () => {
     } finally {
         deletingYear.value = false;
     }
+};
+
+// Term writes happen immediately and return the office calendar. Unsaved year fields stay in the modal.
+const termForm = ref({ name: '', starts_on: '', ends_on: '', position: 1 as number | string });
+const editingTermId = ref<number | null>(null);
+const termErrors = ref<Record<string, string>>({});
+const termBanner = ref('');
+const savingTerm = ref(false);
+const configuredTerms = computed(() => (years.value.find(y => y.id === editingYear.value?.id) as ConfiguredSchoolYear | undefined)?.terms ?? []);
+const clearTerm = () => {
+    termForm.value = { name: '', starts_on: '', ends_on: '', position: Math.max(0, ...configuredTerms.value.map(t => t.position)) + 1 };
+    editingTermId.value = null;
+    termErrors.value = {};
+};
+const editTerm = (term: SchoolTerm) => {
+    termForm.value = { name: term.name, starts_on: term.starts_on, ends_on: term.ends_on, position: term.position };
+    editingTermId.value = term.id;
+    termErrors.value = {};
+    termBanner.value = '';
+};
+const saveTerm = async () => {
+    if (!editingYear.value || savingTerm.value) return;
+    savingTerm.value = true;
+    termErrors.value = {};
+    termBanner.value = '';
+    const base = `/years/${editingYear.value.id}/terms`;
+    const payload = { ...termForm.value, name: termForm.value.name.trim(), position: Number(termForm.value.position) };
+    try {
+        const res = editingTermId.value
+            ? await ApiService.put(endpoint(`${base}/${editingTermId.value}`), payload)
+            : await ApiService.post(endpoint(base), payload);
+        await afterWrite(res);
+        clearTerm();
+    } catch (error) {
+        const split = splitErrors(error, ['name', 'starts_on', 'ends_on', 'position'], 'Could not save the term.');
+        termErrors.value = split.fields;
+        termBanner.value = split.banner;
+    } finally { savingTerm.value = false; }
+};
+const removeTerm = async (term: SchoolTerm) => {
+    if (!editingYear.value || savingTerm.value) return;
+    savingTerm.value = true;
+    termBanner.value = '';
+    try {
+        const res = await ApiService.delete(endpoint(`/years/${editingYear.value.id}/terms/${term.id}`));
+        await afterWrite(res);
+        if (editingTermId.value === term.id) clearTerm();
+    } catch (error) { termBanner.value = apiErrorText(error, 'Could not remove the term.'); }
+    finally { savingTerm.value = false; }
 };
 
 // ------------------------------------------------------------------ closures
@@ -700,5 +921,22 @@ onBeforeUnmount(() => {
 
 .modal-dialog {
     margin: 1.75rem auto;
+}
+/* Bootstrap constrains .modal-content; propagate that constraint through
+   the ON form so .modal-body scrolls and the footer stays reachable. */
+.calendar-year-form {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.calendar-year-form > .modal-body {
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.calendar-year-form > .modal-footer {
+    flex-shrink: 0;
 }
 </style>

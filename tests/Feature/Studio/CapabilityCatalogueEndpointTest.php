@@ -77,8 +77,10 @@ class CapabilityCatalogueEndpointTest extends TestCase
     {
         return array_keys(array_filter(
             config('capabilities'),
-            fn (array $def) => (($def['group'] ?? null) !== 'school' || $orgType === Masjid::ORG_TYPE_SCHOOL)
-                && ($def['catalogue_when_off'] ?? true)
+            fn (array $def, string $key) => $key !== 'school_calendar_terms'
+                && (($def['group'] ?? null) !== 'school' || $orgType === Masjid::ORG_TYPE_SCHOOL)
+                && ($def['catalogue_when_off'] ?? true),
+            ARRAY_FILTER_USE_BOTH
         ));
     }
 
@@ -152,7 +154,7 @@ class CapabilityCatalogueEndpointTest extends TestCase
         // The group is the only data that marks them (D14).
         $this->assertSame(
             self::SCHOOL_KEYS,
-            array_keys(array_filter(config('capabilities'), fn (array $def) => ($def['group'] ?? null) === 'school'))
+            array_keys(array_filter(config('capabilities'), fn (array $def, string $key) => $key !== 'school_calendar_terms' && ($def['group'] ?? null) === 'school', ARRAY_FILTER_USE_BOTH))
         );
 
         Sanctum::actingAs($this->superAdmin());

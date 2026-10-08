@@ -43,6 +43,15 @@ final class SchoolSettings
     public const SIMPLE_MARKING = 'simple_marking';
     /** The weekly points report (T-003.3): families and teachers are emailed. Off for everyone until a SuperAdmin decides. */
     public const POINTS_WEEKLY_REPORT = 'points_weekly_report';
+    /** Multiple meeting days and dated terms; separate from office calendar access. */
+    public const SCHOOL_CALENDAR_TERMS = 'school_calendar_terms';
+
+    /** Only this reader activates dated calendar configuration; no SuperAdmin bypass. */
+    public static function calendarTerms(?Masjid $school): bool
+    {
+        return $school?->hasCapability(self::SCHOOL_CALENDAR_TERMS) ?? false;
+    }
+
     /** The class store (T-003.4): points become Manara Bucks a class store spends. Off for everyone until a SuperAdmin decides. */
     public const CLASS_STORE = 'class_store';
 

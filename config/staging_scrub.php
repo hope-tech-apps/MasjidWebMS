@@ -441,6 +441,7 @@ return [
             'name_key' => 'label:subject',
             'previous_name_keys' => 'json_replace',
         ],
+        'school_terms' => ['name' => 'label:Term'],
 
         'users' => [
             'name' => 'label:Admin',   // "Admin 12" — a staging admin is identified by their email, not their name

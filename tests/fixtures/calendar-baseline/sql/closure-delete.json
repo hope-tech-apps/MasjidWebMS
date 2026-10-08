@@ -1,0 +1,7 @@
+[
+    "select * from \"school_closures\" where \"school_closures\".\"id\" = ? and \"school_closures\".\"masjid_id\" = ? limit 1",
+    "delete from \"school_closures\" where \"id\" = ?",
+    "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+    "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+    "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc"
+]

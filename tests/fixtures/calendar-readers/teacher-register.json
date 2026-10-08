@@ -1,0 +1,44 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+        "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+        "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+        "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc",
+        "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+        "select \"id\", \"first_name\", \"last_name\", \"avatar_character\", \"avatar_tone\", \"avatar_color\", \"staff_avatar_character\", \"staff_avatar_tone\", \"staff_avatar_color\" from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+        "select * from \"attendance_records\" where \"group_id\" = ? and strftime('%Y-%m-%d', \"session_date\") = cast(? as text) and \"attendance_records\".\"masjid_id\" = ?",
+        "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+    ],
+    "data": {
+        "status": "success",
+        "data": {
+            "session_date": "2026-10-13",
+            "taken": false,
+            "students": [
+                {
+                    "membership_id": 1,
+                    "grade_label": null,
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Test",
+                        "last_name": "Student",
+                        "avatar": null
+                    },
+                    "status": null,
+                    "note": null
+                }
+            ],
+            "school_day": {
+                "has_calendar": true,
+                "in_year": true,
+                "meeting_day": false,
+                "closed": false,
+                "reason": null
+            }
+        }
+    }
+}

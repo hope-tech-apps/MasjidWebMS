@@ -1,0 +1,1628 @@
+{
+    "organisation": {
+        "status": 200,
+        "body": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "user_id": null,
+                "name": "Baseline School",
+                "email": "baseline@example.invalid",
+                "email_verified_at": null,
+                "phone": "+15550001000",
+                "phone_verified_at": null,
+                "country_id": "1",
+                "city_id": "1",
+                "address": "1 Test St",
+                "latitude": 0,
+                "longitude": 0,
+                "website_link": null,
+                "created_by": null,
+                "updated_by": null,
+                "deleted_by": null,
+                "created_at": "2026-10-08T16:00:00.000000Z",
+                "updated_at": "2026-10-08T16:00:00.000000Z",
+                "deleted_at": null,
+                "timezone": "UTC",
+                "copyright_text": null,
+                "app_store_link": null,
+                "google_play_link": null,
+                "google_maps_key": null,
+                "stripe_account_id": null,
+                "stripe_charges_enabled": false,
+                "stripe_payouts_enabled": false,
+                "crm_enabled": true,
+                "assistant_enabled": false,
+                "tax_id": null,
+                "statement_signatory": null,
+                "mailing_locale": null,
+                "org_type": "school",
+                "listed_at": null,
+                "parent_id": null,
+                "capability_overrides": {
+                    "school_calendar": true
+                },
+                "forms_card_via_masjid_id": null,
+                "forms_card_via_set_at": null,
+                "forms_card_via_set_by": null,
+                "stripe_deauthorized_at": null,
+                "slug": null,
+                "description": null,
+                "vertical": {
+                    "org_type": "school",
+                    "label": "School",
+                    "plural": "Schools",
+                    "terminology": {
+                        "organization": "School",
+                        "members": "Families",
+                        "staff": "Faculty & Staff",
+                        "programs": "Programs",
+                        "groups": "Classrooms",
+                        "giving": "Giving"
+                    }
+                },
+                "capabilities": {
+                    "web_pages": false,
+                    "jummah_lunch": false,
+                    "school_calendar": true,
+                    "crm": true,
+                    "assistant": false,
+                    "form_editing": false,
+                    "report_card_core_subjects": false,
+                    "short_lesson_plan": false,
+                    "simple_marking": false,
+                    "points_weekly_report": false,
+                    "class_store": false,
+                    "shop": false,
+                    "tv_display": false
+                },
+                "modules_off": [],
+                "modules_on": [],
+                "admin": null,
+                "logo": null,
+                "footer_logo": null,
+                "country": null,
+                "city": null
+            }
+        },
+        "rows": [
+            {
+                "id": 1,
+                "user_id": null,
+                "name": "Baseline School",
+                "email": "baseline@example.invalid",
+                "email_verified_at": null,
+                "phone": "+15550001000",
+                "phone_verified_at": null,
+                "country_id": "1",
+                "city_id": "1",
+                "address": "1 Test St",
+                "latitude": 0,
+                "longitude": 0,
+                "website_link": null,
+                "created_by": null,
+                "updated_by": null,
+                "deleted_by": null,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00",
+                "deleted_at": null,
+                "timezone": "UTC",
+                "copyright_text": null,
+                "app_store_link": null,
+                "google_play_link": null,
+                "google_maps_key": null,
+                "stripe_account_id": null,
+                "stripe_charges_enabled": 0,
+                "stripe_payouts_enabled": 0,
+                "crm_enabled": 1,
+                "assistant_enabled": 0,
+                "tax_id": null,
+                "statement_signatory": null,
+                "mailing_locale": null,
+                "org_type": "school",
+                "listed_at": null,
+                "parent_id": null,
+                "capability_overrides": "{\"school_calendar\":true}",
+                "forms_card_via_masjid_id": null,
+                "forms_card_via_set_at": null,
+                "forms_card_via_set_by": null,
+                "stripe_deauthorized_at": null,
+                "slug": null,
+                "description": null
+            }
+        ]
+    },
+    "capabilities": {
+        "status": 200,
+        "body": {
+            "status": "success",
+            "data": {
+                "org": {
+                    "id": 1,
+                    "name": "Baseline School",
+                    "org_type": "school",
+                    "donation_link_set": false
+                },
+                "groups": [
+                    {
+                        "key": "content",
+                        "label": "Website & app content",
+                        "entries": [
+                            {
+                                "key": "web_pages",
+                                "label": "Website pages",
+                                "description": "Lets this organisation's own administrators open Web Pages Management. A SuperAdmin can open it whenever Web Pages Management is switched on.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "website",
+                                "label": "Web Pages Management",
+                                "description": "The screen where the website's pages and sections are built. Switch it off for an organisation with no website: nobody sees the screen, a SuperAdmin only from the switched-off list. The public website keeps serving.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "announcements",
+                                "label": "Announcements",
+                                "description": "Write the announcements shown on the website and in the app, including the Announcements channel in Broadcasts.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "events",
+                                "label": "Events",
+                                "description": "Add and edit the events listed on the website and in the app. Not the school calendar.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "about_us",
+                                "label": "About Us",
+                                "description": "Edit the About Us, mission and vision text shown on the website and in the app.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "gallery",
+                                "label": "Photo Gallery",
+                                "description": "Upload and remove the photos shown in the website and app gallery.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "splash",
+                                "label": "Splash",
+                                "description": "The pop-up shown when the website or app opens. Switched off, admins cannot add or change one; a splash already live keeps showing until its end date.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": [
+                                    "No live splash"
+                                ]
+                            },
+                            {
+                                "key": "services",
+                                "label": "Services",
+                                "description": "Add and edit the services listed on the website and in the app. Switched off, the list already published stays, and Broadcasts, Friday lunch and About Us can still use it.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            }
+                        ]
+                    },
+                    {
+                        "key": "prayer",
+                        "label": "Prayer & worship",
+                        "entries": [
+                            {
+                                "key": "prayer_times",
+                                "label": "Prayer times",
+                                "description": "Set how prayer times are calculated, the iqama times and Jumu'ah. Switched off, the website, apps and TV board keep showing the last saved times. Manara stops its backup reminders to phones that have not opened the app for 5 days, and its daily background refresh. Android phones re-arm their own adhan and iqama alerts every day; an iPhone re-arms them when the app is opened, so one left unopened for about 6 days can stop alerting, and iqama times saved while this is off reach iPhones only when the app is next opened.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": "Prayer Calculation, Iqama Settings and Jumaa Settings tabs",
+                                "surface": null,
+                                "facts": [
+                                    "App prayer table: masjids only",
+                                    "No prayer settings saved yet",
+                                    "0 phones that have not opened the app for 5 days get Manara's backup prayer reminders",
+                                    "0 phones get the daily background refresh",
+                                    "This organisation has no OneSignal app of its own, and no platform OneSignal app is configured, so no prayer pushes are sent"
+                                ]
+                            },
+                            {
+                                "key": "quran",
+                                "label": "Qur’an",
+                                "description": "The Qur’an reader in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": "app",
+                                "facts": []
+                            },
+                            {
+                                "key": "hadith",
+                                "label": "Hadith",
+                                "description": "The hadith collection in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": "app",
+                                "facts": []
+                            },
+                            {
+                                "key": "adhkar",
+                                "label": "Adhkar",
+                                "description": "The morning and evening adhkar in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": "app",
+                                "facts": []
+                            },
+                            {
+                                "key": "qibla",
+                                "label": "Qibla",
+                                "description": "The qibla compass in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": "app",
+                                "facts": []
+                            },
+                            {
+                                "key": "tasbih",
+                                "label": "Tasbih",
+                                "description": "The tasbih counter in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": "app",
+                                "facts": []
+                            }
+                        ]
+                    },
+                    {
+                        "key": "communication",
+                        "label": "Communication",
+                        "entries": [
+                            {
+                                "key": "tv_display",
+                                "label": "TV display",
+                                "description": "Let this organisation's administrators choose what its lobby TV screen shows: the title, the words under the donation code, the slide speed, and whether the slides, the prayer times (a masjid only) and the donation code appear. Off: the page is hidden and the screen keeps what it shows now. Meant for an organisation that has a TV screen.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "push_notifications",
+                                "label": "Notifications",
+                                "description": "Send push notifications to people who have the mobile app, including the Push channel in Broadcasts. Does nothing without an app. Scheduled prayer reminders follow Prayer times, not this switch.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "contact_requests",
+                                "label": "Contact Requests",
+                                "description": "Read and answer messages sent from the website and app contact forms, and set the contact reasons. Switched off, those contact forms refuse new messages.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "broadcasts",
+                                "label": "Broadcasts",
+                                "description": "Compose one message and send it to announcements, push and email at once.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "appointment_requests",
+                                "label": "Appointment Requests",
+                                "description": "The inbox for appointment requests sent from the website form. Also needs Members, classes & giving. Switched off, the form refuses new requests.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            }
+                        ]
+                    },
+                    {
+                        "key": "registration_money",
+                        "label": "Members, registration & money",
+                        "entries": [
+                            {
+                                "key": "jummah_lunch",
+                                "label": "Friday lunch ordering",
+                                "description": "Sell Jummah lunch online, run the order board, and give volunteers a lunch-only login.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "crm",
+                                "label": "Members, classes & giving",
+                                "description": "Member directory, groups and classes, teachers, programs, donations and funds.",
+                                "kind": "grant",
+                                "writer": "crm",
+                                "enabled": true,
+                                "default_for_org_type": null,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "form_editing",
+                                "label": "Edit sign-up forms",
+                                "description": "Lets this organisation's administrators create and edit sign-up forms from Form Responses, without Web Pages Management.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "shop",
+                                "label": "Online shop",
+                                "description": "Sell products such as school uniforms online, in sizes with their own stock, through the basket. Off: no product can be added to a basket or paid for.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "programs",
+                                "label": "Programs",
+                                "description": "Programs with fee plans, places and registrations. Also needs Members, classes & giving. Switched off, public program sign-up closes.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "zakat",
+                                "label": "Zakat Calculator",
+                                "description": "Set the gold and silver prices the zakat calculator uses. The public calculator keeps answering from the last price you set.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "donation_link",
+                                "label": "Donation link",
+                                "description": "The donation web page the website Donate section, the TV board QR code and the app open. Switched off, admins cannot change it; the link already set keeps showing.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": 0,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "giving",
+                                "label": "Giving",
+                                "description": "Gifts, funds, monthly giving and year-end statements. Also needs Members, classes & giving. Stripe setup is not part of this switch. Switched off, the giving screens are hidden; a member's record still shows their giving history, and the Impact Report still totals gifts for admins who can view donations. The app stops taking new gifts. Gifts already paid are still recorded and receipted.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": [
+                                    "Stripe is not connected",
+                                    "0 monthly gifts can still charge donors",
+                                    "0 monthly-gift checkout pages opened in the last 24 hours can still start a monthly gift",
+                                    "0 gifts started in the last 24 hours may still complete",
+                                    "0 gifts recorded in the last 12 months",
+                                    "0 active funds"
+                                ]
+                            },
+                            {
+                                "key": "properties",
+                                "label": "Properties & Rent",
+                                "description": "Rental properties and the rent recorded against them. Also needs Members, classes & giving. Rent is typed in by hand and never charged through Stripe.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            }
+                        ]
+                    },
+                    {
+                        "key": "school",
+                        "label": "School",
+                        "entries": [
+                            {
+                                "key": "school_calendar",
+                                "label": "School calendar",
+                                "description": "School days, no-school days, and the school-day choices on registration forms.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": true,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "report_card_core_subjects",
+                                "label": "Report card: Qur'an, Islamic Studies and Arabic only",
+                                "description": "Report cards carry the core subjects at every grade.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "short_lesson_plan",
+                                "label": "Shorter lesson plan",
+                                "description": "Lesson plans leave out the standard, the Differentiation section, the STEM line and the exit ticket. Reflection and the subject and Islamic integration lines stay.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "simple_marking",
+                                "label": "Mark work Excellent, Good or Needs work",
+                                "description": "For each piece of work the teacher chooses a score out of a number of points or Excellent / Good / Needs work. Families see the word, never a percentage made from it. Off: points and the four performance levels, as today.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "points_weekly_report",
+                                "label": "Weekly points report",
+                                "description": "Each week, tell every family with a portal login that their child's weekly points report is ready (nothing about the child is in the email), and give each class's teachers their class summary. Off: no report is sent.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "class_store",
+                                "label": "Class store (Manara Bucks)",
+                                "description": "Turn each week's positive points into Manara Bucks, let a class's teachers run a class store where students spend them, and let families see their own child's balance and history. Off: nothing is minted and no store screen appears.",
+                                "kind": "grant",
+                                "writer": "capability",
+                                "enabled": false,
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            }
+                        ]
+                    },
+                    {
+                        "key": "tools",
+                        "label": "Tools",
+                        "entries": [
+                            {
+                                "key": "assistant",
+                                "label": "Manara Assistant",
+                                "description": "The AI assistant for admins, and form insights.",
+                                "kind": "grant",
+                                "writer": "assistant",
+                                "enabled": false,
+                                "default_for_org_type": null,
+                                "offered_by_default": false,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "flyer_studio",
+                                "label": "Flyer Studio",
+                                "description": "Design flyers from ready-made templates. The Jummah lunch flyer upload is part of Friday lunch ordering, not this.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            },
+                            {
+                                "key": "impact_report",
+                                "label": "Impact Report",
+                                "description": "The numbers a grant application or funder report asks for, computed from your own records. Also needs Members, classes & giving.",
+                                "kind": "module",
+                                "writer": "capability",
+                                "enabled": true,
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "overridden": false,
+                                "in_use": null,
+                                "where": null,
+                                "surface": null,
+                                "facts": []
+                            }
+                        ]
+                    }
+                ],
+                "history": []
+            }
+        },
+        "rows": [
+            {
+                "id": 1,
+                "user_id": null,
+                "name": "Baseline School",
+                "email": "baseline@example.invalid",
+                "email_verified_at": null,
+                "phone": "+15550001000",
+                "phone_verified_at": null,
+                "country_id": "1",
+                "city_id": "1",
+                "address": "1 Test St",
+                "latitude": 0,
+                "longitude": 0,
+                "website_link": null,
+                "created_by": null,
+                "updated_by": null,
+                "deleted_by": null,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00",
+                "deleted_at": null,
+                "timezone": "UTC",
+                "copyright_text": null,
+                "app_store_link": null,
+                "google_play_link": null,
+                "google_maps_key": null,
+                "stripe_account_id": null,
+                "stripe_charges_enabled": 0,
+                "stripe_payouts_enabled": 0,
+                "crm_enabled": 1,
+                "assistant_enabled": 0,
+                "tax_id": null,
+                "statement_signatory": null,
+                "mailing_locale": null,
+                "org_type": "school",
+                "listed_at": null,
+                "parent_id": null,
+                "capability_overrides": "{\"school_calendar\":true}",
+                "forms_card_via_masjid_id": null,
+                "forms_card_via_set_at": null,
+                "forms_card_via_set_by": null,
+                "stripe_deauthorized_at": null,
+                "slug": null,
+                "description": null
+            }
+        ]
+    },
+    "studio": {
+        "status": 200,
+        "body": {
+            "status": "success",
+            "data": {
+                "org_type": "school",
+                "groups": [
+                    {
+                        "key": "content",
+                        "label": "Website & app content",
+                        "entries": [
+                            {
+                                "key": "web_pages",
+                                "kind": "grant",
+                                "label": "Website pages",
+                                "description": "Lets this organisation's own administrators open Web Pages Management. A SuperAdmin can open it whenever Web Pages Management is switched on.",
+                                "turns_on": "Lets this organisation's own administrators open Web Pages Management. A SuperAdmin can open it whenever Web Pages Management is switched on.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [
+                                    "web"
+                                ],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "website",
+                                "kind": "module",
+                                "label": "Web Pages Management",
+                                "description": "The screen where the website's pages and sections are built. Switch it off for an organisation with no website: nobody sees the screen, a SuperAdmin only from the switched-off list. The public website keeps serving.",
+                                "turns_on": "A screen for building the website's pages and sections.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "announcements",
+                                "kind": "module",
+                                "label": "Announcements",
+                                "description": "Write the announcements shown on the website and in the app, including the Announcements channel in Broadcasts.",
+                                "turns_on": "Write the announcements shown on the website and in the app, including the Announcements channel in Broadcasts.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [
+                                        "announcements"
+                                    ],
+                                    "tab": true
+                                }
+                            },
+                            {
+                                "key": "events",
+                                "kind": "module",
+                                "label": "Events",
+                                "description": "Add and edit the events listed on the website and in the app. Not the school calendar.",
+                                "turns_on": "Add and edit the events listed on the website and in the app. Not the school calendar.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [
+                                        "announcements"
+                                    ],
+                                    "tab": true
+                                }
+                            },
+                            {
+                                "key": "about_us",
+                                "kind": "module",
+                                "label": "About Us",
+                                "description": "Edit the About Us, mission and vision text shown on the website and in the app.",
+                                "turns_on": "Edit the About Us, mission and vision text shown on the website and in the app.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [
+                                        "about_us"
+                                    ],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "gallery",
+                                "kind": "module",
+                                "label": "Photo Gallery",
+                                "description": "Upload and remove the photos shown in the website and app gallery.",
+                                "turns_on": "Upload and remove the photos shown in the website and app gallery.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [
+                                        "gallery"
+                                    ],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "splash",
+                                "kind": "module",
+                                "label": "Splash",
+                                "description": "The pop-up shown when the website or app opens. Switched off, admins cannot add or change one; a splash already live keeps showing until its end date.",
+                                "turns_on": "The pop-up shown when the website or app opens. Switched off, admins cannot add or change one; a splash already live keeps showing until its end date.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "services",
+                                "kind": "module",
+                                "label": "Services",
+                                "description": "Add and edit the services listed on the website and in the app. Switched off, the list already published stays, and Broadcasts, Friday lunch and About Us can still use it.",
+                                "turns_on": "Add and edit the services listed on the website and in the app. Switched off, the list already published stays, and Broadcasts, Friday lunch and About Us can still use it.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [
+                                        "services"
+                                    ],
+                                    "tab": false
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "key": "prayer",
+                        "label": "Prayer & worship",
+                        "entries": [
+                            {
+                                "key": "prayer_times",
+                                "kind": "module",
+                                "label": "Prayer times",
+                                "description": "Set how prayer times are calculated, the iqama times and Jumu'ah. Switched off, the website, apps and TV board keep showing the last saved times. Manara stops its backup reminders to phones that have not opened the app for 5 days, and its daily background refresh. Android phones re-arm their own adhan and iqama alerts every day; an iPhone re-arms them when the app is opened, so one left unopened for about 6 days can stop alerting, and iqama times saved while this is off reach iPhones only when the app is next opened.",
+                                "turns_on": "Set how prayer times are calculated, the iqama times and Jumu'ah, for the website, the apps and the TV board.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": "Prayer Calculation, Iqama Settings and Jumaa Settings tabs",
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "quran",
+                                "kind": "module",
+                                "label": "Qur’an",
+                                "description": "The Qur’an reader in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "turns_on": "The Qur’an reader in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": "app",
+                                "app": {
+                                    "items": [
+                                        "quran"
+                                    ],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "hadith",
+                                "kind": "module",
+                                "label": "Hadith",
+                                "description": "The hadith collection in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "turns_on": "The hadith collection in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": "app",
+                                "app": {
+                                    "items": [
+                                        "hadith"
+                                    ],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "adhkar",
+                                "kind": "module",
+                                "label": "Adhkar",
+                                "description": "The morning and evening adhkar in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "turns_on": "The morning and evening adhkar in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": "app",
+                                "app": {
+                                    "items": [
+                                        "adhkar"
+                                    ],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "qibla",
+                                "kind": "module",
+                                "label": "Qibla",
+                                "description": "The qibla compass in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "turns_on": "The qibla compass in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": "app",
+                                "app": {
+                                    "items": [
+                                        "qibla"
+                                    ],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "tasbih",
+                                "kind": "module",
+                                "label": "Tasbih",
+                                "description": "The tasbih counter in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "turns_on": "The tasbih counter in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": "app",
+                                "app": {
+                                    "items": [
+                                        "tasbih"
+                                    ],
+                                    "tab": false
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "key": "communication",
+                        "label": "Communication",
+                        "entries": [
+                            {
+                                "key": "tv_display",
+                                "kind": "grant",
+                                "label": "TV display",
+                                "description": "Let this organisation's administrators choose what its lobby TV screen shows: the title, the words under the donation code, the slide speed, and whether the slides, the prayer times (a masjid only) and the donation code appear. Off: the page is hidden and the screen keeps what it shows now. Meant for an organisation that has a TV screen.",
+                                "turns_on": "Let this organisation's administrators choose what its lobby TV screen shows: the title, the words under the donation code, the slide speed, and whether the slides, the prayer times (a masjid only) and the donation code appear. Off: the page is hidden and the screen keeps what it shows now. Meant for an organisation that has a TV screen.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "push_notifications",
+                                "kind": "module",
+                                "label": "Notifications",
+                                "description": "Send push notifications to people who have the mobile app, including the Push channel in Broadcasts. Does nothing without an app. Scheduled prayer reminders follow Prayer times, not this switch.",
+                                "turns_on": "Send push notifications to people who have the mobile app, including the Push channel in Broadcasts. Does nothing without an app. Scheduled prayer reminders follow Prayer times, not this switch.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "contact_requests",
+                                "kind": "module",
+                                "label": "Contact Requests",
+                                "description": "Read and answer messages sent from the website and app contact forms, and set the contact reasons. Switched off, those contact forms refuse new messages.",
+                                "turns_on": "Read and answer messages sent from the website and app contact forms, and set the contact reasons. Switched off, those contact forms refuse new messages.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [
+                                        "contact"
+                                    ],
+                                    "tab": true
+                                }
+                            },
+                            {
+                                "key": "broadcasts",
+                                "kind": "module",
+                                "label": "Broadcasts",
+                                "description": "Compose one message and send it to announcements, push and email at once.",
+                                "turns_on": "Compose one message and send it to announcements, push and email at once.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "appointment_requests",
+                                "kind": "module",
+                                "label": "Appointment Requests",
+                                "description": "The inbox for appointment requests sent from the website form. Also needs Members, classes & giving. Switched off, the form refuses new requests.",
+                                "turns_on": "The inbox for appointment requests sent from the website form. Also needs Members, classes & giving. Switched off, the form refuses new requests.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "key": "registration_money",
+                        "label": "Members, registration & money",
+                        "entries": [
+                            {
+                                "key": "jummah_lunch",
+                                "kind": "grant",
+                                "label": "Friday lunch ordering",
+                                "description": "Sell Jummah lunch online, run the order board, and give volunteers a lunch-only login.",
+                                "turns_on": "Sell Jummah lunch online, run the order board, and give volunteers a lunch-only login.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "crm",
+                                "kind": "grant",
+                                "label": "Members, classes & giving",
+                                "description": "Member directory, groups and classes, teachers, programs, donations and funds.",
+                                "turns_on": "Member directory, groups and classes, teachers, programs, donations and funds.",
+                                "writer": "crm",
+                                "default_for_org_type": null,
+                                "offered_by_default": false,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "form_editing",
+                                "kind": "grant",
+                                "label": "Edit sign-up forms",
+                                "description": "Lets this organisation's administrators create and edit sign-up forms from Form Responses, without Web Pages Management.",
+                                "turns_on": "Lets this organisation's administrators create and edit sign-up forms from Form Responses, without Web Pages Management.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "shop",
+                                "kind": "grant",
+                                "label": "Online shop",
+                                "description": "Sell products such as school uniforms online, in sizes with their own stock, through the basket. Off: no product can be added to a basket or paid for.",
+                                "turns_on": "Sell products such as school uniforms online, in sizes with their own stock, through the basket. Off: no product can be added to a basket or paid for.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "programs",
+                                "kind": "module",
+                                "label": "Programs",
+                                "description": "Programs with fee plans, places and registrations. Also needs Members, classes & giving. Switched off, public program sign-up closes.",
+                                "turns_on": "Programs with fee plans, places and registrations. Also needs Members, classes & giving. Switched off, public program sign-up closes.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "zakat",
+                                "kind": "module",
+                                "label": "Zakat Calculator",
+                                "description": "Set the gold and silver prices the zakat calculator uses. The public calculator keeps answering from the last price you set.",
+                                "turns_on": "Set the gold and silver prices the zakat calculator uses. The public calculator keeps answering from the last price you set.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "donation_link",
+                                "kind": "module",
+                                "label": "Donation link",
+                                "description": "The donation web page the website Donate section, the TV board QR code and the app open. Switched off, admins cannot change it; the link already set keeps showing.",
+                                "turns_on": "The donation web page the website Donate section, the TV board QR code and the app open. Switched off, admins cannot change it; the link already set keeps showing.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [
+                                        "donate"
+                                    ],
+                                    "tab": true
+                                }
+                            },
+                            {
+                                "key": "giving",
+                                "kind": "module",
+                                "label": "Giving",
+                                "description": "Gifts, funds, monthly giving and year-end statements. Also needs Members, classes & giving. Stripe setup is not part of this switch. Switched off, the giving screens are hidden; a member's record still shows their giving history, and the Impact Report still totals gifts for admins who can view donations. The app stops taking new gifts. Gifts already paid are still recorded and receipted.",
+                                "turns_on": "Gifts, funds, monthly giving and year-end statements, and giving in the app. Also needs Members, classes & giving.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [
+                                        "donate"
+                                    ],
+                                    "tab": true
+                                }
+                            },
+                            {
+                                "key": "properties",
+                                "kind": "module",
+                                "label": "Properties & Rent",
+                                "description": "Rental properties and the rent recorded against them. Also needs Members, classes & giving. Rent is typed in by hand and never charged through Stripe.",
+                                "turns_on": "Rental properties and the rent recorded against them. Also needs Members, classes & giving. Rent is typed in by hand and never charged through Stripe.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "not_offered",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "key": "school",
+                        "label": "School",
+                        "entries": [
+                            {
+                                "key": "school_calendar",
+                                "kind": "grant",
+                                "label": "School calendar",
+                                "description": "School days, no-school days, and the school-day choices on registration forms.",
+                                "turns_on": "School days, no-school days, and the school-day choices on registration forms.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "report_card_core_subjects",
+                                "kind": "grant",
+                                "label": "Report card: Qur'an, Islamic Studies and Arabic only",
+                                "description": "Report cards carry the core subjects at every grade.",
+                                "turns_on": "Report cards carry the core subjects at every grade.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "short_lesson_plan",
+                                "kind": "grant",
+                                "label": "Shorter lesson plan",
+                                "description": "Lesson plans leave out the standard, the Differentiation section, the STEM line and the exit ticket. Reflection and the subject and Islamic integration lines stay.",
+                                "turns_on": "Lesson plans leave out the standard, the Differentiation section, the STEM line and the exit ticket. Reflection and the subject and Islamic integration lines stay.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "simple_marking",
+                                "kind": "grant",
+                                "label": "Mark work Excellent, Good or Needs work",
+                                "description": "For each piece of work the teacher chooses a score out of a number of points or Excellent / Good / Needs work. Families see the word, never a percentage made from it. Off: points and the four performance levels, as today.",
+                                "turns_on": "For each piece of work the teacher chooses a score out of a number of points or Excellent / Good / Needs work. Families see the word, never a percentage made from it. Off: points and the four performance levels, as today.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "points_weekly_report",
+                                "kind": "grant",
+                                "label": "Weekly points report",
+                                "description": "Each week, tell every family with a portal login that their child's weekly points report is ready (nothing about the child is in the email), and give each class's teachers their class summary. Off: no report is sent.",
+                                "turns_on": "Each week, tell every family with a portal login that their child's weekly points report is ready (nothing about the child is in the email), and give each class's teachers their class summary. Off: no report is sent.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "class_store",
+                                "kind": "grant",
+                                "label": "Class store (Manara Bucks)",
+                                "description": "Turn each week's positive points into Manara Bucks, let a class's teachers run a class store where students spend them, and let families see their own child's balance and history. Off: nothing is minted and no store screen appears.",
+                                "turns_on": "Turn each week's positive points into Manara Bucks, let a class's teachers run a class store where students spend them, and let families see their own child's balance and history. Off: nothing is minted and no store screen appears.",
+                                "writer": "capability",
+                                "default_for_org_type": false,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "key": "tools",
+                        "label": "Tools",
+                        "entries": [
+                            {
+                                "key": "assistant",
+                                "kind": "grant",
+                                "label": "Manara Assistant",
+                                "description": "The AI assistant for admins, and form insights.",
+                                "turns_on": "The AI assistant for admins, and form insights.",
+                                "writer": "assistant",
+                                "default_for_org_type": null,
+                                "offered_by_default": false,
+                                "default_at_creation": false,
+                                "visibility": "optional",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "flyer_studio",
+                                "kind": "module",
+                                "label": "Flyer Studio",
+                                "description": "Design flyers from ready-made templates. The Jummah lunch flyer upload is part of Friday lunch ordering, not this.",
+                                "turns_on": "Design flyers from ready-made templates. The Jummah lunch flyer upload is part of Friday lunch ordering, not this.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            },
+                            {
+                                "key": "impact_report",
+                                "kind": "module",
+                                "label": "Impact Report",
+                                "description": "The numbers a grant application or funder report asks for, computed from your own records. Also needs Members, classes & giving.",
+                                "turns_on": "The numbers a grant application or funder report asks for, computed from your own records. Also needs Members, classes & giving.",
+                                "writer": "capability",
+                                "default_for_org_type": true,
+                                "offered_by_default": true,
+                                "default_at_creation": true,
+                                "visibility": "default",
+                                "preselect_with": [],
+                                "where": null,
+                                "surface": null,
+                                "app": {
+                                    "items": [],
+                                    "tab": false
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        "rows": [
+            {
+                "id": 1,
+                "user_id": null,
+                "name": "Baseline School",
+                "email": "baseline@example.invalid",
+                "email_verified_at": null,
+                "phone": "+15550001000",
+                "phone_verified_at": null,
+                "country_id": "1",
+                "city_id": "1",
+                "address": "1 Test St",
+                "latitude": 0,
+                "longitude": 0,
+                "website_link": null,
+                "created_by": null,
+                "updated_by": null,
+                "deleted_by": null,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00",
+                "deleted_at": null,
+                "timezone": "UTC",
+                "copyright_text": null,
+                "app_store_link": null,
+                "google_play_link": null,
+                "google_maps_key": null,
+                "stripe_account_id": null,
+                "stripe_charges_enabled": 0,
+                "stripe_payouts_enabled": 0,
+                "crm_enabled": 1,
+                "assistant_enabled": 0,
+                "tax_id": null,
+                "statement_signatory": null,
+                "mailing_locale": null,
+                "org_type": "school",
+                "listed_at": null,
+                "parent_id": null,
+                "capability_overrides": "{\"school_calendar\":true}",
+                "forms_card_via_masjid_id": null,
+                "forms_card_via_set_at": null,
+                "forms_card_via_set_by": null,
+                "stripe_deauthorized_at": null,
+                "slug": null,
+                "description": null
+            }
+        ]
+    }
+}

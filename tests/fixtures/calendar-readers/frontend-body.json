@@ -1,0 +1,6 @@
+{
+  "commit": "02d8b3a180cd1a765afd027ad3d2dadc6d061f53",
+  "path": "resources/vue-app/core/types/data/masjid-related/SchoolCalendar.ts",
+  "method": "readYear",
+  "body": "\n    const firstDay = isoDay(raw?.first_day);\n    const weekday = Number(raw?.meeting_weekday);\n\n    return {\n        id: Number(raw?.id),\n        label: String(raw?.label ?? ''),\n        first_day: firstDay,\n        last_day: isoDay(raw?.last_day),\n        meeting_weekday: Number.isInteger(weekday) && weekday >= 0 && weekday <= 6\n            ? weekday\n            : (weekdayOfIso(firstDay) ?? 0),\n        meeting_days: Array.isArray(raw?.meeting_days) ? raw.meeting_days.map(isoDay) : [],\n        closures: Array.isArray(raw?.closures)\n            ? raw.closures.map((c: any) => ({\n                id: Number(c?.id),\n                closed_on: isoDay(c?.closed_on),\n                reason: String(c?.reason ?? ''),\n            }))\n            : [],\n    };"
+}

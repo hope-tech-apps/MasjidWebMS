@@ -654,6 +654,9 @@ Route::prefix('admin')->group(function () {
                     Route::post('/closures', 'storeClosure');
                     Route::put('/closures/{closure_id}', 'updateClosure'); // the reason only
                     Route::delete('/closures/{closure_id}', 'destroyClosure');
+                    Route::post('/years/{year_id}/terms', [\App\Http\Controllers\AdminDashboard\SchoolCalendarConfigurationController::class, 'storeTerm']);
+                    Route::put('/years/{year_id}/terms/{term_id}', [\App\Http\Controllers\AdminDashboard\SchoolCalendarConfigurationController::class, 'updateTerm']);
+                    Route::delete('/years/{year_id}/terms/{term_id}', [\App\Http\Controllers\AdminDashboard\SchoolCalendarConfigurationController::class, 'destroyTerm']);
                 });
 
             // Sign-up Forms Management (event RSVPs, membership, camp registration).

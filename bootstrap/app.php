@@ -72,6 +72,7 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware) {
+        $middleware->prepend(\App\Http\Middleware\SchoolCalendarHttpRequest::class);
         // API realms use the 401 renderer below, regardless of Accept. Resolving
         // Laravel's default route('login') first throws before that renderer runs.
         $middleware->redirectGuestsTo(fn (Request $request) => $request->is('api/*') ? null : '/auth/sign-in');

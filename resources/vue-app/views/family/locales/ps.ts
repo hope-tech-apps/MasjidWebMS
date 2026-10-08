@@ -124,6 +124,7 @@ export const PS: Record<string, string> = {
     cal_no_school: "رخصتي",
     cal_today: "نن",
     cal_year: "تعلیمي کال",
+    cal_terms: "تعلیمي دورې",
     cal_meets_every: "ټولګي هره {x} جوړېږي",
     cal_no_days: "د دې کال لپاره د ښوونځي هېڅ ورځې نه دي ثبت شوې.",
 

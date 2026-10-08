@@ -22,6 +22,10 @@ class StoreSchoolYearRequest extends BaseFormRequest
 {
     public function rules(): array
     {
+        if (\App\Support\SchoolCalendarConfigurationRules::enabled($this)) {
+            return \App\Support\SchoolCalendarConfigurationRules::yearRules();
+        }
+
         return [
             'label' => ['required', 'string', 'max:32'],
             'first_day' => ['required', 'date_format:Y-m-d'],
@@ -31,6 +35,11 @@ class StoreSchoolYearRequest extends BaseFormRequest
 
     public function withValidator(Validator $validator): void
     {
+        if (\App\Support\SchoolCalendarConfigurationRules::enabled($this)) {
+            \App\Support\SchoolCalendarConfigurationRules::yearValidator($this, $validator, $this->yearBeingEdited());
+            return;
+        }
+
         $validator->after(function (Validator $v): void {
             if ($v->errors()->hasAny(['first_day', 'last_day'])) {
                 return;

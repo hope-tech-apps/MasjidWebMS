@@ -33,6 +33,10 @@ class ReportCard extends Model
     /** Al-Razi runs four quarters. */
     public const TERMS = [1, 2, 3, 4];
 
+    // Internal link metadata never enters existing card serialization.
+    protected $hidden = ['school_term_id'];
+    protected $casts = ['school_term_id' => 'integer'];
+
     protected $fillable = [
         'masjid_id',
         'group_id',

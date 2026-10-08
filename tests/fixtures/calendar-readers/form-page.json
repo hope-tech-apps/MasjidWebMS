@@ -1,0 +1,116 @@
+{
+    "sql": [
+        "select exists(select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"masjids\".\"deleted_at\" is null) as \"exists\"",
+        "select * from \"pages\" where \"masjid_id\" = ? and \"is_active\" = ? and \"slug\" = ? and \"pages\".\"deleted_at\" is null limit 1",
+        "select \"sections\".*, \"page_section\".\"page_id\" as \"pivot_page_id\", \"page_section\".\"section_id\" as \"pivot_section_id\", \"page_section\".\"order\" as \"pivot_order\", \"page_section\".\"platforms\" as \"pivot_platforms\", \"page_section\".\"created_at\" as \"pivot_created_at\", \"page_section\".\"updated_at\" as \"pivot_updated_at\" from \"sections\" inner join \"page_section\" on \"sections\".\"id\" = \"page_section\".\"section_id\" where \"sections\".\"is_active\" = ? and \"page_section\".\"page_id\" in (1) order by \"page_section\".\"order\" asc",
+        "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (1) and \"media\".\"model_type\" = ? order by \"created_at\" desc, \"created_at\" desc",
+        "select \"sections\".*, \"page_section\".\"page_id\" as \"pivot_page_id\", \"page_section\".\"section_id\" as \"pivot_section_id\", \"page_section\".\"order\" as \"pivot_order\", \"page_section\".\"platforms\" as \"pivot_platforms\", \"page_section\".\"created_at\" as \"pivot_created_at\", \"page_section\".\"updated_at\" as \"pivot_updated_at\" from \"sections\" inner join \"page_section\" on \"sections\".\"id\" = \"page_section\".\"section_id\" where \"page_section\".\"page_id\" = ? order by \"page_section\".\"order\" asc",
+        "select * from \"forms\" where \"masjid_id\" = ? and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) order by \"closed_on\" asc"
+    ],
+    "data": {
+        "status": "success",
+        "message": "api.success",
+        "data": {
+            "id": 1,
+            "slug": "reader-page",
+            "title": "School days",
+            "page_title": null,
+            "page_title_background_image_url": null,
+            "is_active": true,
+            "order": 1,
+            "show_in_menu": true,
+            "show_as_button": false,
+            "meta_description": null,
+            "sections": [
+                {
+                    "id": 1,
+                    "section_type": "form",
+                    "section_type_label": "Sign-up Form",
+                    "title": "School days",
+                    "content": {
+                        "form_id": 1,
+                        "form": {
+                            "id": 1,
+                            "slug": "reader-form",
+                            "name": "School days",
+                            "description": null,
+                            "schema": {
+                                "sections": [
+                                    {
+                                        "id": "days",
+                                        "fields": [
+                                            {
+                                                "name": "days",
+                                                "label": "Days",
+                                                "type": "checkboxGroup",
+                                                "optionsSource": "school_meeting_days",
+                                                "minSelections": 2,
+                                                "maxSelections": 2,
+                                                "options": [
+                                                    {
+                                                        "value": "2026-10-26",
+                                                        "label": "Monday, October 26, 2026"
+                                                    },
+                                                    {
+                                                        "value": "2026-11-02",
+                                                        "label": "Monday, November 2, 2026"
+                                                    },
+                                                    {
+                                                        "value": "2026-11-09",
+                                                        "label": "Monday, November 9, 2026"
+                                                    },
+                                                    {
+                                                        "value": "2026-11-16",
+                                                        "label": "Monday, November 16, 2026"
+                                                    },
+                                                    {
+                                                        "value": "2026-11-23",
+                                                        "label": "Monday, November 23, 2026"
+                                                    },
+                                                    {
+                                                        "value": "2026-11-30",
+                                                        "label": "Monday, November 30, 2026"
+                                                    },
+                                                    {
+                                                        "value": "2026-12-07",
+                                                        "label": "Monday, December 7, 2026"
+                                                    },
+                                                    {
+                                                        "value": "2026-12-14",
+                                                        "label": "Monday, December 14, 2026"
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            "accepting": true,
+                            "closed_reason": null,
+                            "settings": {
+                                "submitButtonLabel": "Submit",
+                                "successTitle": null,
+                                "successBody": null,
+                                "successNextSteps": [],
+                                "intro": null,
+                                "fee": null
+                            }
+                        }
+                    },
+                    "items_per_page": null,
+                    "order": 1,
+                    "platforms": [
+                        "web",
+                        "mobile"
+                    ],
+                    "is_active": true,
+                    "settings": null,
+                    "uses_external_data": false
+                }
+            ]
+        }
+    }
+}

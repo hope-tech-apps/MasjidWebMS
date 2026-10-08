@@ -1,0 +1,28 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+        "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+        "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+        "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+        "select * from \"lesson_plans\" where \"group_id\" = ? and strftime('%Y-%m-%d', \"session_date\") >= cast(? as text) and strftime('%Y-%m-%d', \"session_date\") <= cast(? as text) and \"lesson_plans\".\"masjid_id\" = ? order by \"session_date\" asc, \"subject_key\" asc, \"id\" asc",
+        "select \"subjects\" from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc",
+        "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+    ],
+    "data": {
+        "status": "success",
+        "data": {
+            "from": "2026-10-12",
+            "to": "2026-10-18",
+            "plans": [],
+            "hidden_fields": [],
+            "meeting_weekdays": [
+                1
+            ]
+        }
+    }
+}

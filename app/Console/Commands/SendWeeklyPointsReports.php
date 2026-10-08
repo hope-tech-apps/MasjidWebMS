@@ -180,6 +180,11 @@ class SendWeeklyPointsReports extends Command
         bool $dry,
         array &$run,
     ): void {
+        if (SchoolSettings::calendarTerms($masjid)) {
+            $this->sweepSchoolConfigured($masjid, $resolver, $now, $explicitDay, $dry, $run);
+            return;
+        }
+
         $tz = SchoolPointsWeek::timezone((int) $masjid->id);
         $schedule = PointsReportSchedule::for($masjid);
 
@@ -401,4 +406,76 @@ class SendWeeklyPointsReports extends Command
 
         return (string) preg_replace('/[^\s<>"\'(),;:]+@[^\s<>"\'(),;]+/u', '[address]', $message);
     }
+    private function sweepSchoolConfigured(
+        Masjid $masjid,
+        GroupNotificationRecipientResolver $resolver,
+        CarbonImmutable $now,
+        ?string $explicitDay,
+        bool $dry,
+        array &$run,
+    ): void {
+        $tz = SchoolPointsWeek::timezone((int) $masjid->id);
+        $schedule = PointsReportSchedule::for($masjid);
+
+        $week = $explicitDay !== null
+            ? PointsWeek::startingOn($explicitDay, $tz)
+            : PointsWeek::containing($now, $tz);
+
+        if ($week === null) {
+            return;
+        }
+
+        // The scheduled moment INSIDE this points week. It is also the report's cutoff.
+        $sendAt = $week->at($schedule['weekday'], $schedule['time']);
+
+        // A moment late on the week's last day (Saturday 23:00) has its catch-up window
+        // running into the NEXT week, where the week containing "now" is a different one
+        // and its own moment has not come. So an automatic run also looks at the week
+        // before, and reports that one while its window is still open.
+        if ($explicitDay === null && $now->lt($sendAt)) {
+            $before = $week->previous();
+            $beforeAt = $before->at($schedule['weekday'], $schedule['time']);
+
+            if ($now->gte($beforeAt) && $now->lt($beforeAt->addHours(self::CATCH_UP_HOURS))) {
+                $week = $before;
+                $sendAt = $beforeAt;
+            }
+        }
+
+        if ($now->lt($sendAt)) {
+            $run['skipped']['not_due']++;
+
+            return;
+        }
+
+        if ($explicitDay === null && $now->gte($sendAt->addHours(self::CATCH_UP_HOURS))) {
+            $run['skipped']['window_passed']++;
+
+            return;
+        }
+
+        if (\App\Support\SchoolDateAuthority::fromLegacy(SchoolCalendar::for((int) $masjid->id), true)->openDaysBetween($week->startDate(), $week->lastDate()) === []) {
+            $run['skipped']['closed_week']++;
+
+            return;
+        }
+
+        // Named explicitly: this command runs with no tenant bound, where the global
+        // scope adds no filter at all.
+        $groups = Group::withoutMasjidScope()
+            ->where('masjid_id', $masjid->id)
+            ->where('is_active', true)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($groups as $group) {
+            try {
+                $this->sweepClass($masjid, $group, $resolver, $week, $sendAt, $dry, $run);
+            } catch (Throwable $e) {
+                $run['failures']++;
+                Log::warning('points:weekly-report failed for class '.$group->id.': '.$e->getMessage());
+            }
+        }
+    }
+
 }

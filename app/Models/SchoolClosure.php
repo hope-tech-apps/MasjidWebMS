@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use App\Models\Concerns\InvalidatesSchoolCalendar;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -15,6 +16,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class SchoolClosure extends Model
 {
     use BelongsToMasjid;
+    use InvalidatesSchoolCalendar;
 
     protected $fillable = [
         'masjid_id',

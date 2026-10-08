@@ -1,0 +1,27 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"permissions\"",
+        "select \"roles\".*, \"role_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"role_has_permissions\".\"role_id\" as \"pivot_role_id\" from \"roles\" inner join \"role_has_permissions\" on \"roles\".\"id\" = \"role_has_permissions\".\"role_id\" where \"role_has_permissions\".\"permission_id\" in (1, 2, 3, 4, 5, 6, 7, 8)",
+        "select \"permissions\".*, \"model_has_permissions\".\"model_id\" as \"pivot_model_id\", \"model_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"model_has_permissions\".\"model_type\" as \"pivot_model_type\" from \"permissions\" inner join \"model_has_permissions\" on \"permissions\".\"id\" = \"model_has_permissions\".\"permission_id\" where \"model_has_permissions\".\"model_id\" in (1) and \"model_has_permissions\".\"model_type\" = ?",
+        "select \"roles\".*, \"model_has_roles\".\"model_id\" as \"pivot_model_id\", \"model_has_roles\".\"role_id\" as \"pivot_role_id\", \"model_has_roles\".\"model_type\" as \"pivot_model_type\" from \"roles\" inner join \"model_has_roles\" on \"roles\".\"id\" = \"model_has_roles\".\"role_id\" where \"model_has_roles\".\"model_id\" in (1) and \"model_has_roles\".\"model_type\" = ?",
+        "select * from \"offerings\" where \"offerings\".\"id\" = ? and \"offerings\".\"deleted_at\" is null and \"offerings\".\"masjid_id\" = ? limit 1",
+        "select count(*) as aggregate from \"fee_plans\" where \"id\" = ? and \"masjid_id\" = ? and \"offering_id\" = ?",
+        "select count(*) as aggregate from \"contacts\" where \"id\" = ? and \"masjid_id\" = ? and \"deleted_at\" is null",
+        "select * from \"offerings\" where \"offerings\".\"id\" = ? and \"offerings\".\"deleted_at\" is null and \"offerings\".\"masjid_id\" = ? limit 1",
+        "select * from \"fee_plans\" where \"offering_id\" = ? and \"fee_plans\".\"id\" = ? and \"fee_plans\".\"masjid_id\" = ? limit 1",
+        "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ? limit 1",
+        "select * from \"forms\" where \"masjid_id\" = ? and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc"
+    ],
+    "data": {
+        "status": "failed",
+        "data": {
+            "days": [
+                "Pick exactly 2 Mondays."
+            ]
+        }
+    }
+}

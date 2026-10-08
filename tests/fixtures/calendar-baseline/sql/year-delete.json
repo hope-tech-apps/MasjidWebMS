@@ -1,0 +1,10 @@
+[
+    "select * from \"school_years\" where \"school_years\".\"id\" = ? and \"school_years\".\"masjid_id\" = ? limit 1",
+    "select * from \"school_years\" where \"school_years\".\"id\" = ? and \"school_years\".\"masjid_id\" = ? limit 1",
+    "select count(*) as aggregate from \"school_closures\" where \"school_closures\".\"school_year_id\" = ? and \"school_closures\".\"school_year_id\" is not null and \"school_closures\".\"masjid_id\" = ?",
+    "select count(*) as aggregate from \"attendance_records\" where \"masjid_id\" = ? and strftime('%Y-%m-%d', \"session_date\") >= cast(? as text) and strftime('%Y-%m-%d', \"session_date\") <= cast(? as text) and \"attendance_records\".\"masjid_id\" = ?",
+    "select * from \"forms\" where \"masjid_id\" = ? and \"forms\".\"deleted_at\" is null",
+    "delete from \"school_years\" where \"id\" = ?",
+    "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+    "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc"
+]

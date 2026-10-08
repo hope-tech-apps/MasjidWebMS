@@ -1,0 +1,12 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"forms\" where \"forms\".\"masjid_id\" = ? and \"forms\".\"masjid_id\" is not null and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc",
+        "select exists(select * from \"form_responses\" where \"form_responses\".\"form_id\" = ? and \"form_responses\".\"form_id\" is not null and \"masjid_id\" = ? and \"staff_payment_method\" is not null order by \"submitted_at\" desc, \"id\" desc) as \"exists\"",
+        "select * from \"form_responses\" where \"form_responses\".\"form_id\" = ? and \"form_responses\".\"form_id\" is not null and \"masjid_id\" = ? and \"id\" is not null order by \"submitted_at\" desc, \"id\" asc limit 200"
+    ],
+    "data": "Submitted,Status,Entries,\"Amount due\",Days\n\"2026-10-13 16:00\",new,1,,\"2026-10-13, Monday, October 19, 2026\"\n"
+}

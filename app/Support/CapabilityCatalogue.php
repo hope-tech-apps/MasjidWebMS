@@ -41,10 +41,50 @@ final class CapabilityCatalogue
      */
     public static function forOrgType(string $orgType): array
     {
+        if (config('capabilities.school_calendar_terms.listed_when_off') === false) {
+            return self::forOrgTypeWithCalendarVisibility($orgType);
+        }
+
         $groupLabels = config('capability_groups', []);
         $entries = [];
 
         foreach (config('capabilities', []) as $key => $definition) {
+            if (! is_array($definition) || self::visibility($key, $definition, $orgType) === self::HIDDEN) {
+                continue;
+            }
+
+            // The switch panel's fallback group, so the two place an entry alike.
+            $entries[$definition['group'] ?? 'tools'][] = self::entry($key, $definition, $orgType);
+        }
+
+        $groups = [];
+
+        foreach (array_unique(array_merge(array_keys($groupLabels), array_keys($entries))) as $groupKey) {
+            if (empty($entries[$groupKey])) {
+                continue;
+            }
+
+            $groups[] = [
+                'key' => $groupKey,
+                'label' => $groupLabels[$groupKey] ?? $groupKey,
+                'entries' => $entries[$groupKey],
+            ];
+        }
+
+        return $groups;
+    }
+
+    /** Calendar grant boundary; the legacy body below remains frozen. */
+    private static function forOrgTypeWithCalendarVisibility(string $orgType): array
+    {
+        $groupLabels = config('capability_groups', []);
+        $entries = [];
+
+        foreach (config('capabilities', []) as $key => $definition) {
+            if ($key === 'school_calendar_terms') {
+                continue;
+            }
+
             if (! is_array($definition) || self::visibility($key, $definition, $orgType) === self::HIDDEN) {
                 continue;
             }
@@ -177,9 +217,35 @@ final class CapabilityCatalogue
      */
     public static function resolve(string $orgType, array $choices): array
     {
+        if (config('capabilities.school_calendar_terms.listed_when_off') === false) {
+            return self::resolveWithCalendarVisibility($orgType, $choices);
+        }
+
         $out = [];
 
         foreach (config('capabilities', []) as $key => $definition) {
+            if (! is_array($definition) || self::visibility($key, $definition, $orgType) === self::HIDDEN) {
+                continue;
+            }
+
+            $out[$key] = is_bool($choices[$key] ?? null)
+                ? $choices[$key]
+                : self::defaultAtCreation($key, $orgType);
+        }
+
+        return $out;
+    }
+
+    /** Calendar grant boundary; the legacy body below remains frozen. */
+    private static function resolveWithCalendarVisibility(string $orgType, array $choices): array
+    {
+        $out = [];
+
+        foreach (config('capabilities', []) as $key => $definition) {
+            if ($key === 'school_calendar_terms' && ! (($choices['school_calendar_terms'] ?? false) === true)) {
+                continue;
+            }
+
             if (! is_array($definition) || self::visibility($key, $definition, $orgType) === self::HIDDEN) {
                 continue;
             }

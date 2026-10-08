@@ -3,31 +3,37 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use App\Models\Concerns\InvalidatesSchoolCalendar;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * A school year: the dates a school meets between, every 7 days from the first.
- *
- * Tenant-scoped reference data. The meeting weekday is `first_day`'s and is
- * never stored — see the migration. Every calendar question (is this a school
- * day, what is offered on a form, what today is) is answered by
- * App\Support\SchoolCalendar, not here, so the register, the forms and the
- * three reads cannot drift apart. Cross-tenant coverage:
- * tests/Feature/SchoolCalendarTenantIsolationTest.php.
- *
- * `curriculum_weeks.week_no` is still NOT mapped to these dates.
+ * Tenant-scoped school dates. The legacy weekday remains the first day's weekday.
+ * New configuration is read only by SchoolDateAuthority while the switch is ON;
+ * raw serialization hides it. No curriculum week number is derived from dates.
+ * Cross-tenant coverage: SchoolCalendarTenantIsolationTest and SchoolCalendarTermsTest.
  */
 class SchoolYear extends Model
 {
     use BelongsToMasjid;
+    use InvalidatesSchoolCalendar;
 
     protected $fillable = [
         'masjid_id',
         'label',
         'first_day',
         'last_day',
+        'meeting_weekdays',
+        'term_system',
     ];
+
+    protected $casts = ['meeting_weekdays' => 'array'];
+    protected $hidden = ['meeting_weekdays', 'term_system'];
+
+    public function terms(): HasMany
+    {
+        return $this->hasMany(SchoolTerm::class)->orderBy('position');
+    }
 
     protected function casts(): array
     {

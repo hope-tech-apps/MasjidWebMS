@@ -523,11 +523,21 @@ class Masjid extends Model implements HasMedia
     public function getCapabilitiesAttribute(): array
     {
         if (\App\Support\SchoolSettings::classSubjects($this)) {
-            return $this->capabilitiesWithClassSubjects();
+            return $this->withoutHiddenCalendarTerms($this->capabilitiesWithClassSubjects());
         }
         $out = $this->legacyCapabilities();
         // The new definition is not part of origin/main's catalogue.
         unset($out['class_subjects']);
+        return $this->withoutHiddenCalendarTerms($out);
+    }
+
+    /** A school without dated terms does not see the grant at all, whichever branch built the map. */
+    private function withoutHiddenCalendarTerms(array $out): array
+    {
+        if (! \App\Support\SchoolSettings::calendarTerms($this)) {
+            unset($out[\App\Support\SchoolSettings::SCHOOL_CALENDAR_TERMS]);
+        }
+
         return $out;
     }
 
@@ -563,6 +573,18 @@ class Masjid extends Model implements HasMedia
         }
 
         return $out;
+    }
+
+    /** Hide the disabled grant in raw admin overrides as well as the computed capability map. */
+    public function attributesToArray(): array
+    {
+        $attributes = parent::attributesToArray();
+        if (! \App\Support\SchoolSettings::calendarTerms($this)
+            && is_array($attributes['capability_overrides'] ?? null)
+            && array_key_exists('school_calendar_terms', $attributes['capability_overrides'])) {
+            unset($attributes['capability_overrides']['school_calendar_terms']);
+        }
+        return $attributes;
     }
 
     /**
@@ -841,8 +863,13 @@ class Masjid extends Model implements HasMedia
      */
     protected static function booted(): void
     {
-        static::retrieved(fn (Masjid $org) => \App\Support\ClassSubjectMode::rememberLoaded($org));
-        static::saved(fn (Masjid $org) => \App\Support\ClassSubjectMode::forget((int) $org->id));
+        static::retrieved(fn (Masjid $org) => \App\Support\SchoolCalendarRequestMode::remember($org));
+        static::saved(function (Masjid $org) {
+            if ($org->wasChanged(['org_type', 'capability_overrides'])) {
+                \App\Support\SchoolCalendarRequestMode::forget((int) $org->id);
+            }
+        });
+
         // A force-delete cascades `masjid_domains` in the database, which fires
         // no model event, so a host's Cloudflare records (the CNAME, the Pages
         // custom domain, a zone Studio created) would outlive every row that

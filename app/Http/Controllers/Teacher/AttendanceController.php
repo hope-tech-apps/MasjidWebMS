@@ -41,6 +41,10 @@ class AttendanceController extends TeacherController
      */
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
+        if (\App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id)) {
+            return $this->indexConfigured($request, $masjid_id, $group_id);
+        }
+
         $group = Group::findOrFail($group_id);
         $date = $this->sessionDate($request->query('date'));
 
@@ -250,4 +254,67 @@ class AttendanceController extends TeacherController
             return Carbon::today();
         }
     }
+    private function indexConfigured(Request $request, $masjid_id, $group_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+        $calendar = \App\Support\SchoolCalendarReaders::for((int) $group->masjid_id);
+        $date = $this->sessionDateConfigured($request->query('date'), $calendar);
+
+        // What the school calendar says about this day. Only `closed` changes the
+        // register: a closed day has no register to take, so it serves no
+        // students and reads as not taken. A school with no calendar gets
+        // has_calendar false and exactly the register it always had (Al-Razi).
+        $schoolDay = $calendar->schoolDay($date->toDateString());
+
+        if ($schoolDay['closed']) {
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'session_date' => $date->toDateString(),
+                    'taken' => false,
+                    'students' => [],
+                    'school_day' => $schoolDay,
+                ],
+            ], Response::HTTP_OK);
+        }
+
+        $students = $group->memberships()
+            ->participants()->current()
+            ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
+            ->get();
+
+        $marks = AttendanceRecord::query()
+            ->where('group_id', $group->id)
+            ->whereDate('session_date', $date)
+            ->get()
+            ->keyBy('group_membership_id');
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'session_date' => $date->toDateString(),
+                'taken' => $marks->isNotEmpty(),
+                'students' => $students->map(function (GroupMembership $m) use ($marks): array {
+                    $record = $marks->get($m->id);
+
+                    return $this->student($m) + [
+                        'status' => $record?->status,
+                        'note' => $record?->note,
+                    ];
+                })->values(),
+                'school_day' => $schoolDay,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    private function sessionDateConfigured(?string $raw, \App\Support\SchoolDateAuthority $calendar): Carbon
+    {
+        if (! is_string($raw) || $raw === '') return Carbon::parse($calendar->today())->startOfDay();
+        try {
+            return Carbon::createFromFormat('Y-m-d', $raw)->startOfDay();
+        } catch (\Throwable) {
+            return Carbon::parse($calendar->today())->startOfDay();
+        }
+    }
+
 }

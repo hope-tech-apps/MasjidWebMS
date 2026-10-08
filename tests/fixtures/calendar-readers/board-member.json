@@ -1,0 +1,50 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"permissions\"",
+        "select \"roles\".*, \"role_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"role_has_permissions\".\"role_id\" as \"pivot_role_id\" from \"roles\" inner join \"role_has_permissions\" on \"roles\".\"id\" = \"role_has_permissions\".\"role_id\" where \"role_has_permissions\".\"permission_id\" in (1, 2, 3, 4, 5, 6, 7, 8)",
+        "select \"permissions\".*, \"model_has_permissions\".\"model_id\" as \"pivot_model_id\", \"model_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"model_has_permissions\".\"model_type\" as \"pivot_model_type\" from \"permissions\" inner join \"model_has_permissions\" on \"permissions\".\"id\" = \"model_has_permissions\".\"permission_id\" where \"model_has_permissions\".\"model_id\" in (1) and \"model_has_permissions\".\"model_type\" = ?",
+        "select \"roles\".*, \"model_has_roles\".\"model_id\" as \"pivot_model_id\", \"model_has_roles\".\"role_id\" as \"pivot_role_id\", \"model_has_roles\".\"model_type\" as \"pivot_model_type\" from \"roles\" inner join \"model_has_roles\" on \"roles\".\"id\" = \"model_has_roles\".\"role_id\" where \"model_has_roles\".\"model_id\" in (1) and \"model_has_roles\".\"model_type\" = ?",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc",
+        "select * from \"group_memberships\" where \"role\" in (?, ?) and exists (select * from \"groups\" where \"group_memberships\".\"group_id\" = \"groups\".\"id\" and \"kind\" in (?, ?) and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ?) and \"group_memberships\".\"id\" = ? and \"group_memberships\".\"masjid_id\" = ? limit 1",
+        "select \"id\", \"first_name\", \"last_name\", \"avatar_character\", \"avatar_tone\", \"avatar_color\", \"staff_avatar_character\", \"staff_avatar_tone\", \"staff_avatar_color\" from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+        "select \"id\", \"name\" from \"groups\" where \"groups\".\"id\" in (1) and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ?",
+        "select distinct \"group_id\", \"session_date\" from \"attendance_records\" where \"group_id\" in (?) and \"session_date\" >= ? and \"session_date\" < ? and \"attendance_records\".\"masjid_id\" = ?",
+        "select * from \"attendance_records\" where \"group_membership_id\" = ? and \"session_date\" >= ? and \"session_date\" < ? and \"attendance_records\".\"masjid_id\" = ? order by \"session_date\" asc"
+    ],
+    "data": {
+        "status": "success",
+        "data": {
+            "student": {
+                "membership_id": 1,
+                "group_id": 1,
+                "group_name": "Class A",
+                "grade_label": null,
+                "joined_at": "2026-10-01",
+                "left_on": null,
+                "contact": {
+                    "id": 1,
+                    "first_name": "Test",
+                    "last_name": "Student",
+                    "avatar": null
+                }
+            },
+            "from": "2026-10-12",
+            "to": "2026-10-16",
+            "timezone": "America/New_York",
+            "totals": {
+                "present": 0,
+                "late": 0,
+                "absent": 0,
+                "excused": 0,
+                "marked": 0,
+                "unmarked": 0,
+                "registers": 0
+            },
+            "entries": [],
+            "not_marked": []
+        }
+    }
+}

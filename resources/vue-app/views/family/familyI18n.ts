@@ -282,6 +282,7 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         cal_no_school: "No school",
         cal_today: "Today",
         cal_year: "School year",
+        cal_terms: "Terms",
         // {x} is the weekday's name from Intl, already in the portal's language.
         cal_meets_every: "Classes meet every {x}",
         cal_no_days: "No school days are listed for this year.",
@@ -618,6 +619,7 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         cal_no_school: "لا دراسة",
         cal_today: "اليوم",
         cal_year: "العام الدراسي",
+        cal_terms: "الفصول الدراسية",
         // Intl supplies the weekday with its article ("الأحد"), so the sentence
         // reads "كل يوم الأحد" — every Sunday.
         cal_meets_every: "تُعقد الدراسة كل يوم {x}",

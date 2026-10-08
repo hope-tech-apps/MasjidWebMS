@@ -65,9 +65,23 @@
                         {{ formatSchoolDay(selectedYear.first_day, LOCALE, { month: 'long', day: 'numeric', year: 'numeric' }) }}
                         –
                         {{ formatSchoolDay(selectedYear.last_day, LOCALE, { month: 'long', day: 'numeric', year: 'numeric' }) }}
-                        · Meets every {{ weekdayName(selectedYear.meeting_weekday, LOCALE) }}
+                        · Meets every {{ meetingWeekdayNames(selectedYear, LOCALE) }}
                     </div>
                 </div>
+
+                <section v-if="selectedYear.terms?.length" class="mb-4">
+                    <h3 class="h6">Terms</h3>
+                    <ul class="list-group">
+                        <li v-for="term in selectedYear.terms" :key="term.id" class="list-group-item d-flex flex-wrap justify-content-between gap-2">
+                            <span class="fw-semibold" dir="auto">{{ term.name }}</span>
+                            <span class="text-muted small">
+                                {{ formatSchoolDay(term.starts_on, LOCALE, { month: 'long', day: 'numeric', year: 'numeric' }) }}
+                                –
+                                {{ formatSchoolDay(term.ends_on, LOCALE, { month: 'long', day: 'numeric', year: 'numeric' }) }}
+                            </span>
+                        </li>
+                    </ul>
+                </section>
 
                 <SchoolCalendarList
                     :days="selectedDays"
@@ -89,7 +103,7 @@ import {
     defaultYear,
     formatSchoolDay,
     readSchoolCalendarRead,
-    weekdayName,
+    meetingWeekdayNames,
 } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, onMounted, ref } from 'vue';

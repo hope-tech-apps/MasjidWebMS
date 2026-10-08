@@ -1,0 +1,93 @@
+{
+    "sql": [
+        "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+        "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null limit 1",
+        "update \"personal_access_tokens\" set \"last_used_at\" = ?, \"updated_at\" = ? where \"id\" = ?",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc"
+    ],
+    "data": {
+        "status": "success",
+        "data": {
+            "timezone": "America/New_York",
+            "today": "2026-10-13",
+            "years": [
+                {
+                    "id": 1,
+                    "label": "2026-2027",
+                    "first_day": "2026-10-12",
+                    "last_day": "2026-12-18",
+                    "meeting_weekday": 1,
+                    "meeting_days": [
+                        "2026-10-12",
+                        "2026-10-19",
+                        "2026-10-26",
+                        "2026-11-02",
+                        "2026-11-09",
+                        "2026-11-16",
+                        "2026-11-23",
+                        "2026-11-30",
+                        "2026-12-07",
+                        "2026-12-14"
+                    ],
+                    "closures": [
+                        {
+                            "id": 1,
+                            "closed_on": "2026-10-19",
+                            "reason": "Staff day"
+                        }
+                    ]
+                }
+            ],
+            "upcoming": [
+                {
+                    "date": "2026-10-19",
+                    "closed": true,
+                    "reason": "Staff day"
+                },
+                {
+                    "date": "2026-10-26",
+                    "closed": false,
+                    "reason": null
+                },
+                {
+                    "date": "2026-11-02",
+                    "closed": false,
+                    "reason": null
+                },
+                {
+                    "date": "2026-11-09",
+                    "closed": false,
+                    "reason": null
+                },
+                {
+                    "date": "2026-11-16",
+                    "closed": false,
+                    "reason": null
+                },
+                {
+                    "date": "2026-11-23",
+                    "closed": false,
+                    "reason": null
+                },
+                {
+                    "date": "2026-11-30",
+                    "closed": false,
+                    "reason": null
+                },
+                {
+                    "date": "2026-12-07",
+                    "closed": false,
+                    "reason": null
+                },
+                {
+                    "date": "2026-12-14",
+                    "closed": false,
+                    "reason": null
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,17 @@
+{
+    "sql": [
+        "select exists(select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"masjids\".\"deleted_at\" is null) as \"exists\"",
+        "select * from \"forms\" where \"masjid_id\" = ? and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) order by \"closed_on\" asc"
+    ],
+    "data": {
+        "status": "failed",
+        "data": {
+            "days": [
+                "Pick exactly 2 Mondays."
+            ]
+        }
+    }
+}

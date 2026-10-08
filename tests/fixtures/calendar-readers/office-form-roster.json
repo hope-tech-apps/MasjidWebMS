@@ -1,0 +1,200 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"forms\" where \"forms\".\"masjid_id\" = ? and \"forms\".\"masjid_id\" is not null and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc",
+        "select * from \"form_responses\" where \"form_responses\".\"form_id\" = ? and \"form_responses\".\"form_id\" is not null and \"masjid_id\" = ? order by \"submitted_at\" desc, \"id\" desc",
+        "select * from \"form_staff_codes\" where \"form_staff_codes\".\"form_id\" = ? and \"form_staff_codes\".\"form_id\" is not null and \"form_staff_codes\".\"masjid_id\" = ? order by \"holder_name\" asc, \"id\" asc"
+    ],
+    "data": {
+        "status": "success",
+        "data": {
+            "current_page": 1,
+            "data": [
+                {
+                    "response_id": 1,
+                    "registered_by": "Test Family",
+                    "registrant_email": null,
+                    "registrant_phone": null,
+                    "status": "new",
+                    "submitted_at": "2026-10-13T16:00:00+00:00",
+                    "payment_status": null,
+                    "payment_method": null,
+                    "payment": "",
+                    "holder": null,
+                    "collected_at": null,
+                    "entry_index": 0,
+                    "values": {
+                        "days": "2026-10-13, 2026-10-19"
+                    },
+                    "choice_values": {
+                        "days": [
+                            "2026-10-13",
+                            "2026-10-19"
+                        ]
+                    }
+                }
+            ],
+            "first_page_url": "http://localhost/api/admin/masjids/1/forms/1/responses/roster?page=1",
+            "from": 1,
+            "last_page": 1,
+            "last_page_url": "http://localhost/api/admin/masjids/1/forms/1/responses/roster?page=1",
+            "links": [
+                {
+                    "url": null,
+                    "label": "&laquo; Previous",
+                    "page": null,
+                    "active": false
+                },
+                {
+                    "url": "http://localhost/api/admin/masjids/1/forms/1/responses/roster?page=1",
+                    "label": "1",
+                    "page": 1,
+                    "active": true
+                },
+                {
+                    "url": null,
+                    "label": "Next &raquo;",
+                    "page": null,
+                    "active": false
+                }
+            ],
+            "next_page_url": null,
+            "path": "http://localhost/api/admin/masjids/1/forms/1/responses/roster",
+            "per_page": 25,
+            "prev_page_url": null,
+            "to": 1,
+            "total": 1
+        },
+        "meta": {
+            "form": {
+                "id": 1,
+                "name": "School days",
+                "capacity": null
+            },
+            "columns": [
+                {
+                    "key": "days",
+                    "label": "Days",
+                    "type": "checkboxGroup",
+                    "options": [
+                        {
+                            "value": "2026-10-12",
+                            "label": "Monday, October 12, 2026"
+                        },
+                        {
+                            "value": "2026-10-19",
+                            "label": "Monday, October 19, 2026",
+                            "detail": "No school \u2014 Staff day"
+                        },
+                        {
+                            "value": "2026-10-26",
+                            "label": "Monday, October 26, 2026"
+                        },
+                        {
+                            "value": "2026-11-02",
+                            "label": "Monday, November 2, 2026"
+                        },
+                        {
+                            "value": "2026-11-09",
+                            "label": "Monday, November 9, 2026"
+                        },
+                        {
+                            "value": "2026-11-16",
+                            "label": "Monday, November 16, 2026"
+                        },
+                        {
+                            "value": "2026-11-23",
+                            "label": "Monday, November 23, 2026"
+                        },
+                        {
+                            "value": "2026-11-30",
+                            "label": "Monday, November 30, 2026"
+                        },
+                        {
+                            "value": "2026-12-07",
+                            "label": "Monday, December 7, 2026"
+                        },
+                        {
+                            "value": "2026-12-14",
+                            "label": "Monday, December 14, 2026"
+                        }
+                    ]
+                }
+            ],
+            "summary": {
+                "people": 1,
+                "submissions": 1,
+                "breakdowns": []
+            },
+            "statuses": [
+                "new",
+                "confirmed",
+                "waitlisted",
+                "cancelled"
+            ],
+            "sortable": [
+                "submitted_at",
+                "respondent_name",
+                "status",
+                "days"
+            ],
+            "payment_filters": [
+                "paid",
+                "unpaid",
+                "settled",
+                "cash",
+                "online",
+                "external",
+                "office"
+            ],
+            "collected_filters": [
+                "yes",
+                "no"
+            ],
+            "payment": {
+                "enabled": false,
+                "charges_fee": false,
+                "online": false,
+                "staff_codes": false,
+                "office": false,
+                "paid_via": [
+                    {
+                        "value": "zelle",
+                        "label": "Zelle"
+                    },
+                    {
+                        "value": "cashapp",
+                        "label": "Cash App"
+                    },
+                    {
+                        "value": "venmo",
+                        "label": "Venmo"
+                    },
+                    {
+                        "value": "check",
+                        "label": "Check"
+                    },
+                    {
+                        "value": "square",
+                        "label": "Square"
+                    },
+                    {
+                        "value": "bank_transfer",
+                        "label": "Bank transfer"
+                    },
+                    {
+                        "value": "other",
+                        "label": "Other"
+                    }
+                ],
+                "codes": []
+            },
+            "reservations": false,
+            "reservation_conflicts": 0,
+            "price_breakdown": false
+        }
+    }
+}

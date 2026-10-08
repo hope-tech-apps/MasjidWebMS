@@ -124,6 +124,7 @@ export const UR: Record<string, string> = {
     cal_no_school: "چھٹی",
     cal_today: "آج",
     cal_year: "تعلیمی سال",
+    cal_terms: "تعلیمی ادوار",
     cal_meets_every: "کلاسیں ہر {x} کو ہوتی ہیں",
     cal_no_days: "اس سال کے لیے اسکول کے کوئی دن درج نہیں ہیں۔",
 

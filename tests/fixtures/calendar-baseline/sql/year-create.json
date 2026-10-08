@@ -1,0 +1,9 @@
+[
+    "select * from \"school_years\" where \"masjid_id\" = ? and strftime('%Y-%m-%d', \"first_day\") <= cast(? as text) and strftime('%Y-%m-%d', \"last_day\") >= cast(? as text) and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc limit 1",
+    "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+    "select * from \"school_years\" where \"masjid_id\" = ? and strftime('%Y-%m-%d', \"first_day\") <= cast(? as text) and strftime('%Y-%m-%d', \"last_day\") >= cast(? as text) and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc limit 1",
+    "insert into \"school_years\" (\"label\", \"first_day\", \"last_day\", \"masjid_id\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?)",
+    "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+    "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+    "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc"
+]

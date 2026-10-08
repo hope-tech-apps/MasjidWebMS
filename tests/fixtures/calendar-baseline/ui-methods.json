@@ -1,0 +1,22 @@
+{
+  "applyPayload": {
+    "bytes": 424,
+    "sha256": "69ac80c05de0bb653e8937f09f803cbbacf4bc6a23d9dae645b0b0147ccce4f5"
+  },
+  "lastDayWeekdayNote": {
+    "bytes": 323,
+    "sha256": "64d469b9e1ee7d65e063a8f231032a5137cbae371790f91bfd97f21cf2321328"
+  },
+  "openYearModal": {
+    "bytes": 286,
+    "sha256": "0f07116797c098e5e46aff50eac86b136a5797320cd99f14c81cb88b1a21d19d"
+  },
+  "closeYearModal": {
+    "bytes": 98,
+    "sha256": "209be6acf6471941b143204fbdbcfc4abe7322d6756d90f478916364db8505f4"
+  },
+  "saveYear": {
+    "bytes": 1239,
+    "sha256": "cd55c6c97b95b31bea5939a8d232dd8f68f652ec9734182ef7812b620ccb5dde"
+  }
+}

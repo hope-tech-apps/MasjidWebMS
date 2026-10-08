@@ -1,0 +1,2027 @@
+{
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": {
+        "status": 200,
+        "body": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "student": {
+                    "membership_id": 1,
+                    "grade_label": "Pre-K",
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Test",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "type": "report_card",
+                "type_label": "Report Card",
+                "school_year": "2026-2027",
+                "term": 1,
+                "period_label": "Quarter 1, 2026-2027",
+                "grade_label": "Pre-K",
+                "teacher_comment": null,
+                "published": false,
+                "published_at": null,
+                "attendance": {
+                    "present": null,
+                    "absent": null,
+                    "late": null
+                },
+                "subjects": [
+                    {
+                        "subject": "Qur'an",
+                        "criteria": [
+                            {
+                                "id": 1,
+                                "criterion": "Recitation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 2,
+                                "criterion": "Memorisation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 3,
+                                "criterion": "Tajweed",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Islamic Studies",
+                        "criteria": [
+                            {
+                                "id": 4,
+                                "criterion": "Understanding of concepts",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 5,
+                                "criterion": "Applies manners (adab) independently",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 6,
+                                "criterion": "Participation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Arabic Language",
+                        "criteria": [
+                            {
+                                "id": 7,
+                                "criterion": "Reading Accuracy",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 8,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 9,
+                                "criterion": "Vocabulary Use",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    }
+                ],
+                "learning_behaviours": [
+                    {
+                        "id": 10,
+                        "criterion": "Follows classroom expectations",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 11,
+                        "criterion": "Completes work on time",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 12,
+                        "criterion": "Works well with others",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 13,
+                        "criterion": "Shows respect and good adab",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    }
+                ]
+            },
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        },
+        "cards": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "group_id": 1,
+                "group_membership_id": 1,
+                "type": "report_card",
+                "school_year": "2026-2027",
+                "term": 1,
+                "grade_label": "Pre-K",
+                "teacher_comment": null,
+                "days_present": null,
+                "days_absent": null,
+                "days_late": null,
+                "published_at": null,
+                "published_by_user_id": null,
+                "created_by_user_id": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00",
+                "school_term_id": null
+            }
+        ],
+        "marks": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Recitation",
+                "level": null,
+                "comment": null,
+                "position": 0,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 2,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Memorisation",
+                "level": null,
+                "comment": null,
+                "position": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 3,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Tajweed",
+                "level": null,
+                "comment": null,
+                "position": 2,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 4,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Understanding of concepts",
+                "level": null,
+                "comment": null,
+                "position": 3,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 5,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Applies manners (adab) independently",
+                "level": null,
+                "comment": null,
+                "position": 4,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 6,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Participation",
+                "level": null,
+                "comment": null,
+                "position": 5,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 7,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Reading Accuracy",
+                "level": null,
+                "comment": null,
+                "position": 6,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 8,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Writing",
+                "level": null,
+                "comment": null,
+                "position": 7,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 9,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Vocabulary Use",
+                "level": null,
+                "comment": null,
+                "position": 8,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 10,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Follows classroom expectations",
+                "level": null,
+                "comment": null,
+                "position": 9,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 11,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Completes work on time",
+                "level": null,
+                "comment": null,
+                "position": 10,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 12,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Works well with others",
+                "level": null,
+                "comment": null,
+                "position": 11,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 13,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Shows respect and good adab",
+                "level": null,
+                "comment": null,
+                "position": 12,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            }
+        ]
+    },
+    "0083f3e056037f2c63bc07d3b013ff4f42fa54e9c91b62932c77deee7d036d75": {
+        "status": 200,
+        "body": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "student": {
+                    "membership_id": 1,
+                    "grade_label": "Pre-K",
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Test",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "type": "report_card",
+                "type_label": "Report Card",
+                "school_year": "2026-2027",
+                "term": 2,
+                "period_label": "Quarter 2, 2026-2027",
+                "grade_label": "Pre-K",
+                "teacher_comment": null,
+                "published": false,
+                "published_at": null,
+                "attendance": {
+                    "present": null,
+                    "absent": null,
+                    "late": null
+                },
+                "subjects": [
+                    {
+                        "subject": "Qur'an",
+                        "criteria": [
+                            {
+                                "id": 1,
+                                "criterion": "Recitation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 2,
+                                "criterion": "Memorisation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 3,
+                                "criterion": "Tajweed",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Islamic Studies",
+                        "criteria": [
+                            {
+                                "id": 4,
+                                "criterion": "Understanding of concepts",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 5,
+                                "criterion": "Applies manners (adab) independently",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 6,
+                                "criterion": "Participation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Arabic Language",
+                        "criteria": [
+                            {
+                                "id": 7,
+                                "criterion": "Reading Accuracy",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 8,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 9,
+                                "criterion": "Vocabulary Use",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    }
+                ],
+                "learning_behaviours": [
+                    {
+                        "id": 10,
+                        "criterion": "Follows classroom expectations",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 11,
+                        "criterion": "Completes work on time",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 12,
+                        "criterion": "Works well with others",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 13,
+                        "criterion": "Shows respect and good adab",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    }
+                ]
+            },
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        },
+        "cards": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "group_id": 1,
+                "group_membership_id": 1,
+                "type": "report_card",
+                "school_year": "2026-2027",
+                "term": 2,
+                "grade_label": "Pre-K",
+                "teacher_comment": null,
+                "days_present": null,
+                "days_absent": null,
+                "days_late": null,
+                "published_at": null,
+                "published_by_user_id": null,
+                "created_by_user_id": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00",
+                "school_term_id": null
+            }
+        ],
+        "marks": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Recitation",
+                "level": null,
+                "comment": null,
+                "position": 0,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 2,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Memorisation",
+                "level": null,
+                "comment": null,
+                "position": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 3,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Tajweed",
+                "level": null,
+                "comment": null,
+                "position": 2,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 4,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Understanding of concepts",
+                "level": null,
+                "comment": null,
+                "position": 3,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 5,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Applies manners (adab) independently",
+                "level": null,
+                "comment": null,
+                "position": 4,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 6,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Participation",
+                "level": null,
+                "comment": null,
+                "position": 5,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 7,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Reading Accuracy",
+                "level": null,
+                "comment": null,
+                "position": 6,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 8,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Writing",
+                "level": null,
+                "comment": null,
+                "position": 7,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 9,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Vocabulary Use",
+                "level": null,
+                "comment": null,
+                "position": 8,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 10,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Follows classroom expectations",
+                "level": null,
+                "comment": null,
+                "position": 9,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 11,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Completes work on time",
+                "level": null,
+                "comment": null,
+                "position": 10,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 12,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Works well with others",
+                "level": null,
+                "comment": null,
+                "position": 11,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 13,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Shows respect and good adab",
+                "level": null,
+                "comment": null,
+                "position": 12,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            }
+        ]
+    },
+    "f4501b9a01f619a74f570a15eb46f77d460f5c0efb8d382bd6c085123a1412af": {
+        "status": 200,
+        "body": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "student": {
+                    "membership_id": 1,
+                    "grade_label": "Pre-K",
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Test",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "type": "progress",
+                "type_label": "Progress Report",
+                "school_year": "2026-2027",
+                "term": 2,
+                "period_label": "Quarter 2, 2026-2027",
+                "grade_label": "Pre-K",
+                "teacher_comment": null,
+                "published": false,
+                "published_at": null,
+                "attendance": {
+                    "present": null,
+                    "absent": null,
+                    "late": null
+                },
+                "subjects": [
+                    {
+                        "subject": "Qur'an",
+                        "criteria": [
+                            {
+                                "id": 1,
+                                "criterion": "Recitation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 2,
+                                "criterion": "Memorisation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 3,
+                                "criterion": "Tajweed",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Islamic Studies",
+                        "criteria": [
+                            {
+                                "id": 4,
+                                "criterion": "Understanding of concepts",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 5,
+                                "criterion": "Applies manners (adab) independently",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 6,
+                                "criterion": "Participation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Arabic Language",
+                        "criteria": [
+                            {
+                                "id": 7,
+                                "criterion": "Reading Accuracy",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 8,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 9,
+                                "criterion": "Vocabulary Use",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    }
+                ],
+                "learning_behaviours": [
+                    {
+                        "id": 10,
+                        "criterion": "Follows classroom expectations",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 11,
+                        "criterion": "Completes work on time",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 12,
+                        "criterion": "Works well with others",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 13,
+                        "criterion": "Shows respect and good adab",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    }
+                ]
+            },
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        },
+        "cards": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "group_id": 1,
+                "group_membership_id": 1,
+                "type": "progress",
+                "school_year": "2026-2027",
+                "term": 2,
+                "grade_label": "Pre-K",
+                "teacher_comment": null,
+                "days_present": null,
+                "days_absent": null,
+                "days_late": null,
+                "published_at": null,
+                "published_by_user_id": null,
+                "created_by_user_id": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00",
+                "school_term_id": null
+            }
+        ],
+        "marks": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Recitation",
+                "level": null,
+                "comment": null,
+                "position": 0,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 2,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Memorisation",
+                "level": null,
+                "comment": null,
+                "position": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 3,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Tajweed",
+                "level": null,
+                "comment": null,
+                "position": 2,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 4,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Understanding of concepts",
+                "level": null,
+                "comment": null,
+                "position": 3,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 5,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Applies manners (adab) independently",
+                "level": null,
+                "comment": null,
+                "position": 4,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 6,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Participation",
+                "level": null,
+                "comment": null,
+                "position": 5,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 7,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Reading Accuracy",
+                "level": null,
+                "comment": null,
+                "position": 6,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 8,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Writing",
+                "level": null,
+                "comment": null,
+                "position": 7,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 9,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Vocabulary Use",
+                "level": null,
+                "comment": null,
+                "position": 8,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 10,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Follows classroom expectations",
+                "level": null,
+                "comment": null,
+                "position": 9,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 11,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Completes work on time",
+                "level": null,
+                "comment": null,
+                "position": 10,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 12,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Works well with others",
+                "level": null,
+                "comment": null,
+                "position": 11,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 13,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Shows respect and good adab",
+                "level": null,
+                "comment": null,
+                "position": 12,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            }
+        ]
+    },
+    "d6efbb3fc4eef1fdda502ce132fb845d39d711f0f2f57ed853a359f506126b4d": {
+        "status": 200,
+        "body": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "student": {
+                    "membership_id": 1,
+                    "grade_label": "Pre-K",
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Test",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "type": "report_card",
+                "type_label": "Report Card",
+                "school_year": "2026-2027",
+                "term": 1,
+                "period_label": "Quarter 1, 2026-2027",
+                "grade_label": "Pre-K",
+                "teacher_comment": null,
+                "published": false,
+                "published_at": null,
+                "attendance": {
+                    "present": null,
+                    "absent": null,
+                    "late": null
+                },
+                "subjects": [
+                    {
+                        "subject": "Qur'an",
+                        "criteria": [
+                            {
+                                "id": 1,
+                                "criterion": "Recitation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 2,
+                                "criterion": "Memorisation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 3,
+                                "criterion": "Tajweed",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Islamic Studies",
+                        "criteria": [
+                            {
+                                "id": 4,
+                                "criterion": "Understanding of concepts",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 5,
+                                "criterion": "Applies manners (adab) independently",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 6,
+                                "criterion": "Participation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Arabic Language",
+                        "criteria": [
+                            {
+                                "id": 7,
+                                "criterion": "Reading Accuracy",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 8,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 9,
+                                "criterion": "Vocabulary Use",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    }
+                ],
+                "learning_behaviours": [
+                    {
+                        "id": 10,
+                        "criterion": "Follows classroom expectations",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 11,
+                        "criterion": "Completes work on time",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 12,
+                        "criterion": "Works well with others",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 13,
+                        "criterion": "Shows respect and good adab",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    }
+                ]
+            },
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        },
+        "cards": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "group_id": 1,
+                "group_membership_id": 1,
+                "type": "report_card",
+                "school_year": "2026-2027",
+                "term": 1,
+                "grade_label": "Pre-K",
+                "teacher_comment": null,
+                "days_present": null,
+                "days_absent": null,
+                "days_late": null,
+                "published_at": null,
+                "published_by_user_id": null,
+                "created_by_user_id": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00",
+                "school_term_id": null
+            }
+        ],
+        "marks": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Recitation",
+                "level": null,
+                "comment": null,
+                "position": 0,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 2,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Memorisation",
+                "level": null,
+                "comment": null,
+                "position": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 3,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Tajweed",
+                "level": null,
+                "comment": null,
+                "position": 2,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 4,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Understanding of concepts",
+                "level": null,
+                "comment": null,
+                "position": 3,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 5,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Applies manners (adab) independently",
+                "level": null,
+                "comment": null,
+                "position": 4,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 6,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Participation",
+                "level": null,
+                "comment": null,
+                "position": 5,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 7,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Reading Accuracy",
+                "level": null,
+                "comment": null,
+                "position": 6,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 8,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Writing",
+                "level": null,
+                "comment": null,
+                "position": 7,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 9,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Vocabulary Use",
+                "level": null,
+                "comment": null,
+                "position": 8,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 10,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Follows classroom expectations",
+                "level": null,
+                "comment": null,
+                "position": 9,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 11,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Completes work on time",
+                "level": null,
+                "comment": null,
+                "position": 10,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 12,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Works well with others",
+                "level": null,
+                "comment": null,
+                "position": 11,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 13,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Shows respect and good adab",
+                "level": null,
+                "comment": null,
+                "position": 12,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            }
+        ]
+    },
+    "2251b31c882b90a6985ec3869296ccec00a5e02f93aa1779ab526a52584ae65b": {
+        "status": 200,
+        "body": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "student": {
+                    "membership_id": 1,
+                    "grade_label": "Pre-K",
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Test",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "type": "report_card",
+                "type_label": "Report Card",
+                "school_year": "2026-2027",
+                "term": 2,
+                "period_label": "Quarter 2, 2026-2027",
+                "grade_label": null,
+                "teacher_comment": null,
+                "published": false,
+                "published_at": null,
+                "attendance": {
+                    "present": null,
+                    "absent": null,
+                    "late": null
+                },
+                "subjects": [
+                    {
+                        "subject": "Qur'an",
+                        "criteria": [
+                            {
+                                "id": 1,
+                                "criterion": "Recitation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 2,
+                                "criterion": "Memorisation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 3,
+                                "criterion": "Tajweed",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Islamic Studies",
+                        "criteria": [
+                            {
+                                "id": 4,
+                                "criterion": "Understanding of concepts",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 5,
+                                "criterion": "Applies manners (adab) independently",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 6,
+                                "criterion": "Participation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Arabic Language",
+                        "criteria": [
+                            {
+                                "id": 7,
+                                "criterion": "Reading Accuracy",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 8,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 9,
+                                "criterion": "Vocabulary Use",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 10,
+                                "criterion": "Grammar",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "English Language Arts",
+                        "criteria": [
+                            {
+                                "id": 11,
+                                "criterion": "Reading Fluency",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 12,
+                                "criterion": "Reading Comprehension",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 13,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Mathematics",
+                        "criteria": [
+                            {
+                                "id": 14,
+                                "criterion": "Number Sense",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 15,
+                                "criterion": "Problem Solving",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 16,
+                                "criterion": "Math Skills",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Science",
+                        "criteria": [
+                            {
+                                "id": 17,
+                                "criterion": "Scientific Knowledge",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 18,
+                                "criterion": "Inquiry & Investigation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 19,
+                                "criterion": "Explanation & Reasoning",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    }
+                ],
+                "learning_behaviours": [
+                    {
+                        "id": 20,
+                        "criterion": "Follows classroom expectations",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 21,
+                        "criterion": "Completes work on time",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 22,
+                        "criterion": "Works well with others",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 23,
+                        "criterion": "Shows respect and good adab",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    }
+                ]
+            },
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        },
+        "cards": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "group_id": 1,
+                "group_membership_id": 1,
+                "type": "report_card",
+                "school_year": "2026-2027",
+                "term": 2,
+                "grade_label": null,
+                "teacher_comment": null,
+                "days_present": null,
+                "days_absent": null,
+                "days_late": null,
+                "published_at": null,
+                "published_by_user_id": null,
+                "created_by_user_id": null,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00",
+                "school_term_id": 1
+            }
+        ],
+        "marks": [
+            {
+                "id": 1,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Recitation",
+                "level": null,
+                "comment": null,
+                "position": 0,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 2,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Memorisation",
+                "level": null,
+                "comment": null,
+                "position": 1,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 3,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Qur'an",
+                "criterion": "Tajweed",
+                "level": null,
+                "comment": null,
+                "position": 2,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 4,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Understanding of concepts",
+                "level": null,
+                "comment": null,
+                "position": 3,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 5,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Applies manners (adab) independently",
+                "level": null,
+                "comment": null,
+                "position": 4,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 6,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Islamic Studies",
+                "criterion": "Participation",
+                "level": null,
+                "comment": null,
+                "position": 5,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 7,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Reading Accuracy",
+                "level": null,
+                "comment": null,
+                "position": 6,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 8,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Writing",
+                "level": null,
+                "comment": null,
+                "position": 7,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 9,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Vocabulary Use",
+                "level": null,
+                "comment": null,
+                "position": 8,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 10,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Arabic Language",
+                "criterion": "Grammar",
+                "level": null,
+                "comment": null,
+                "position": 9,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 11,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "English Language Arts",
+                "criterion": "Reading Fluency",
+                "level": null,
+                "comment": null,
+                "position": 10,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 12,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "English Language Arts",
+                "criterion": "Reading Comprehension",
+                "level": null,
+                "comment": null,
+                "position": 11,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 13,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "English Language Arts",
+                "criterion": "Writing",
+                "level": null,
+                "comment": null,
+                "position": 12,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 14,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Mathematics",
+                "criterion": "Number Sense",
+                "level": null,
+                "comment": null,
+                "position": 13,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 15,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Mathematics",
+                "criterion": "Problem Solving",
+                "level": null,
+                "comment": null,
+                "position": 14,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 16,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Mathematics",
+                "criterion": "Math Skills",
+                "level": null,
+                "comment": null,
+                "position": 15,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 17,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Science",
+                "criterion": "Scientific Knowledge",
+                "level": null,
+                "comment": null,
+                "position": 16,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 18,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Science",
+                "criterion": "Inquiry & Investigation",
+                "level": null,
+                "comment": null,
+                "position": 17,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 19,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "academic",
+                "subject": "Science",
+                "criterion": "Explanation & Reasoning",
+                "level": null,
+                "comment": null,
+                "position": 18,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 20,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Follows classroom expectations",
+                "level": null,
+                "comment": null,
+                "position": 19,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 21,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Completes work on time",
+                "level": null,
+                "comment": null,
+                "position": 20,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 22,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Works well with others",
+                "level": null,
+                "comment": null,
+                "position": 21,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            },
+            {
+                "id": 23,
+                "masjid_id": 1,
+                "report_card_id": 1,
+                "kind": "behaviour",
+                "subject": "Learning Behaviours",
+                "criterion": "Shows respect and good adab",
+                "level": null,
+                "comment": null,
+                "position": 22,
+                "created_at": "2026-10-08 16:00:00",
+                "updated_at": "2026-10-08 16:00:00"
+            }
+        ]
+    }
+}

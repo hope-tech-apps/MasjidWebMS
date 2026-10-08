@@ -271,6 +271,12 @@ class FormSchema
      */
     private function rulesForField(array $field): array
     {
+        if (in_array($field['type'] ?? null, ['select', 'radio'], true) && $this->configuredSchoolDays($field)) {
+            $typed = $field;
+            unset($typed['optionsSource'], $typed['options']);
+            return [...$this->rulesForField($typed), FormOptionSources::ruleConfigured($this->optionValues($field))];
+        }
+
         $type = $field['type'] ?? 'text';
         $required = ! empty($field['required']);
 
@@ -367,6 +373,10 @@ class FormSchema
      */
     public function memberRules(): array
     {
+        foreach ($this->allFields() as $row) {
+            if ($this->configuredSchoolDays($row[2])) return $this->memberRulesConfigured();
+        }
+
         $rules = [];
 
         foreach ($this->allFields() as [$sectionId, $repeatable, $field]) {
@@ -592,6 +602,10 @@ class FormSchema
      */
     private function selectionCountRule(array $field): ?Closure
     {
+        if (($field['optionsSource'] ?? null) === FormOptionSources::SCHOOL_MEETING_DAYS && SchoolCalendarRequestMode::enabled((int) $this->form->masjid_id)) {
+            return $this->selectionCountRuleConfigured($field);
+        }
+
         [$min, $max] = self::selectionBounds($field);
 
         if ($min === null && $max === null) {
@@ -635,6 +649,16 @@ class FormSchema
      */
     private function unanswerable(array $field): ?string
     {
+        if ($this->configuredSchoolDays($field)) {
+            $offered = count($this->optionValues($field));
+            [$min] = self::selectionBounds($field);
+            return match (true) {
+                $offered === 0 => FormOptionSources::NONE_OPEN_CONFIGURED,
+                $min !== null && $offered < $min => FormOptionSources::NOT_ENOUGH_OPEN_CONFIGURED,
+                default => null,
+            };
+        }
+
         if (! FormOptionSources::isSourced($field)) {
             return null;
         }
@@ -829,4 +853,65 @@ class FormSchema
 
         return $clean;
     }
+    private function configuredSchoolDays(array $field): bool
+    {
+        return ($field['optionsSource'] ?? null) === FormOptionSources::SCHOOL_MEETING_DAYS
+            && SchoolCalendarRequestMode::enabled((int) $this->form->masjid_id);
+    }
+
+    private function memberRulesConfigured(): array
+    {
+        $rules = [];
+        foreach ($this->allFields() as [$sectionId, $repeatable, $field]) {
+            if (($field['type'] ?? null) !== 'checkboxGroup') continue;
+            $values = $this->optionValues($field);
+            $sourced = FormOptionSources::isSourced($field);
+            if ($values === [] && ! $sourced) continue;
+            $key = $repeatable ? $sectionId.'.*.'.$field['name'].'.*' : $field['name'].'.*';
+            $member = $this->configuredSchoolDays($field)
+                ? FormOptionSources::ruleConfigured($values)
+                : ($sourced ? FormOptionSources::rule($values, $field['optionsSource']) : Rule::in($values));
+            $rules[$key] = ['string', 'distinct', $member];
+        }
+        return $rules;
+    }
+
+    private function selectionCountRuleConfigured(array $field): ?Closure
+    {
+        [$min, $max] = self::selectionBounds($field);
+
+        if ($min === null && $max === null) {
+            return null;
+        }
+
+        $offered = null;
+        $singular = 'option';
+
+        if (FormOptionSources::isSourced($field)) {
+            $values = $this->optionValues($field);
+            $offered = count($values);
+            $singular = 'day';
+        }
+
+        $noun = fn (int $n): string => $n === 1 ? $singular : $singular.'s';
+
+        return function (string $attribute, mixed $value, Closure $fail) use ($min, $max, $offered, $noun): void {
+            $picked = is_array($value) ? count($value) : 0;
+
+            if ($picked === 0 || $offered === 0) {
+                return;
+            }
+
+            if ($offered !== null && $min !== null && $offered < $min) {
+                $fail(FormOptionSources::NOT_ENOUGH_OPEN_CONFIGURED);
+            } elseif ($min !== null && $min === $max && $picked !== $min) {
+                $fail(sprintf('Pick exactly %d %s.', $min, $noun($min)));
+            } elseif ($min !== null && $picked < $min) {
+                $fail(sprintf('Pick at least %d %s.', $min, $noun($min)));
+            } elseif ($max !== null && $picked > $max) {
+                $fail(sprintf('Pick no more than %d %s.', $max, $noun($max)));
+            }
+        };
+    }
+
 }

@@ -1,0 +1,18 @@
+[
+    "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+    "select sections.section_type as section_type, COUNT(DISTINCT sections.id) as total from \"page_section\" inner join \"pages\" on \"pages\".\"id\" = \"page_section\".\"page_id\" inner join \"sections\" on \"sections\".\"id\" = \"page_section\".\"section_id\" where \"pages\".\"masjid_id\" = ? and \"sections\".\"masjid_id\" = ? and \"pages\".\"is_active\" = ? and \"pages\".\"deleted_at\" is null and \"sections\".\"is_active\" = ? group by \"sections\".\"section_type\"",
+    "select * from \"iqama_time_settings\" where \"masjid_id\" = ? limit 1",
+    "select count(*) as aggregate from \"mobile_app_users\" where \"masjid_id\" = ? and \"onesignal_subscription_id\" is not null and \"onesignal_subscription_id\" != ? and \"last_active_at\" is not null and \"last_active_at\" < ?",
+    "select count(*) as aggregate from \"mobile_app_users\" where \"masjid_id\" = ? and \"onesignal_subscription_id\" is not null and \"onesignal_subscription_id\" != ?",
+    "select * from \"masjid_app_publishing\" where \"masjid_app_publishing\".\"masjid_id\" = ? and \"masjid_app_publishing\".\"masjid_id\" is not null limit 1",
+    "select * from \"splash_announcements\" where \"masjid_id\" = ? and \"is_active\" = ? and \"starts_at\" <= ? and \"ends_at\" >= ? and \"splash_announcements\".\"deleted_at\" is null order by \"ends_at\" desc limit 1",
+    "select count(*) as aggregate from \"donation_subscriptions\" where \"masjid_id\" = ? and \"stripe_subscription_id\" is not null and \"stripe_subscription_id\" != ? and \"status\" != ?",
+    "select * from \"donation_subscriptions\" where \"masjid_id\" = ? and \"stripe_subscription_id\" is not null and \"stripe_subscription_id\" != ? and (\"status\" = ? and \"canceled_at\" is not null and exists (select 1 from \"donations\" where \"donations\".\"masjid_id\" = \"donation_subscriptions\".\"masjid_id\" and \"donations\".\"stripe_subscription_id\" = \"donation_subscriptions\".\"stripe_subscription_id\" and \"donations\".\"created_at\" > \"donation_subscriptions\".\"canceled_at\"))",
+    "select count(*) as aggregate from \"donation_subscriptions\" where \"masjid_id\" = ? and \"status\" = ? and \"stripe_subscription_id\" is null and \"stripe_checkout_session_id\" is not null and \"stripe_checkout_session_id\" != ? and \"created_at\" >= ?",
+    "select count(*) as aggregate from \"donations\" where \"masjid_id\" = ? and \"status\" = ? and \"created_at\" >= ?",
+    "select count(*) as aggregate from \"donations\" where \"masjid_id\" = ? and \"status\" = ? and \"donations\".\"source\" != ? and \"created_at\" >= ?",
+    "select count(*) as aggregate from \"funds\" where \"masjid_id\" = ? and \"is_active\" = ?",
+    "select * from \"masjid_capability_changes\" where \"masjid_id\" = ? order by \"created_at\" desc, \"id\" desc limit 25",
+    "select \"name\", \"id\" from \"users\" where 0 = 1",
+    "select \"link\" from \"donation_links\" where \"donation_links\".\"masjid_id\" = ? and \"donation_links\".\"masjid_id\" is not null limit 1"
+]

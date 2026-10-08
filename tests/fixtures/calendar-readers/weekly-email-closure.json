@@ -1,0 +1,10 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"deleted_at\" is null order by \"id\" asc",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"masjid_points_settings\" where \"masjid_id\" = ? limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) order by \"closed_on\" asc"
+    ]
+}

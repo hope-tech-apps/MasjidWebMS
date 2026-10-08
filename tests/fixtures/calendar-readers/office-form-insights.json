@@ -1,0 +1,59 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"forms\" where \"forms\".\"masjid_id\" = ? and \"forms\".\"masjid_id\" is not null and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+        "select * from \"form_responses\" where \"form_responses\".\"form_id\" = ? and \"form_responses\".\"form_id\" is not null and \"masjid_id\" = ?"
+    ],
+    "data": {
+        "status": "success",
+        "data": {
+            "totals": {
+                "responses": 1,
+                "entries": 1,
+                "average_entries_per_response": 1,
+                "amount_due_total": 0,
+                "amount_due_outstanding": 0
+            },
+            "by_status": [
+                {
+                    "status": "new",
+                    "responses": 1,
+                    "entries": 1
+                },
+                {
+                    "status": "confirmed",
+                    "responses": 0,
+                    "entries": 0
+                },
+                {
+                    "status": "waitlisted",
+                    "responses": 0,
+                    "entries": 0
+                },
+                {
+                    "status": "cancelled",
+                    "responses": 0,
+                    "entries": 0
+                }
+            ],
+            "timeline": [
+                {
+                    "date": "2026-10-13",
+                    "responses": 1,
+                    "entries": 1
+                }
+            ],
+            "breakdowns": [],
+            "capacity": null,
+            "privacy_note": "Insights are calculated on this server from choice and numeric answers only. Names, contact details and free-text answers such as allergies or medical notes are never included, and no response data is sent to any outside service."
+        },
+        "meta": {
+            "form": {
+                "id": 1,
+                "name": "School days"
+            },
+            "filtered": false
+        }
+    }
+}

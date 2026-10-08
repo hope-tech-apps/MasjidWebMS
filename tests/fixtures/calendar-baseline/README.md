@@ -1,0 +1,1 @@
+SHA-256 and byte-length pins of verbatim method bodies, plus complete legacy reader hashes, from cached origin/main 02d8b3a1. Contracts hash the original suffix after an early dispatch (PHP tokens separate strings from braces). Behavioral literals are in SchoolCalendarTermsTest::offRequests and its reader data provider. No network used.

@@ -87,6 +87,10 @@ class AttendanceLogController extends Controller
      */
     public function index(Request $request, $masjid_id): JsonResponse
     {
+        if (\App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id)) {
+            return $this->indexConfigured($request, $masjid_id);
+        }
+
         $calendar = SchoolCalendar::for((int) $masjid_id);
         [$from, $to] = $this->window($request, $calendar);
 
@@ -164,6 +168,10 @@ class AttendanceLogController extends Controller
      */
     public function forMember(Request $request, $masjid_id, $membership_id): JsonResponse
     {
+        if (\App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id)) {
+            return $this->forMemberConfigured($request, $masjid_id, $membership_id);
+        }
+
         $calendar = SchoolCalendar::for((int) $masjid_id);
         [$from, $to] = $this->window($request, $calendar);
 
@@ -323,7 +331,7 @@ class AttendanceLogController extends Controller
      * @param  list<int>  $classIds
      * @return list<array{date:string,taken_by:array<int,bool>}>
      */
-    private function columns(array $classIds, string $from, string $to, SchoolCalendar $calendar): array
+    private function columns(array $classIds, string $from, string $to, SchoolCalendar|\App\Support\SchoolDateAuthority $calendar): array
     {
         $marked = $this->marksIn(
             AttendanceRecord::query()->whereIn('group_id', $classIds),
@@ -395,7 +403,7 @@ class AttendanceLogController extends Controller
      *
      * @return list<array{date:string,reason:?string}>
      */
-    private function closures(string $from, string $to, SchoolCalendar $calendar): array
+    private function closures(string $from, string $to, SchoolCalendar|\App\Support\SchoolDateAuthority $calendar): array
     {
         $out = [];
 
@@ -469,7 +477,7 @@ class AttendanceLogController extends Controller
      * @param  Collection<int,Group>  $classes
      * @param  array<int,int>  $rosters
      */
-    private function todayBand(Collection $classes, array $rosters, SchoolCalendar $calendar): array
+    private function todayBand(Collection $classes, array $rosters, SchoolCalendar|\App\Support\SchoolDateAuthority $calendar): array
     {
         $today = $calendar->today();
         $classIds = $classes->map(fn (Group $g) => (int) $g->id)->all();
@@ -781,7 +789,7 @@ class AttendanceLogController extends Controller
      *
      * @return array{0:string,1:string}
      */
-    private function window(Request $request, SchoolCalendar $calendar): array
+    private function window(Request $request, SchoolCalendar|\App\Support\SchoolDateAuthority $calendar): array
     {
         $to = $this->dateOr($request->query('to'), $calendar->today());
         $from = $this->dateOr($request->query('from'), $this->shift($to, -(self::DEFAULT_WINDOW_DAYS - 1)));
@@ -824,4 +832,130 @@ class AttendanceLogController extends Controller
     {
         return is_scalar($raw) && $raw !== '' ? (int) $raw : $fallback;
     }
+    private function indexConfigured(Request $request, $masjid_id): JsonResponse
+    {
+        $calendar = \App\Support\SchoolCalendarReaders::for((int) $masjid_id);
+        [$from, $to] = $this->window($request, $calendar);
+
+        $classes = $this->classesInScope($request->query('group_id'));
+        $classIds = $classes->map(fn (Group $g) => (int) $g->id)->all();
+        $classNames = $classes->mapWithKeys(fn (Group $g) => [(int) $g->id => $g->name])->all();
+
+        $columns = $this->columns($classIds, $from, $to, $calendar);
+        $omitted = count($columns) > self::COLUMN_CAP;
+
+        $rosters = $this->rosterSizes($classIds);
+
+        $query = $this->studentQuery($request, $classIds);
+        $perPage = $this->perPage($request);
+        $page = max(1, $this->intOr($request->query('page'), 1));
+
+        // Counted before the page is fetched and NOT derived from it, so `total`
+        // answers "how many children are in this window" even when the grid
+        // below is omitted and the page is never read.
+        $total = (clone $query)->count();
+
+        $rows = $omitted
+            ? new Collection()
+            : $query->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
+                ->forPage($page, $perPage)
+                ->get();
+
+        $cells = $this->cellsFor($rows->map(fn (GroupMembership $m) => (int) $m->id)->all(), $from, $to);
+
+        $students = $rows->map(function (GroupMembership $membership) use ($columns, $cells, $classNames): array {
+            $tally = $this->tally($membership, $columns, $cells->get((int) $membership->id) ?? new Collection());
+
+            return $this->studentHeader($membership, $classNames[(int) $membership->group_id] ?? null) + [
+                // An object even when empty: a client indexing `cells[date]`
+                // would otherwise meet a JSON array on exactly the children who
+                // hold no marks, which is every child on a fresh term.
+                'cells' => (object) $tally['cells'],
+                'totals' => $tally['totals'],
+            ];
+        })->values()->all();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'from' => $from,
+                'to' => $to,
+                'timezone' => $calendar->timezone(),
+                'has_calendar' => $calendar->hasCalendar(),
+                'days' => $omitted ? [] : $this->dayPayload($columns),
+                // Still served when the grid is omitted: a no-school day needs
+                // no column to be worth saying out loud.
+                'closures' => $this->closures($from, $to, $calendar),
+                'students' => $students,
+                'classes' => $this->classPayload($classes, $columns, $rosters, $from, $to),
+                'today' => $this->todayBand($classes, $rosters, $calendar),
+                'meta' => [
+                    'page' => $page,
+                    'per_page' => $perPage,
+                    'total' => $total,
+                    'column_cap' => self::COLUMN_CAP,
+                    'grid_omitted' => $omitted,
+                    'grid_omitted_reason' => $omitted ? sprintf(
+                        'That window covers %d school days. The grid shows at most %d — narrow the dates.',
+                        count($columns),
+                        self::COLUMN_CAP,
+                    ) : null,
+                    'columns' => count($columns),
+                ],
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    private function forMemberConfigured(Request $request, $masjid_id, $membership_id): JsonResponse
+    {
+        $calendar = \App\Support\SchoolCalendarReaders::for((int) $masjid_id);
+        [$from, $to] = $this->window($request, $calendar);
+
+        // Resolved through the same class filter the grid uses, so a roster row
+        // in a group that takes no register is a 404 here rather than a page of
+        // zeroes. The masjid global scope has already answered for another
+        // school's membership id, before any of this runs.
+        $membership = GroupMembership::query()
+            ->participants()
+            ->whereHas('group', fn ($q) => $q->whereIn('kind', [Group::KIND_CLASS, Group::KIND_HALAQA]))
+            ->with(['contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS, 'group:id,name'])
+            ->findOrFail($membership_id);
+
+        // THE COLUMNS ARE THIS CHILD'S CLASS'S COLUMNS, which is not a narrowing
+        // of the grid's arithmetic — it is the same arithmetic. A child's
+        // `unmarked` and `registers` count only the days whose `taken_by` names
+        // their own group, so the other classes' columns contribute nothing to
+        // either number. Restricting the set keeps the drill-down off a query
+        // over every class in the school and still lands on the same totals,
+        // which is the one thing this endpoint must never get wrong: a
+        // drill-down that disagrees with the row it was opened from tells the
+        // office that neither number can be trusted.
+        $columns = $this->columns([(int) $membership->group_id], $from, $to, $calendar);
+
+        $marks = $this->marksIn(
+            AttendanceRecord::query()->where('group_membership_id', $membership->id),
+            $from,
+            $to,
+        )->orderBy('session_date')->get()->keyBy(fn (AttendanceRecord $r) => $r->session_date->toDateString());
+
+        $tally = $this->tally($membership, $columns, $marks);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'student' => $this->studentHeader($membership, $membership->group?->name),
+                'from' => $from,
+                'to' => $to,
+                'timezone' => $calendar->timezone(),
+                'totals' => $tally['totals'],
+                'entries' => $marks->values()->map(fn (AttendanceRecord $r): array => [
+                    'date' => $r->session_date->toDateString(),
+                    'status' => $r->status,
+                    'note' => $r->note,
+                ])->all(),
+                'not_marked' => $tally['not_marked'],
+            ],
+        ], Response::HTTP_OK);
+    }
+
 }

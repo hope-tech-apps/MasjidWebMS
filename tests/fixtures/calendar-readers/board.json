@@ -1,0 +1,106 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"permissions\"",
+        "select \"roles\".*, \"role_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"role_has_permissions\".\"role_id\" as \"pivot_role_id\" from \"roles\" inner join \"role_has_permissions\" on \"roles\".\"id\" = \"role_has_permissions\".\"role_id\" where \"role_has_permissions\".\"permission_id\" in (1, 2, 3, 4, 5, 6, 7, 8)",
+        "select \"permissions\".*, \"model_has_permissions\".\"model_id\" as \"pivot_model_id\", \"model_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"model_has_permissions\".\"model_type\" as \"pivot_model_type\" from \"permissions\" inner join \"model_has_permissions\" on \"permissions\".\"id\" = \"model_has_permissions\".\"permission_id\" where \"model_has_permissions\".\"model_id\" in (1) and \"model_has_permissions\".\"model_type\" = ?",
+        "select \"roles\".*, \"model_has_roles\".\"model_id\" as \"pivot_model_id\", \"model_has_roles\".\"role_id\" as \"pivot_role_id\", \"model_has_roles\".\"model_type\" as \"pivot_model_type\" from \"roles\" inner join \"model_has_roles\" on \"roles\".\"id\" = \"model_has_roles\".\"role_id\" where \"model_has_roles\".\"model_id\" in (1) and \"model_has_roles\".\"model_type\" = ?",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc",
+        "select * from \"groups\" where \"kind\" in (?, ?) and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? order by position IS NULL, \"position\" asc, \"name\" asc, \"id\" asc",
+        "select distinct \"group_id\", \"session_date\" from \"attendance_records\" where \"group_id\" in (?) and \"session_date\" >= ? and \"session_date\" < ? and \"attendance_records\".\"masjid_id\" = ?",
+        "select group_id, COUNT(*) as roster from \"group_memberships\" where \"role\" in (?, ?) and \"left_on\" is null and \"group_id\" in (?) and \"group_memberships\".\"masjid_id\" = ? group by \"group_id\"",
+        "select count(*) as aggregate from \"group_memberships\" inner join \"contacts\" on \"contacts\".\"id\" = \"group_memberships\".\"contact_id\" where \"role\" in (?, ?) and \"group_memberships\".\"group_id\" in (?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+        "select \"group_memberships\".* from \"group_memberships\" inner join \"contacts\" on \"contacts\".\"id\" = \"group_memberships\".\"contact_id\" where \"role\" in (?, ?) and \"group_memberships\".\"group_id\" in (?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ? order by CASE group_memberships.group_id WHEN ? THEN ? ELSE ? END, \"contacts\".\"last_name\" asc, \"contacts\".\"first_name\" asc, \"group_memberships\".\"id\" asc limit 50 offset 0",
+        "select \"id\", \"first_name\", \"last_name\", \"avatar_character\", \"avatar_tone\", \"avatar_color\", \"staff_avatar_character\", \"staff_avatar_tone\", \"staff_avatar_color\" from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+        "select \"group_membership_id\", \"session_date\", \"status\", \"note\" from \"attendance_records\" where \"group_membership_id\" in (?) and \"session_date\" >= ? and \"session_date\" < ? and \"attendance_records\".\"masjid_id\" = ?",
+        "select group_id, status, COUNT(*) as marks from \"attendance_records\" where \"group_id\" in (?) and \"session_date\" >= ? and \"session_date\" < ? and \"attendance_records\".\"masjid_id\" = ? group by \"group_id\", \"status\"",
+        "select \"group_id\", \"group_membership_id\", \"status\" from \"attendance_records\" where \"group_id\" in (?) and \"session_date\" >= ? and \"session_date\" < ? and \"attendance_records\".\"masjid_id\" = ?"
+    ],
+    "data": {
+        "status": "success",
+        "data": {
+            "from": "2026-10-12",
+            "to": "2026-10-16",
+            "timezone": "America/New_York",
+            "has_calendar": true,
+            "days": [
+                {
+                    "date": "2026-10-12",
+                    "weekday": "Mon",
+                    "taken_by": []
+                }
+            ],
+            "closures": [],
+            "students": [
+                {
+                    "membership_id": 1,
+                    "group_id": 1,
+                    "group_name": "Class A",
+                    "grade_label": null,
+                    "joined_at": "2026-10-01",
+                    "left_on": null,
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Test",
+                        "last_name": "Student",
+                        "avatar": null
+                    },
+                    "cells": [],
+                    "totals": {
+                        "present": 0,
+                        "late": 0,
+                        "absent": 0,
+                        "excused": 0,
+                        "marked": 0,
+                        "unmarked": 0,
+                        "registers": 0
+                    }
+                }
+            ],
+            "classes": [
+                {
+                    "group_id": 1,
+                    "name": "Class A",
+                    "roster": 1,
+                    "registers_taken": 0,
+                    "marked": 0,
+                    "present": 0,
+                    "late": 0,
+                    "absent": 0,
+                    "excused": 0
+                }
+            ],
+            "today": {
+                "date": "2026-10-13",
+                "school_day": {
+                    "has_calendar": true,
+                    "in_year": true,
+                    "meeting_day": false,
+                    "closed": false,
+                    "reason": null
+                },
+                "classes": [
+                    {
+                        "group_id": 1,
+                        "name": "Class A",
+                        "roster": 1,
+                        "marked": 0,
+                        "taken": false
+                    }
+                ],
+                "away": []
+            },
+            "meta": {
+                "page": 1,
+                "per_page": 50,
+                "total": 1,
+                "column_cap": 40,
+                "grid_omitted": false,
+                "grid_omitted_reason": null,
+                "columns": 1
+            }
+        }
+    }
+}

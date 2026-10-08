@@ -83,6 +83,10 @@ class LessonPlanController extends TeacherController
             return $this->indexWithClassSubjects($request, $masjid_id, $group_id);
         }
 
+        if (\App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id)) {
+            return $this->indexConfigured($request, $masjid_id, $group_id);
+        }
+
         $group = Group::findOrFail($group_id);
 
         $from = $this->dateOr($request->query('from'), Carbon::today()->startOfWeek());
@@ -136,8 +140,13 @@ class LessonPlanController extends TeacherController
     public function indexWithClassSubjects(Request $request, $masjid_id, $group_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
+        // Dated terms and class subjects are separate switches; a school with
+        // both gets the calendar's own today and its open days for this week.
+        $calendar = \App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id)
+            ? \App\Support\SchoolCalendarReaders::for((int) $masjid_id)
+            : null;
 
-        $from = $this->dateOr($request->query('from'), Carbon::today()->startOfWeek());
+        $from = $this->dateOr($request->query('from'), ($calendar ? Carbon::parse($calendar->today()) : Carbon::today())->startOfWeek());
         $to = $this->dateOr($request->query('to'), $from->copy()->addDays(6));
 
         // whereDate on both ends, not whereBetween on raw strings: the `date`
@@ -178,7 +187,9 @@ class LessonPlanController extends TeacherController
                 // calendar, so the week grid shows a Sunday school's Sunday.
                 // NULL when it has no calendar (Al-Razi): the grid stays Monday
                 // to Friday, as before.
-                'meeting_weekdays' => $this->meetingWeekdays((int) $masjid_id),
+                'meeting_weekdays' => $calendar
+                    ? $calendar->meetingWeekdaysBetween($from->toDateString(), $to->toDateString())
+                    : $this->meetingWeekdays((int) $masjid_id),
             ],
         ], Response::HTTP_OK);
     }
@@ -980,4 +991,54 @@ class LessonPlanController extends TeacherController
             return $fallback;
         }
     }
+    private function indexConfigured(Request $request, $masjid_id, $group_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+
+        $from = $this->dateOr($request->query('from'), Carbon::parse(\App\Support\SchoolCalendarReaders::for((int) $masjid_id)->today())->startOfWeek());
+        $to = $this->dateOr($request->query('to'), $from->copy()->addDays(6));
+
+        // whereDate on both ends, not whereBetween on raw strings: the `date`
+        // cast can store '2026-09-11 00:00:00', which sorts OUTSIDE a
+        // BETWEEN '2026-09-11' AND '2026-09-11' as a string comparison — the
+        // plan saves and then does not appear. Comparing the DATE PART is
+        // correct on MySQL and SQLite alike.
+        $plans = LessonPlan::query()
+            ->where('group_id', $group->id)
+            ->whereDate('session_date', '>=', $from->toDateString())
+            ->whereDate('session_date', '<=', $to->toDateString())
+            ->orderBy('session_date')
+            // Within a day: the general plan (key '') first, then subjects
+            // alphabetically — the same order on every screen that lists them.
+            ->orderBy('subject_key')
+            ->orderBy('id')
+            ->with('attachments.groupResource')
+            ->get();
+
+        // The subject fence, applied in PHP rather than SQL: `lesson_plans.subject_key`
+        // keeps its own older derivation (see App\Support\SubjectKey), so the
+        // fence compares the folded key of each plan's subject instead.
+        $limits = $this->limits($group);
+
+        if ($limits !== null) {
+            $plans = $plans->filter(fn (LessonPlan $p): bool => $this->mayTouch($limits, $p->subject))->values();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+                'plans' => $plans->map(fn (LessonPlan $p): array => $this->plan($p))->values(),
+                // The organisation's shorter plan (`short_lesson_plan`): the
+                // template fields this school's form does not show. `[]`
+                // everywhere else. The plans above still carry every field.
+                'hidden_fields' => SchoolSettings::hiddenLessonPlanFields(SchoolSettings::org($masjid_id)),
+                // Open school weekdays inside this requested interval. An empty
+                // calendar or fully closed week supplies [], without inferring days.
+                'meeting_weekdays' => \App\Support\SchoolCalendarReaders::for((int) $masjid_id)->meetingWeekdaysBetween($from->toDateString(), $to->toDateString()),
+            ],
+        ], Response::HTTP_OK);
+    }
+
 }

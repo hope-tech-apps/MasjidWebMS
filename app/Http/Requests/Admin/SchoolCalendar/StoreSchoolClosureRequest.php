@@ -34,6 +34,11 @@ class StoreSchoolClosureRequest extends BaseFormRequest
 
     public function withValidator(Validator $validator): void
     {
+        if (\App\Support\SchoolCalendarConfigurationRules::enabled($this)) {
+            \App\Support\SchoolCalendarConfigurationRules::closureValidator($this, $validator);
+            return;
+        }
+
         $validator->after(function (Validator $v): void {
             if ($v->errors()->hasAny(['school_year_id', 'closed_on'])) {
                 return;

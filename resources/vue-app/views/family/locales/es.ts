@@ -124,6 +124,7 @@ export const ES: Record<string, string> = {
     cal_no_school: "Sin clase",
     cal_today: "Hoy",
     cal_year: "Año escolar",
+    cal_terms: "Periodos lectivos",
     cal_meets_every: "Hay clase cada {x}",
     cal_no_days: "No hay días de clase registrados para este año.",
 

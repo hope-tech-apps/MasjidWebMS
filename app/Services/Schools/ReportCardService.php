@@ -56,6 +56,9 @@ class ReportCardService
         string $schoolYear,
         int $term,
     ): ReportCard {
+        if (\App\Support\SchoolCalendarRequestMode::enabled((int) $membership->masjid_id)) {
+            return $this->prepareWithTerm($membership, $type, $schoolYear, $term);
+        }
         return DB::transaction(function () use ($membership, $type, $schoolYear, $term): ReportCard {
             $card = ReportCard::firstOrNew([
                 'group_membership_id' => $membership->id,
@@ -77,6 +80,37 @@ class ReportCardService
 
             $this->ensureRows($card);
 
+            return $card->load(['marks' => fn ($q) => $q->orderBy('position')]);
+        });
+    }
+
+    private function prepareWithTerm(GroupMembership $membership, string $type, string $schoolYear, int $term): ReportCard
+    {
+        return DB::transaction(function () use ($membership, $type, $schoolYear, $term) {
+            // Org PRIMARY X record lock first; new term writers take the same mutex.
+            $org = \App\Models\Masjid::query()->whereKey($membership->masjid_id)->lockForUpdate()->firstOrFail();
+            if (! SchoolSettings::calendarTerms($org)) {
+                \App\Support\SchoolCalendarRequestMode::set((int) $org->id, false);
+                return $this->prepare($membership, $type, $schoolYear, $term);
+            }
+            $match = \App\Support\SchoolReportCardTermMatcher::match($org->id, $schoolYear, $term, true);
+            $card = ReportCard::firstOrNew([
+                'masjid_id' => $org->id,
+                'group_membership_id' => $membership->id,
+                'school_year' => $schoolYear,
+                'term' => $term,
+                'type' => $type,
+            ]);
+            if (! $card->exists) {
+                // Parent year/term locks precede child insertion and FK shared record locks.
+                $card->fill([
+                    'masjid_id' => $org->id,
+                    'group_id' => $membership->group_id,
+                    'grade_label' => $membership->grade_label,
+                    'created_by_user_id' => Auth::id(),
+                ])->forceFill(['school_term_id' => $match['term']?->id])->save();
+            }
+            $this->ensureRows($card);
             return $card->load(['marks' => fn ($q) => $q->orderBy('position')]);
         });
     }

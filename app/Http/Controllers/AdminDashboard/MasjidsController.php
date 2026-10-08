@@ -352,7 +352,7 @@ class MasjidsController extends Controller
     public function capabilities(string $masjid_id)
     {
         if (\App\Support\ClassSubjectMode::enabled((int) $masjid_id)) {
-            return $this->capabilitiesWithClassSubjects($masjid_id);
+            return $this->withoutHiddenCalendarTerms($this->capabilitiesWithClassSubjects($masjid_id), $masjid_id);
         }
         $response = $this->legacyCapabilities($masjid_id);
         $payload = $response->getData(true);
@@ -360,6 +360,63 @@ class MasjidsController extends Controller
             $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== 'class_subjects'));
         }
         unset($group);
+        return $this->withoutHiddenCalendarTerms($response->setData($payload), $masjid_id);
+    }
+
+    /**
+     * Dated terms stay out of the panel and its history until the school has
+     * them (or the caller asks with `include_calendar_terms`), whichever branch
+     * above built the answer. The history is read again without those rows
+     * rather than trimmed, so it still holds the last 25.
+     */
+    private function withoutHiddenCalendarTerms($response, string $masjid_id)
+    {
+        $masjid = Masjid::findOrFail($masjid_id);
+
+        if (\App\Support\SchoolSettings::calendarTerms($masjid) || request()->boolean('include_calendar_terms')) {
+            return $response;
+        }
+
+        $key = \App\Support\SchoolSettings::SCHOOL_CALENDAR_TERMS;
+        $payload = $response->getData(true);
+        $groups = [];
+
+        foreach ($payload['data']['groups'] as $group) {
+            $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== $key));
+
+            if ($group['entries'] !== []) {
+                $groups[] = $group;
+            }
+        }
+
+        $payload['data']['groups'] = $groups;
+
+        if (in_array($key, array_column($payload['data']['history'], 'capability'), true)) {
+            $changes = MasjidCapabilityChange::where('masjid_id', $masjid->id)
+                ->where('capability', '!=', $key)
+                ->orderByDesc('created_at')
+                ->orderByDesc('id')
+                ->limit(25)
+                ->get();
+
+            $actors = User::withTrashed()
+                ->whereIn('id', $changes->pluck('actor_user_id')->filter()->unique()->values()->all())
+                ->pluck('name', 'id');
+
+            $payload['data']['history'] = $changes->map(fn (MasjidCapabilityChange $change) => [
+                'id' => (int) $change->id,
+                'capability' => $change->capability,
+                'label' => $change->capability === CapabilityLedger::DIRECTORY_LISTING
+                    ? 'Directory listing'
+                    : config("capabilities.{$change->capability}.label", $change->capability),
+                'enabled_before' => $change->enabled_before,
+                'enabled_after' => $change->enabled_after,
+                'override_before' => $change->override_before,
+                'actor_name' => $change->actor_user_id !== null ? ($actors[$change->actor_user_id] ?? null) : null,
+                'created_at' => $change->created_at?->toIso8601String(),
+            ])->values()->all();
+        }
+
         return $response->setData($payload);
     }
 

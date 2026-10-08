@@ -124,6 +124,7 @@ export const FA_AF: Record<string, string> = {
     cal_no_school: "رخصتی",
     cal_today: "امروز",
     cal_year: "سال تعلیمی",
+    cal_terms: "دوره‌های درسی",
     cal_meets_every: "صنف‌ها هر {x} برگزار می‌شوند",
     cal_no_days: "برای این سال هیچ روز درسی فهرست نشده است.",
 

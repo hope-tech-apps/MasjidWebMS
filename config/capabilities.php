@@ -125,6 +125,15 @@ return [
         'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
     ],
 
+    'school_calendar_terms' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Meeting days and dated terms',
+        'description' => 'Configure several meeting weekdays and dated school terms.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
     'school_calendar' => [
         'kind' => 'grant',
         'group' => 'school',

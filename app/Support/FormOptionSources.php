@@ -77,6 +77,9 @@ final class FormOptionSources
     /** Some days are open, but fewer than the question asks a family to pick. */
     public const NOT_ENOUGH_OPEN = 'Not enough cleaning Sundays are open right now.';
 
+    public const NONE_OPEN_CONFIGURED = 'No school days are open right now.';
+    public const NOT_ENOUGH_OPEN_CONFIGURED = 'Not enough school days are open right now.';
+
     public const NO_LONGER_OPEN ='That day is no longer available — reload the form to see the current list.';
 
     /** A null optionsSource means typed options, exactly as if the key were absent. */
@@ -95,6 +98,10 @@ final class FormOptionSources
      */
     public static function resolve(Form $form, array $field, string $purpose, array $answers = []): array
     {
+        if (($field['optionsSource'] ?? null) === self::SCHOOL_MEETING_DAYS && SchoolCalendarRequestMode::enabled((int) $form->masjid_id)) {
+            return self::resolveConfigured($form, $field, $purpose, $answers);
+        }
+
         if (! self::isSourced($field)) {
             return is_array($field['options'] ?? null) ? $field['options'] : [];
         }
@@ -131,6 +138,10 @@ final class FormOptionSources
      */
     public static function schema(Form $form, string $purpose = self::OFFER): mixed
     {
+        if (self::usesSchoolDays($form) && SchoolCalendarRequestMode::enabled((int) $form->masjid_id)) {
+            return self::schemaConfigured($form, $purpose);
+        }
+
         $schema = $form->schema;
 
         if (! is_array($schema) || ! is_array($schema['sections'] ?? null)) {
@@ -179,6 +190,14 @@ final class FormOptionSources
             }
 
             $fail($values === [] ? $none : $gone);
+        };
+    }
+
+    public static function ruleConfigured(array $values): Closure
+    {
+        return static function (string $attribute, mixed $value, Closure $fail) use ($values): void {
+            if (is_string($value) && in_array($value, $values, true)) return;
+            $fail($values === [] ? self::NONE_OPEN_CONFIGURED : self::NO_LONGER_OPEN);
         };
     }
 
@@ -292,4 +311,91 @@ final class FormOptionSources
 
         return array_values($options);
     }
+    private static function resolveConfigured(Form $form, array $field, string $purpose, array $answers = []): array
+    {
+        if (! self::isSourced($field)) {
+            return is_array($field['options'] ?? null) ? $field['options'] : [];
+        }
+
+        if ($field['optionsSource'] === self::RESERVABLE_DATES) {
+            return self::reservableDates($form, $purpose, $answers);
+        }
+
+        return self::fromConfiguredSource(SchoolCalendarReaders::for((int) $form->masjid_id), $field['optionsSource'], $purpose, $answers);
+    }
+
+    private static function schemaConfigured(Form $form, string $purpose = self::OFFER): mixed
+    {
+        $schema = $form->schema;
+
+        if (! is_array($schema) || ! is_array($schema['sections'] ?? null)) {
+            return $schema;
+        }
+
+        $calendar = null;
+
+        foreach ($schema['sections'] as $s => $section) {
+            $fields = is_array($section) && is_array($section['fields'] ?? null) ? $section['fields'] : [];
+
+            foreach ($fields as $f => $field) {
+                if (! self::isSourced($field)) {
+                    continue;
+                }
+
+                if ($field['optionsSource'] === self::RESERVABLE_DATES) {
+                    $schema['sections'][$s]['fields'][$f]['options'] = self::reservableDates($form, $purpose);
+
+                    continue;
+                }
+
+                $calendar ??= SchoolCalendarReaders::for((int) $form->masjid_id);
+                $schema['sections'][$s]['fields'][$f]['options'] = self::fromConfiguredSource($calendar, $field['optionsSource'], $purpose);
+            }
+        }
+
+        return $schema;
+    }
+
+    private static function fromConfiguredSource(SchoolDateAuthority $calendar, mixed $source, string $purpose, array $answers = []): array
+    {
+        // An unknown source offers nothing; ValidFormSchema refuses one at save.
+        if ($source !== self::SCHOOL_MEETING_DAYS) {
+            return [];
+        }
+
+        if ($purpose === self::OFFER) {
+            return array_map(fn (string $day): array => [
+                'value' => $day,
+                'label' => SchoolCalendar::label($day),
+            ], $calendar->offerableDays());
+        }
+
+        $options = [];
+
+        foreach ($calendar->labelledDays() as $day) {
+            $options[$day['date']] = ['value' => $day['date'], 'label' => SchoolCalendar::label($day['date'])]
+                + ($day['closed'] ? ['detail' => 'No school — '.$day['reason']] : []);
+        }
+
+        foreach ($answers as $answer) {
+            if (SchoolCalendar::isIsoDate($answer) && ! isset($options[$answer])) {
+                $options[$answer] = ['value' => $answer, 'label' => SchoolCalendar::label($answer)];
+            }
+        }
+
+        ksort($options, SORT_STRING);
+
+        return array_values($options);
+    }
+
+    private static function usesSchoolDays(Form $form): bool
+    {
+        foreach ($form->sections() as $section) {
+            foreach ($section['fields'] ?? [] as $field) {
+                if (($field['optionsSource'] ?? null) === self::SCHOOL_MEETING_DAYS) return true;
+            }
+        }
+        return false;
+    }
+
 }

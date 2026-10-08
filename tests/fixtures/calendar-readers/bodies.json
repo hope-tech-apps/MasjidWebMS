@@ -1,0 +1,354 @@
+{
+    "app/Http/Controllers/Teacher/SchoolCalendarController.php": {
+        "index": {
+            "bytes": 341,
+            "sha256": "abb88dc741b93805aece1976bfdf65722ba632878d76114c86afc6b79bf77629"
+        }
+    },
+    "app/Http/Controllers/Family/SchoolCalendarController.php": {
+        "index": {
+            "bytes": 368,
+            "sha256": "e4f66d1220fcbc2c522932aab152f5211207f1e6fd15b16ec795e826da08bcee"
+        }
+    },
+    "app/Http/Controllers/Teacher/AttendanceController.php": {
+        "index": {
+            "bytes": 1947,
+            "sha256": "3a9e1802ceeec63d5fd81ba51fa2d2a8fb54b66d791dd5fa9346fccdaa19ac3e"
+        },
+        "save": {
+            "bytes": 2967,
+            "sha256": "4210dfc3f45f82f16da1ffa63bcf516475907543dc363bf30b628e10b3c3bce9"
+        },
+        "forMember": {
+            "bytes": 2641,
+            "sha256": "1b32b79a4900bccd00e73b511dbad16a368a12779ce492ab75668f604c47a4ef"
+        },
+        "sessionDate": {
+            "bytes": 265,
+            "sha256": "c669c4c6aa2b4e49d8cf37b8bed32f0d239c0d68200674503929774097e300f2"
+        }
+    },
+    "app/Http/Controllers/Teacher/LessonPlanController.php": {
+        "index": {
+            "bytes": 2588,
+            "sha256": "12435e1ded59ba0f127678269d969ef84c137e6a937726192ab59180d5b1dc63"
+        },
+        "store": {
+            "bytes": 156,
+            "sha256": "693cd029153d47e56a8479befdb657adcb3e8b323c088110fa8d2f6fe360c02e"
+        },
+        "update": {
+            "bytes": 169,
+            "sha256": "67885ac40fb4a818c9681db459c28e4e8f79b0c297eb26d20c88f1265f2e1817"
+        },
+        "save": {
+            "bytes": 947,
+            "sha256": "a4aad4351e4dfd3207616ec869af976f68c0ae030704eaaa2621a475272aebc0"
+        },
+        "destroyPlan": {
+            "bytes": 355,
+            "sha256": "d1da024f00eb783eb52f70ec4ab04fe0fb6e8bc4e48e551d5beb9f4f1df2a558"
+        },
+        "destroy": {
+            "bytes": 1705,
+            "sha256": "a7470b87fb34fbb47e9c253d92f5673945f354c5907db921aa5c7334b0424f58"
+        },
+        "write": {
+            "bytes": 3779,
+            "sha256": "72302742451b0d977b2719a54cbfb1b377adee9b6d3d933a438635c7ae4f3988"
+        },
+        "resolveAttachments": {
+            "bytes": 959,
+            "sha256": "3e39ebbd12deaa275a611f189fd9c214d5509842c65c201f39206e555931e1a8"
+        },
+        "syncAttachments": {
+            "bytes": 1117,
+            "sha256": "113cde439a325757ef59cb71353f45ff170a88c49f9a326de2c90b51d7c92475"
+        },
+        "plansOnDay": {
+            "bytes": 131,
+            "sha256": "f0b4c437013086bdea5eccdda4971d5f1109bcb63d25c0124e008b5e17b4e875"
+        },
+        "planOn": {
+            "bytes": 114,
+            "sha256": "dbe33623cebe221a8d5f2a1084597a4e82dbc41e16535a2d180273d3f4794aa0"
+        },
+        "onlyPlanOn": {
+            "bytes": 235,
+            "sha256": "07b0f9a2775f0d5ba40a77036ab550bdc3dd6d034b35aec88e9d2596cb3752f1"
+        },
+        "plansTouchableOn": {
+            "bytes": 279,
+            "sha256": "8f611d8e33361ac897d3c5b0e115f860f43f05d12c4396529985aee071f59273"
+        },
+        "planFor": {
+            "bytes": 138,
+            "sha256": "b35e251d72a9db1ea84a3d9e60628f60c5234f09e1cf7279429d5600ab094ae4"
+        },
+        "mustTouch": {
+            "bytes": 225,
+            "sha256": "40fdfafe540cf57e8b5fc9310a4c15288781643bf628ef8c7c6ddacb7230ffa1"
+        },
+        "limits": {
+            "bytes": 77,
+            "sha256": "5ba015e73213b376fb3d00f59dacbcd71b2111047e7eea9bb5af685b5b48041a"
+        },
+        "mayTouch": {
+            "bytes": 130,
+            "sha256": "364bf1fe376a972b196f2f08e7d0510f0f7e158cab7bfc43dcd93b37429ab6d6"
+        },
+        "fence": {
+            "bytes": 173,
+            "sha256": "422ec12409d1252e461805187bb12ead5ce35a0b622e96eb34ec8cd9121a9ce0"
+        },
+        "clash": {
+            "bytes": 209,
+            "sha256": "8f69f08b5161c06e4e4e44d5befef2ad654cdb7ba091d78197a34cafe30f5ede"
+        },
+        "plan": {
+            "bytes": 1164,
+            "sha256": "a381c22e463e463870135ad24d03b10bd55419791a294ca1293ac1d6b7e2cd90"
+        },
+        "meetingWeekdays": {
+            "bytes": 137,
+            "sha256": "d458d035277f30197617ce3f18b4ab9b39554d5ce774110f66b6c9a92bb6508c"
+        },
+        "dateOr": {
+            "bytes": 253,
+            "sha256": "d08669f294f9601408aa93669e570cac72ebb8b88522b2014dc12546065640f4"
+        }
+    },
+    "app/Http/Controllers/AdminDashboard/AttendanceLogController.php": {
+        "index": {
+            "bytes": 3411,
+            "sha256": "be5cd56a928fa075e2e0391f6a4dbbbf01ef7cb4c0439f5216027823e24c5f3f"
+        },
+        "forMember": {
+            "bytes": 2555,
+            "sha256": "01b0c1e4b46d4f165a2e8c5faf39dc4ceaf2571c83fca0f609f30b3b8868cd52"
+        },
+        "tally": {
+            "bytes": 2425,
+            "sha256": "12b8df1734b84487415bcfd42fa43aaacff8df3f5d139e541458e7124ce85bc2"
+        },
+        "columns": {
+            "bytes": 998,
+            "sha256": "036958c1cf0b968dfaabdb514137f2bb491058920101361a6f9d9194a300dad1"
+        },
+        "dayPayload": {
+            "bytes": 557,
+            "sha256": "9d07b2ac6a7fa67767c04d7c90e9d5b6b89e93eb0311c9bd532df07e60cfae90"
+        },
+        "closures": {
+            "bytes": 286,
+            "sha256": "17b48cd3ebd5ebcc364cd1e8cf65adae8d12cea833305f1febc7444164b8ec31"
+        },
+        "classPayload": {
+            "bytes": 1362,
+            "sha256": "023340c3e134b7d3809220282afb1d921d29f70b7922a3c9e74fcd323de37cbd"
+        },
+        "todayBand": {
+            "bytes": 3373,
+            "sha256": "d23e07fc58cc7983484d8a8782e6a82da9f77ecd3c8a95f55ca30db369487292"
+        },
+        "classesInScope": {
+            "bytes": 294,
+            "sha256": "a06d91a7d4af7cd98964290a5b2e3b2817f59a5c6cb2d28ae46348d8c7a45b9b"
+        },
+        "studentQuery": {
+            "bytes": 1175,
+            "sha256": "c28e88336522a814cfe2989da0593eef01a310344d21cb49414e0e8faf54f9aa"
+        },
+        "classOrder": {
+            "bytes": 434,
+            "sha256": "962cdf8d318667e9d26a2ea93fdf573b6c45d93f76257ba04dae1897d71c78de"
+        },
+        "rosterSizes": {
+            "bytes": 362,
+            "sha256": "072b19a576aff0e7bc008d14ff16bff8954bfa48b151dfa20ef4ddf8aafa3961"
+        },
+        "cellsFor": {
+            "bytes": 540,
+            "sha256": "1bcef3a973a0c558e1744a3a3e9bec513d58c989746dba11e87d02b712bae179"
+        },
+        "marksIn": {
+            "bytes": 127,
+            "sha256": "7892cdd9b9aceddb5505a92bb901b3e093d79a8958a7fafb173d14a988470ec5"
+        },
+        "studentHeader": {
+            "bytes": 1347,
+            "sha256": "ad6ceea11d81fd0b237d792804a25c88bcdf97fab294698c7c83440a6d53d3f0"
+        },
+        "window": {
+            "bytes": 246,
+            "sha256": "e3abfc0ab3b142405a9301509abb09d7cedb780d115c6b4a6f02f22f96cc0215"
+        },
+        "dateOr": {
+            "bytes": 72,
+            "sha256": "5c52d34a51884ff50dd4b9c7b52e77e1ec7718e2f84b838525ae1b60b47516e5"
+        },
+        "shift": {
+            "bytes": 88,
+            "sha256": "3661605ccf8368606ff5a0c0a722711eb5eea7f2949d8902750570b04d1cc86d"
+        },
+        "perPage": {
+            "bytes": 154,
+            "sha256": "80b1ce8d898c451a102762c18e4e1827a9e8b3d1a86ddd264f08ea8401a3d69b"
+        },
+        "intOr": {
+            "bytes": 77,
+            "sha256": "91dcc7c9aea4e2eae132f1943cabad578ecabaf6abb0a7655681773dfc96494b"
+        }
+    },
+    "app/Support/FormOptionSources.php": {
+        "isSourced": {
+            "bytes": 72,
+            "sha256": "80c380000cb39665c249f7b71ef6373ac2a50332cbbc27a7914d50e396332356"
+        },
+        "resolve": {
+            "bytes": 407,
+            "sha256": "f77e77e2fc3f36af6b18142f59d7088aaff5d3baa27e6f2abf9445c96ff13bee"
+        },
+        "resolver": {
+            "bytes": 348,
+            "sha256": "6cefec59cd5956c603d7773181aff6f3f2e752fb2a13c3b02c010c0b3ca4de75"
+        },
+        "schema": {
+            "bytes": 986,
+            "sha256": "641d41ae6043c975a207584548fde7dd418745805fef18716ab51ed13ebfaedc"
+        },
+        "rule": {
+            "bytes": 446,
+            "sha256": "9fbbfebb03e36be461b42f1cdafe01e59d58e9536f833784549e8d03219f4aec"
+        },
+        "noneOpen": {
+            "bytes": 104,
+            "sha256": "2e51b81410cf345631a24e6441c01d8921cdcd19afda2c7c0dfa7ca8ed9e4992"
+        },
+        "answersNaming": {
+            "bytes": 1512,
+            "sha256": "fc54f1651228475db454245f209aa137a01d6c00861620a17cc2dfd79990686b"
+        },
+        "reservableDates": {
+            "bytes": 320,
+            "sha256": "873ed42362675c47dc4b4b591175dd384ad6400529f673ea8516cd2e298f05e2"
+        },
+        "fromSource": {
+            "bytes": 1033,
+            "sha256": "66fcce73bda7675401a1048f8f3dd44d195ece2a53587e04686da990a49b719a"
+        }
+    },
+    "app/Support/FormSchema.php": {
+        "__construct": {
+            "bytes": 5,
+            "sha256": "4dc501d66cd78903b81b1a53459d0432939728c537bbe9ffab55ab81521cb352"
+        },
+        "Form": {
+            "bytes": 37,
+            "sha256": "86c175ff01ab126e1b6f2963b3f710f4c1f5b3fa2d225677ecd7314715338754"
+        },
+        "validator": {
+            "bytes": 3596,
+            "sha256": "5ac982a85056e5f64e7de4b393c4fccb542dc9d25794b9e743f188bd91f51932"
+        },
+        "quantityMax": {
+            "bytes": 208,
+            "sha256": "1796a8decaa5a7970c7820fca90cdd6a0d2227190cd5e392532686f91c5a7ceb"
+        },
+        "applyPriceRequirements": {
+            "bytes": 1111,
+            "sha256": "41064ca8423a108f4da6ba050e242813756161d934ac667a24b0cc6620124e30"
+        },
+        "levelQuestions": {
+            "bytes": 428,
+            "sha256": "32e0e63a6edc04ba46f89eef1aeddc2a41c659fc3f351a80326e18307c28298c"
+        },
+        "rulesForField": {
+            "bytes": 3062,
+            "sha256": "f81fd065bd42c503c1f1461a546f44ecd86d4e5e3003a0860ae0160b554e5386"
+        },
+        "memberRules": {
+            "bytes": 872,
+            "sha256": "c1a4d53e0b2388e73ba463edadb60e1049d9e85104641a2b9a0f1345bda23d35"
+        },
+        "applyConditionalRequirements": {
+            "bytes": 1017,
+            "sha256": "f8259ad088e779d2a650bfc18954a13743dbb387b055675b99df3268715f5784"
+        },
+        "conditionalApplies": {
+            "bytes": 693,
+            "sha256": "43bc41ed25ccb55b992f5b83156bb633e6fa403affb1ce7f47abf2b9a682ed57"
+        },
+        "conditionalMessage": {
+            "bytes": 245,
+            "sha256": "7db293f591fb4b1fceda9e2b3972f61ebcf8c4488d24e223e128780b73798bca"
+        },
+        "allFields": {
+            "bytes": 442,
+            "sha256": "f5fb5cc9e1e9dbb430b334a3c1f32c97ab5f877ff0298eb77626ae49e3dedd20"
+        },
+        "fileFields": {
+            "bytes": 522,
+            "sha256": "ca4079120254d90ab36254e91ca87a4d567f1be029847427ceae87b78f6e4e20"
+        },
+        "uploads": {
+            "bytes": 347,
+            "sha256": "e86b2034566afd6484d544264d4725c594c3002da1fe1bb41c6d9483c94e7dfb"
+        },
+        "selectionBounds": {
+            "bytes": 204,
+            "sha256": "9a8fa650e3441477b5cf5b9fe921f6ca301a961715c6834f15144315100fb264"
+        },
+        "selectionCountRule": {
+            "bytes": 1380,
+            "sha256": "c33f8d3848c6ffdb5d5d1c0e6b391dc83d03a60b3a824629cf4fc2b255527b77"
+        },
+        "unanswerable": {
+            "bytes": 437,
+            "sha256": "f8a25a7cd93a96f5d1cc82ee55ba2935916d2f38f8277c00e795669a04ed702f"
+        },
+        "optionValues": {
+            "bytes": 593,
+            "sha256": "ad8cb7ab98f941621c3eb0ebf5fd8c85748e0702b36e498ed4d50675545438d0"
+        },
+        "entryCount": {
+            "bytes": 435,
+            "sha256": "e5c840f38fcc78ba3d8e8388b45cf5ff3d8374bed801f43d3dcc3602e46bb427"
+        },
+        "amountDue": {
+            "bytes": 600,
+            "sha256": "7531b4e6972f21ddd2b52b8e78cf7bfe8680a09528d5fee9b9a66032d465e42d"
+        },
+        "identity": {
+            "bytes": 1096,
+            "sha256": "3bf80ce04e59d14aeb2546ae7ad5f696ec67bc5a21a72e521b2ff4dd7764c075"
+        },
+        "only": {
+            "bytes": 1426,
+            "sha256": "96ed7b2d9ef03e31a7e77658fcd1471aa655a89ce0fc35f17c005eb336c19c9f"
+        }
+    },
+    "app/Console/Commands/SendWeeklyPointsReports.php": {
+        "handle": {
+            "bytes": 2540,
+            "sha256": "09d11f81219bd33a038b3fba0eef98ebf6f42f559cdc2ab1e21f9508326bc7f6"
+        },
+        "sweepSchool": {
+            "bytes": 2323,
+            "sha256": "7b7359ac43be165f06f5272931dec465190362b1cfe9ecc9eca0332859653158"
+        },
+        "sweepClass": {
+            "bytes": 3849,
+            "sha256": "6a2882be8970e5cc4aa9bcf18ddfef1132d1bd98ad05c837eeed9c1ced500b80"
+        },
+        "deliver": {
+            "bytes": 1055,
+            "sha256": "fca02e11598055854a16ad8e51f2b6af2729ca9456bba20a42cc4d3d08b1da15"
+        },
+        "withoutAddresses": {
+            "bytes": 172,
+            "sha256": "327ed28dee6770fa22f328d5d607aa1bd56c55fba1fecacd9dc7096bbd7c0d2d"
+        }
+    }
+}

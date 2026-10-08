@@ -51,6 +51,10 @@ class SchoolCalendarController extends Controller
     /** POST .../school-calendar/years */
     public function storeYear(StoreSchoolYearRequest $request, $masjid_id): JsonResponse
     {
+        if (\App\Support\SchoolCalendarConfigurationRules::enabled($request)) {
+            return app(SchoolCalendarConfigurationController::class)->storeYear($request, $masjid_id);
+        }
+
         $data = $request->safe()->only(['label', 'first_day', 'last_day']);
         $masjidId = $this->masjidId($masjid_id);
 
@@ -75,6 +79,10 @@ class SchoolCalendarController extends Controller
      */
     public function updateYear(UpdateSchoolYearRequest $request, $masjid_id, $year_id): JsonResponse
     {
+        if (\App\Support\SchoolCalendarConfigurationRules::enabled($request)) {
+            return app(SchoolCalendarConfigurationController::class)->updateYear($request, $masjid_id, $year_id);
+        }
+
         $year = SchoolYear::findOrFail($year_id);
         $data = $request->safe()->only(['label', 'first_day', 'last_day']);
         $masjidId = $this->masjidId($masjid_id);
@@ -123,6 +131,10 @@ class SchoolCalendarController extends Controller
      */
     public function destroyYear($masjid_id, $year_id): JsonResponse
     {
+        if (\App\Support\SchoolCalendarRequestMode::enabled($this->masjidId($masjid_id))) {
+            return app(SchoolCalendarConfigurationController::class)->destroyYear($masjid_id, $year_id);
+        }
+
         $year = SchoolYear::findOrFail($year_id);
         $masjidId = $this->masjidId($masjid_id);
 
@@ -168,6 +180,10 @@ class SchoolCalendarController extends Controller
      */
     public function storeClosure(StoreSchoolClosureRequest $request, $masjid_id): JsonResponse
     {
+        if (\App\Support\SchoolCalendarConfigurationRules::enabled($request)) {
+            return app(SchoolCalendarConfigurationController::class)->storeClosure($request, $masjid_id);
+        }
+
         $data = $request->safe()->only(['school_year_id', 'closed_on', 'reason']);
         $masjidId = $this->masjidId($masjid_id);
 
@@ -240,7 +256,35 @@ class SchoolCalendarController extends Controller
      */
     private function lockOrganisationAndRefuseOverlap(int $masjidId, array $data, ?int $ignoreYearId): void
     {
-        Masjid::query()->whereKey($masjidId)->lockForUpdate()->first();
+        $org = Masjid::query()->whereKey($masjidId)->lockForUpdate()->first();
+
+        // An OFF edit dispatched before enable can strand terms, move bounds
+        // off explicit weekdays or remove a NULL year's marked legacy weekday.
+        // This is the only legacy write
+        // needing an ON guard; reuse its existing organisation mutex/read.
+        if ($ignoreYearId && \App\Support\SchoolSettings::calendarTerms($org)) {
+            $year = SchoolYear::query()->whereKey($ignoreYearId)->lockForUpdate()->firstOrFail();
+            $candidate = clone $year;
+            $candidate->fill($data);
+            $weekdays = \App\Support\SchoolDateAuthority::weekdays($candidate);
+            foreach (['first_day', 'last_day'] as $field) {
+                if (! in_array($candidate->$field->dayOfWeek, $weekdays, true)) {
+                    throw ValidationException::withMessages([$field => 'The '.str_replace('_', ' ', $field).' must be on a configured meeting weekday. Reopen this year and save its meeting weekdays.']);
+                }
+            }
+            $removed = array_diff(\App\Support\SchoolDateAuthority::weekdays($year), $weekdays);
+            if ($removed !== []) {
+                $marks = AttendanceRecord::query()->where('masjid_id', $masjidId)
+                    ->whereDate('session_date', '>=', $year->first_day->toDateString())
+                    ->whereDate('session_date', '<=', $year->last_day->toDateString())->get(['session_date']);
+                if ($marks->contains(fn ($m) => in_array(SchoolCalendar::day(substr((string) $m->session_date, 0, 10))->dayOfWeek, $removed, true))) {
+                    throw ValidationException::withMessages(['meeting_weekdays' => 'Attendance exists on a removed weekday. Keep that weekday or clear those marks first.']);
+                }
+            }
+            if ($year->terms()->where(fn ($q) => $q->whereDate('starts_on', '<', $data['first_day'])->orWhereDate('ends_on', '>', $data['last_day']))->exists()) {
+                throw ValidationException::withMessages(['first_day' => 'These dates would leave a term outside the school year. Change or remove that term first.']);
+            }
+        }
 
         $overlap = SchoolCalendar::overlappingYear($masjidId, $data['first_day'], $data['last_day'], $ignoreYearId);
 
@@ -284,10 +328,25 @@ class SchoolCalendarController extends Controller
 
     private function calendar($masjid_id, int $status = Response::HTTP_OK): JsonResponse
     {
+        return $this->calendarWithConfiguration($masjid_id, $status);
+
         return response()->json([
             'status' => 'success',
             'data' => SchoolCalendarPayload::admin(SchoolCalendar::for($this->masjidId($masjid_id))),
         ], $status);
+    }
+
+    private function calendarWithConfiguration($route, int $status): JsonResponse
+    {
+        $id = $this->masjidId($route);
+        // Main already loads the school here. Keep that SQL/order and reuse the
+        // retrieved row instead of querying before (or after) SchoolCalendar.
+        $legacy = SchoolCalendar::for($id);
+        $enabled = \App\Support\SchoolCalendarRequestMode::afterLegacyRead($id);
+        if ($enabled) {
+            return app(SchoolCalendarConfigurationController::class)->calendar($route, $status, \App\Support\SchoolDateAuthority::fromLegacy($legacy, true));
+        }
+        return response()->json(['status' => 'success', 'data' => SchoolCalendarPayload::admin($legacy)], $status);
     }
 
     /** The bound tenant first, the route only as a fallback (tenant-scoping.md). */

@@ -21,6 +21,10 @@ class SchoolCalendarController extends FamilyController
 {
     public function index(): JsonResponse
     {
+        if (\App\Support\SchoolCalendarRequestMode::enabled((int) app(TenantContext::class)->get())) {
+            return $this->indexConfigured();
+        }
+
         $this->contact();
 
         $masjidId = app(TenantContext::class)->get();
@@ -34,4 +38,20 @@ class SchoolCalendarController extends FamilyController
             'data' => SchoolCalendarPayload::reader(SchoolCalendar::for((int) $masjidId)),
         ], Response::HTTP_OK);
     }
+    private function indexConfigured(): JsonResponse
+    {
+        $this->contact();
+
+        $masjidId = app(TenantContext::class)->get();
+
+        if ($masjidId === null) {
+            abort(Response::HTTP_FORBIDDEN);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => \App\Support\SchoolCalendarReaderPayload::reader(\App\Support\SchoolCalendarReaders::for((int) $masjidId)),
+        ], Response::HTTP_OK);
+    }
+
 }

@@ -2,9 +2,9 @@
  * The school calendar — what a school year is, and the reads built on it.
  *
  * Mirrors app/Support/SchoolCalendarPayload.php. A year is a date range; the
- * weekday classes meet on is the weekday of its FIRST day. The server derives
- * `meeting_weekday` and `meeting_days` from the dates and never stores them, so
- * the two cannot disagree. Closures are dated exceptions, each with a reason.
+ * legacy weekday is the weekday of its FIRST day. Enabled responses also carry
+ * the resolved meeting weekdays and dated terms. The server supplies every
+ * meeting date; closures are dated exceptions, each with a reason.
  *
  * Every date here is a calendar day in the SCHOOL's time zone, as 'Y-m-d'.
  * They are formatted with `timeZone: 'UTC'` against a UTC-midnight Date on
@@ -20,6 +20,8 @@ export type SchoolClosure = {
     reason: string;
 };
 
+export type SchoolTerm = { id: number; name: string; starts_on: string; ends_on: string; position: number };
+
 export type SchoolYear = {
     id: number;
     label: string;
@@ -30,6 +32,10 @@ export type SchoolYear = {
     /** Every meeting day from first_day to last_day, closed ones included. */
     meeting_days: string[];
     closures: SchoolClosure[];
+    /** Present only for the enabled calendar. NULL/empty/absent remain distinct. */
+    meeting_weekdays?: number[] | null;
+    term_system?: 'quarters' | 'semesters' | 'trimesters' | null;
+    terms?: SchoolTerm[];
 };
 
 /** GET /api/admin/masjids/{masjid_id}/school-calendar — and what every write under it answers. */
@@ -136,6 +142,7 @@ export function weekdayName(weekday: number, locale: string): string {
 }
 
 function readYear(raw: any): SchoolYear {
+    if (raw && ['meeting_weekdays', 'term_system', 'terms'].some((key) => Object.prototype.hasOwnProperty.call(raw, key))) return readConfiguredYear(raw);
     const firstDay = isoDay(raw?.first_day);
     const weekday = Number(raw?.meeting_weekday);
 
@@ -248,4 +255,23 @@ export function defaultYear(years: SchoolYear[], today: string): SchoolYear | nu
     return years.find((y) => y.first_day <= today && today <= y.last_day)
         ?? years.find((y) => y.first_day > today)
         ?? years[years.length - 1];
+}
+
+/** Preserve additive reader fields while older responses keep the legacy parser. */
+function readConfiguredYear(raw: any): SchoolYear {
+    const legacy = { ...raw };
+    for (const key of ['meeting_weekdays', 'term_system', 'terms']) delete legacy[key];
+    const year = readYear(legacy);
+    if ('meeting_weekdays' in raw) year.meeting_weekdays = raw.meeting_weekdays === null ? null : [...raw.meeting_weekdays];
+    if ('term_system' in raw) year.term_system = raw.term_system;
+    if ('terms' in raw) year.terms = raw.terms.map((term: any) => ({
+        id: Number(term.id), name: String(term.name), starts_on: isoDay(term.starts_on), ends_on: isoDay(term.ends_on), position: Number(term.position),
+    }));
+    return year;
+}
+
+/** Current ON payloads contain resolved weekdays; cached legacy/NULL payloads retain their heading. */
+export function meetingWeekdayNames(year: SchoolYear, locale: string): string {
+    if (!Array.isArray(year.meeting_weekdays)) return weekdayName(year.meeting_weekday, locale);
+    return new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(year.meeting_weekdays.map((day) => weekdayName(day, locale)));
 }

@@ -73,8 +73,22 @@
                         –
                         {{ formatSchoolDay(selectedYear.last_day, locale, { month: 'long', day: 'numeric', year: 'numeric' }) }}
                     </div>
-                    <div class="small mt-1">{{ t('cal_meets_every', weekdayName(selectedYear.meeting_weekday, locale)) }}</div>
+                    <div class="small mt-1">{{ t('cal_meets_every', meetingWeekdayNames(selectedYear, locale)) }}</div>
                 </div>
+
+                <section v-if="selectedYear.terms?.length" class="mb-4">
+                    <h3 class="h6">{{ t('cal_terms') }}</h3>
+                    <ul class="list-group">
+                        <li v-for="term in selectedYear.terms" :key="term.id" class="list-group-item d-flex flex-wrap justify-content-between gap-2">
+                            <span class="fw-semibold" dir="auto">{{ term.name }}</span>
+                            <span class="text-muted small">
+                                {{ formatSchoolDay(term.starts_on, locale, { month: 'long', day: 'numeric', year: 'numeric' }) }}
+                                –
+                                {{ formatSchoolDay(term.ends_on, locale, { month: 'long', day: 'numeric', year: 'numeric' }) }}
+                            </span>
+                        </li>
+                    </ul>
+                </section>
 
                 <SchoolCalendarList
                     :days="selectedDays"
@@ -96,7 +110,7 @@ import {
     defaultYear,
     formatSchoolDay,
     readSchoolCalendarRead,
-    weekdayName,
+    meetingWeekdayNames,
 } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';

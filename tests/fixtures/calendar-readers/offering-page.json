@@ -1,0 +1,110 @@
+{
+    "sql": [
+        "select exists(select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"crm_enabled\" = ? and \"masjids\".\"deleted_at\" is null) as \"exists\"",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"masjids\".\"deleted_at\" is null limit 1",
+        "select exists(select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"crm_enabled\" = ? and \"masjids\".\"deleted_at\" is null) as \"exists\"",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"offerings\" where \"masjid_id\" = ? and \"slug\" = ? and \"is_active\" = ? and \"offerings\".\"deleted_at\" is null limit 1",
+        "select * from \"forms\" where \"masjid_id\" = ? and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"fee_plans\" where \"masjid_id\" = ? and \"offering_id\" = ? order by \"id\" asc",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) order by \"closed_on\" asc"
+    ],
+    "data": {
+        "status": "success",
+        "message": "Program loaded.",
+        "data": {
+            "slug": "school-program",
+            "name": "School program",
+            "description": null,
+            "kind": "event",
+            "opens_at": null,
+            "closes_at": null,
+            "is_open": true,
+            "closed_reason": null,
+            "seats": {
+                "is_full": false,
+                "remaining": null
+            },
+            "registration_state": "open",
+            "registration_state_reason": null,
+            "fee_plans": [
+                {
+                    "id": 1,
+                    "kind": "free",
+                    "label": "Free",
+                    "currency": "usd",
+                    "amount_minor": 0,
+                    "total_minor": 0,
+                    "billing_interval": null,
+                    "installment_count": null,
+                    "requires_payment": false
+                }
+            ],
+            "intake_form": {
+                "name": "School days",
+                "description": null,
+                "schema": {
+                    "sections": [
+                        {
+                            "id": "days",
+                            "fields": [
+                                {
+                                    "name": "days",
+                                    "label": "Days",
+                                    "type": "checkboxGroup",
+                                    "optionsSource": "school_meeting_days",
+                                    "minSelections": 2,
+                                    "maxSelections": 2,
+                                    "options": [
+                                        {
+                                            "value": "2026-10-26",
+                                            "label": "Monday, October 26, 2026"
+                                        },
+                                        {
+                                            "value": "2026-11-02",
+                                            "label": "Monday, November 2, 2026"
+                                        },
+                                        {
+                                            "value": "2026-11-09",
+                                            "label": "Monday, November 9, 2026"
+                                        },
+                                        {
+                                            "value": "2026-11-16",
+                                            "label": "Monday, November 16, 2026"
+                                        },
+                                        {
+                                            "value": "2026-11-23",
+                                            "label": "Monday, November 23, 2026"
+                                        },
+                                        {
+                                            "value": "2026-11-30",
+                                            "label": "Monday, November 30, 2026"
+                                        },
+                                        {
+                                            "value": "2026-12-07",
+                                            "label": "Monday, December 7, 2026"
+                                        },
+                                        {
+                                            "value": "2026-12-14",
+                                            "label": "Monday, December 14, 2026"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "settings": {
+                    "submitButtonLabel": "Register",
+                    "successTitle": null,
+                    "successBody": null,
+                    "successNextSteps": [],
+                    "intro": null
+                }
+            }
+        }
+    }
+}

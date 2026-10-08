@@ -1,0 +1,78 @@
+{
+    "app/Http/Controllers/AdminDashboard/SchoolCalendarController.php": {
+        "storeYear": {
+            "bytes": 602,
+            "sha256": "838055d22f4d7e0c76c683f41dc37e79f1a39aeeb8183cdb892ca1a805d82e56"
+        },
+        "updateYear": {
+            "bytes": 2008,
+            "sha256": "88557ef94b183ee13095146d9a6e162fdcd441dd039195e0c51e381199deb548"
+        },
+        "destroyYear": {
+            "bytes": 1527,
+            "sha256": "cd5b7b6d85ff2e59481997ad7b7730d77a9ecbbe717b4f63b8dea62ed72d89a8"
+        },
+        "writeClosure": {
+            "bytes": 1788,
+            "sha256": "01ac51e78ffc4be459011a310867d53a60c0290acdc53b065a05f2dd3dcf6e12"
+        },
+        "calendar": {
+            "bytes": 197,
+            "sha256": "011b1fc99f6c1e749b47684358612b44019d4a9d3e05f58de6fd2fd9ee65c037"
+        },
+        "storeClosure": {
+            "bytes": 752,
+            "sha256": "efa863816088f5126baf3686aa12d53b2497fc70f1f67abedbb35f73dfac19d1"
+        }
+    },
+    "app/Http/Requests/Admin/SchoolCalendar/StoreSchoolYearRequest.php": {
+        "rules": {
+            "bytes": 213,
+            "sha256": "fa0c70b9225cc28c0d6e507fc556af091a0579a064663554d2d0e2b511ad066a"
+        },
+        "withValidator": {
+            "bytes": 1756,
+            "sha256": "642de576c1ac70b0737daa2e9f4413bbabc1e41774b8d5861776ae25b3c6e304"
+        }
+    },
+    "app/Http/Requests/Admin/SchoolCalendar/StoreSchoolClosureRequest.php": {
+        "withValidator": {
+            "bytes": 1944,
+            "sha256": "235fc7fa25fb92f16365d2ab1346c70c63374ae040f9fade21fb38efcd822393"
+        }
+    },
+    "app/Support/CapabilityWriter.php": {
+        "apply": {
+            "bytes": 535,
+            "sha256": "96f3c1ed494fb5b6ddad23458ca866f2a6ffb1edef5a65337e0ac19ffc9fe0ab"
+        }
+    },
+    "app/Models/Masjid.php": {
+        "getCapabilitiesAttribute": {
+            "bytes": 308,
+            "sha256": "81d980d93f0268b98ae133f2bda7fa196c26960db37986b47fd1ebff7ebbb7f7"
+        }
+    },
+    "app/Support/CapabilityCatalogue.php": {
+        "forOrgType": {
+            "bytes": 943,
+            "sha256": "2d2992c7943dec509f6f81194401c16f84aa812b8964875c5d6b434a7df2adf2"
+        },
+        "resolve": {
+            "bytes": 426,
+            "sha256": "69a43c5014ae21aa866f0b98348d61a41f91723106f37448e736921e267f1e53"
+        }
+    },
+    "app/Http/Controllers/AdminDashboard/MasjidsController.php": {
+        "capabilities": {
+            "bytes": 4900,
+            "sha256": "99b2685a339bdc3d8045e8289e20316e7621292d8cbb66e7cbf933b470afd258"
+        }
+    },
+    "app/Services/Schools/ReportCardService.php": {
+        "prepare": {
+            "bytes": 955,
+            "sha256": "d99fc51efc2df762848035742f1542534636d3117510f280bb48d31a849058d9"
+        }
+    }
+}

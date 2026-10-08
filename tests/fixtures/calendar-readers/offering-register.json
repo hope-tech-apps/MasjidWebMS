@@ -1,0 +1,25 @@
+{
+    "sql": [
+        "select exists(select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"crm_enabled\" = ? and \"masjids\".\"deleted_at\" is null) as \"exists\"",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"offerings\" where \"masjid_id\" = ? and \"slug\" = ? and \"is_active\" = ? and \"offerings\".\"deleted_at\" is null limit 1",
+        "select * from \"fee_plans\" where \"masjid_id\" = ? and \"offering_id\" = ? and \"fee_plans\".\"id\" = ? limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"contacts\" where \"masjid_id\" = ? and \"email\" is not null and LOWER(TRIM(email)) = ? and \"contacts\".\"deleted_at\" is null order by \"id\" asc",
+        "select * from \"contacts\" where \"masjid_id\" = ? and \"email\" is not null and LOWER(TRIM(email)) = ? and \"contacts\".\"deleted_at\" is null order by \"id\" asc",
+        "insert into \"contacts\" (\"first_name\", \"last_name\", \"email\", \"phone\", \"masjid_id\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?)",
+        "select * from \"email_suppressions\" where \"masjid_id\" = ? and \"email_normalized\" = ? and \"released_at\" is null",
+        "select * from \"forms\" where \"masjid_id\" = ? and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"school_years\" where \"masjid_id\" = ? order by \"first_day\" asc",
+        "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) order by \"closed_on\" asc"
+    ],
+    "data": {
+        "status": "failed",
+        "data": {
+            "days": [
+                "Pick exactly 2 Mondays."
+            ]
+        }
+    }
+}
