@@ -168,7 +168,7 @@ test('teacher lesson week uses the ON payload without changing class tabs or acc
             ? { plans: [], hidden_fields: [], meeting_weekdays: weekdays }
             : url.endsWith('/groups/1') ? classData : url.endsWith('/curriculum') ? { grades: [], subjects: [] } : [] } }) };
         const modules = await modulesFor('views/teacher/TeacherClass.vue', {
-            'vue-router': { useRoute: () => route }, '@/core/services/TeacherApiService': { default: api, rowsOf: (data: any) => Array.isArray(data) ? data : data?.data ?? [] },
+            'vue-router': { useRoute: () => route, useRouter: () => ({ replace() {}, push() {} }) }, '@/core/services/TeacherApiService': { default: api, rowsOf: (data: any) => Array.isArray(data) ? data : data?.data ?? [] },
             '@/stores/authStore': { useAuthStore: () => ({ dashboardMasjidId: 1 }) },
             '@/components/common/PersonAvatar.vue': { default: avatar },
         });
@@ -220,7 +220,7 @@ test('teacher register draws closure refusal and keeps make-up-day advice withou
             ? { taken: false, students: closed ? [] : classData.students, school_day: { has_calendar: true, in_year: true, closed, meeting_day, reason: closed ? 'Staff day' : null } }
             : url.endsWith('/groups/1') ? classData : [] } }) };
         const modules = await modulesFor('views/teacher/TeacherClass.vue', {
-            'vue-router': { useRoute: () => ({ params: { groupId: '1' }, query: {} }) },
+            'vue-router': { useRoute: () => ({ params: { groupId: '1' }, query: {} }), useRouter: () => ({ replace() {}, push() {} }) },
             '@/core/services/TeacherApiService': { default: api, rowsOf: (data: any) => Array.isArray(data) ? data : data?.data ?? [] },
             '@/stores/authStore': { useAuthStore: () => ({ dashboardMasjidId: 1 }) },
             '@/components/common/PersonAvatar.vue': { default: avatar },
