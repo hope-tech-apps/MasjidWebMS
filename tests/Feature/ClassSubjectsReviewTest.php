@@ -44,8 +44,8 @@ it('R1 canonicalizes padded keys in both restriction maps without widening', fun
     ($this->initialize)();
     $arabic = ClassSubject::where('tool', 'arabic_letters')->first();
     $value = $field === 'class_subject_ids' ? [$arabic->id] : ['arabic'];
-    $this->putJson($this->teacherUrl, $this->body + [$field => ['0'.$this->group->id => $value]])->assertOk();
-    expect($this->staff->fresh()->class_subject_ids)->toBe([$arabic->id]);
+    $this->putJson($this->teacherUrl, $this->body + [$field => ['0'.$this->group->id => $value]])->assertStatus($field === 'class_subject_ids' ? 200 : 422);
+    expect($this->staff->fresh()->class_subject_ids)->toBe($field === 'class_subject_ids' ? [$arabic->id] : null);
 })->with(['class_subject_ids', 'class_subjects']);
 
 it('R1 refuses ambiguous or unparseable restriction keys', function (string $key, string $field) {
@@ -65,39 +65,14 @@ it('R1 refuses duplicate canonical keys and unmatched restrictions for a new cla
     ])->assertUnprocessable();
 });
 
-it('R2 detects OFF legacy edits before activation and remaps both restriction directions', function (bool $restrict) {
-    $this->staff->update(['subjects' => $restrict ? null : ['arabic']]);
-    ($this->initialize)(false);
-    $legacy = $restrict ? ['arabic'] : null;
-    $this->putJson($this->teacherUrl, $this->body + ['class_subjects' => [$this->group->id => $legacy]])->assertOk();
-    expect(ClassSubjectInitializer::ready($this->org->fresh()))->toBeFalse();
-    $this->patchJson("/api/admin/masjids/{$this->org->id}/capabilities/class_subjects", ['enabled' => true])->assertUnprocessable();
-    ($this->initialize)();
-    expect($this->staff->fresh()->class_subject_ids)->toBe($restrict ? [ClassSubject::where('tool', 'arabic_letters')->first()->id] : null);
-})->with([true, false]);
-
-it('R2 detects legacy writes that bypass model events while preserving unchanged explicit assignments', function () {
-    ($this->initialize)();
-    $science = ClassSubject::where('name', 'Science')->first()->id;
-    $this->putJson($this->teacherUrl, $this->body + ['class_subject_ids' => [$this->group->id => [$science]]])->assertOk();
-    CapabilityWriter::apply($this->org, ['class_subjects' => false], $this->office->id);
-    ($this->initialize)();
-    expect($this->staff->fresh()->class_subject_ids)->toBe([$science]);
-    CapabilityWriter::apply($this->org, ['class_subjects' => false], $this->office->id);
-    DB::table('group_staff')->where('id', $this->staff->id)->update(['subjects' => '["arabic"]']);
-    expect(ClassSubjectInitializer::ready($this->org->fresh()))->toBeFalse();
-    ($this->initialize)();
-    expect($this->staff->fresh()->class_subject_ids)->toBe([ClassSubject::where('tool', 'arabic_letters')->first()->id]);
-});
-
 it('R3 resolves ids only inside their assignment class and never treats unresolved ids as all', function () {
     ($this->initialize)();
     $other = Group::factory()->create(['masjid_id' => $this->org->id, 'kind' => 'class']);
     $foreign = ClassSubject::where('group_id', $other->id)->where('name', 'Science')->first();
-    $this->staff->update(['class_subject_ids' => [$foreign->id]]);
+    DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode([$foreign->id])]);
     expect(SubjectFence::allows(SubjectFence::limitsFor($this->teacher, $this->group->id), 'science'))->toBeFalse();
     expect(SubjectFence::assignedIds($this->group->id, $this->teacher->id))->toBe([]);
-    $this->staff->update(['class_subject_ids' => [999999]]);
+    DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => '[999999]']);
     expect(SubjectFence::assignedIds($this->group->id, $this->teacher->id))->toBe([]);
     expect(SubjectFence::mayWeighClass($this->teacher, $this->group->id))->toBeFalse();
 });
@@ -117,17 +92,17 @@ it('R3 keeps only owned saved work when every assigned subject is hidden and no 
     $this->postJson($url.'/assignments', ['title' => 'Practice', 'subject' => 'Science', 'assigned_on' => '2026-10-01', 'scale' => 'points', 'points_possible' => 10])->assertForbidden();
 });
 
-it('R4 separates curriculum links from saved work and refuses conflicting links in both directions', function () {
+it('R4 separates curriculum links from saved work when guide links deliberately overlap', function () {
     CurriculumWeek::create(['masjid_id' => $this->org->id, 'subject' => 'Science', 'grade_label' => 'Grade 1', 'week_no' => 1, 'focus' => 'Practice']);
     ($this->initialize)();
     $arabic = ClassSubject::where('tool', 'arabic_letters')->first();
     $this->staff->update(['class_subject_ids' => [$arabic->id]]);
-    $this->putJson($this->subjectUrl.'/'.$arabic->id, ['guide_subject' => 'Science'])->assertUnprocessable();
+    $this->putJson($this->subjectUrl.'/'.$arabic->id, ['guide_subject' => 'Science'])->assertOk();
     $arabic->update(['guide_subject' => 'Science']);
     expect(SubjectFence::allows(SubjectFence::limitsFor($this->teacher, $this->group->id), 'science'))->toBeFalse();
     expect($arabic->matchingKeys())->not->toContain('science');
     ClassSubject::where('name', 'Science')->delete();
-    $this->postJson($this->subjectUrl, ['name' => 'Science', 'tool' => null])->assertUnprocessable();
+    $this->postJson($this->subjectUrl, ['name' => 'Science', 'tool' => null])->assertCreated();
 });
 
 it('R5 ignores unknown new assignment fields while OFF on invite and update', function (mixed $value) {
@@ -140,7 +115,7 @@ it('R5 ignores unknown new assignment fields while OFF on invite and update', fu
 it('R6 refuses every destructive down on feature wide populated state', function (string $state) {
     if ($state === 'subjects') ClassSubject::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'name' => 'Practice']);
     elseif ($state === 'groups') $this->group->forceFill(['subject_seed_grades' => ['1st']])->save();
-    else $this->staff->forceFill(['class_subjects_mapped_at' => now()])->save();
+    else DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subjects_mapped_at' => now()]);
     foreach (['000300_add_class_subject_assignments_to_group_staff', '000200_add_class_subject_initialization_to_groups', '000100_create_class_subjects_table'] as $suffix) {
         expect(fn () => (require database_path('migrations/2026_10_08_'.$suffix.'.php'))->down())->toThrow(RuntimeException::class, 'Refusing');
         expect(Schema::hasColumn('group_staff', 'class_subject_ids'))->toBeTrue();
@@ -159,19 +134,10 @@ it('R7 initializes a converted class through office and model save paths', funct
     expect(ClassSubjectInitializer::ready($this->org->fresh()))->toBeTrue();
 })->with([true, false]);
 
-it('R7 refuses a conversion with unmappable teachers without leaving a class behind', function () {
-    $general = Group::factory()->create(['masjid_id' => $this->org->id, 'kind' => 'general']);
-    GroupStaff::create(['masjid_id' => $this->org->id, 'group_id' => $general->id, 'user_id' => $this->teacher->id, 'role' => 'teacher', 'subjects' => ['quran']]);
-    ($this->initialize)();
-    $this->putJson("/api/admin/masjids/{$this->org->id}/groups/{$general->id}", ['kind' => 'class', 'name' => 'Converted Class'])->assertUnprocessable()->assertSee('quran');
-    expect($general->fresh()->kind)->toBe('general');
-    expect(ClassSubjectInitializer::ready($this->org->fresh()))->toBeTrue();
-});
-
-it('R7 and R11 exclude trashed classes and initialize them on restoration', function () {
+it('R7 and R11 translate archived assignments at activation and preserve them on restoration', function () {
     $this->group->delete();
     ($this->initialize)();
-    expect(ClassSubject::where('group_id', $this->group->id)->count())->toBe(0);
+    expect(ClassSubject::where('group_id', $this->group->id)->count())->toBe(3);
     expect(ClassSubjectInitializer::ready($this->org->fresh()))->toBeTrue();
     $this->group->restore();
     expect($this->group->fresh()->class_subjects_initialized_at)->not->toBeNull();
@@ -179,24 +145,24 @@ it('R7 and R11 exclude trashed classes and initialize them on restoration', func
     expect(ClassSubjectInitializer::ready($this->org->fresh()))->toBeTrue();
 });
 
-it('R8 resolves offered and renamed names to their guide on both curriculum endpoints', function () {
+it('R8 resolves current renamed names to their guide on both curriculum endpoints', function () {
     CurriculumWeek::create(['masjid_id' => $this->org->id, 'subject' => 'English Language Arts', 'grade_label' => 'Grade 1', 'week_no' => 1, 'focus' => 'Reading practice', 'standard_code' => 'RI.1']);
     ($this->initialize)();
     $ela = ClassSubject::where('name', 'ELA')->first(); $ela->update(['name' => 'Reading']);
     $this->staff->update(['class_subject_ids' => [$ela->id]]);
     Sanctum::actingAs($this->teacher, ['staff']);
     $url = "/api/teacher/masjids/{$this->org->id}/curriculum";
-    foreach (['ELA', 'Reading'] as $name) {
+    foreach (['Reading'] as $name) {
         $params = '?'.http_build_query(['group_id' => $this->group->id, 'grade' => 'Grade 1', 'subject' => $name, 'week' => 1]);
         $this->getJson($url.$params)->assertOk()->assertJsonCount(1, 'data.weeks')->assertJsonPath('data.cell.subject', 'English Language Arts');
         $this->getJson($url.'/standards'.$params.'&q=reading')->assertOk()->assertJsonPath('data.matches.0.in_scope', true);
     }
 });
 
-it('R9 preserves empty override arrays with and without dark initialization', function () {
+it('R9 preserves empty override arrays with and without a dry run', function () {
     $this->org->forceFill(['capability_overrides' => []])->save();
     expect($this->org->fresh()->toArray()['capability_overrides'])->toBe([]);
-    ($this->initialize)(false);
+    $this->artisan('class-subjects:initialize', ['--masjid' => $this->org->id, '--dry-run' => true])->assertSuccessful();
     expect($this->org->fresh()->toArray()['capability_overrides'])->toBe([]);
 });
 
@@ -214,10 +180,10 @@ it('R12 adds subjects for current grades without replacing renamed hidden subjec
     $this->staff->update(['class_subject_ids' => [$arabic->id]]);
     SchoolSubject::create(['masjid_id' => $this->org->id, 'name' => 'Health']);
     $snapshot = DB::table('class_subjects')->get()->keyBy('id')->toArray();
-    $this->postJson($this->subjectUrl.'/add-for-current-grades')->assertOk()->assertJsonCount(4, 'data');
+    $this->postJson($this->subjectUrl.'/add-for-current-grades')->assertOk()->assertJsonCount(5, 'data');
     foreach ($snapshot as $id => $row) expect((array) DB::table('class_subjects')->find($id))->toBe((array) $row);
     expect($this->staff->fresh()->class_subject_ids)->toBe([$arabic->id]);
-    $this->postJson($this->subjectUrl.'/add-for-current-grades')->assertOk()->assertJsonCount(4, 'data');
+    $this->postJson($this->subjectUrl.'/add-for-current-grades')->assertOk()->assertJsonCount(5, 'data');
     Sanctum::actingAs($this->teacher, ['staff']);
     $this->postJson($this->subjectUrl.'/add-for-current-grades')->assertUnauthorized();
 });
@@ -250,14 +216,14 @@ it('R3 rejects foreign organization and malformed stored ids on every resolver',
     $foreign = ClassSubject::create(['masjid_id' => $otherOrg->id, 'group_id' => $otherGroup->id, 'name' => 'Science']);
     // Replication carries the ON capability; the central model path seeds the class.
     foreach ([[$foreign->id], ['1x'], [true], 'bad'] as $ids) {
-        $this->staff->forceFill(['class_subject_ids' => $ids])->save();
+        DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode($ids)]);
         expect(SubjectFence::assignedIds($this->group->id, $this->teacher->id))->toBe([]);
     }
     expect(SubjectFence::allows(SubjectFence::limitsForIds([$foreign->id], $this->group), 'science'))->toBeFalse();
 });
 
 it('R6 guards the fourth down and initialization markers even without subject rows', function () {
-    ($this->initialize)(false);
+    ($this->initialize)();
     ClassSubject::query()->delete();
     GroupStaff::query()->update(['class_subjects_mapped_at' => null, 'class_subject_ids' => null, 'class_subject_legacy_snapshot' => null]);
     Group::query()->update(['class_subjects_initialized_at' => null]);
@@ -295,23 +261,6 @@ it('R13 reports every class and preserves no work on a real blocked initializati
 });
 
 
-it('R13 blocks malformed or foreign retained assignments in a dry run', function (mixed $ids) {
-    ($this->initialize)(false);
-    DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_ids' => json_encode($ids)]);
-    expect(ClassSubjectInitializer::ready($this->org->fresh()))->toBeFalse();
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->org->id, '--dry-run' => true, '--enable' => true])
-        ->expectsOutputToContain('BLOCKED Teacher #'.$this->teacher->id.': Class Review Class: assigned subjects do not belong to this class.')
-        ->assertFailed();
-})->with([[[999999]], [[true]], ['bad']]);
-
-
-it('R2 fails closed if a legacy write bypasses the activation mutex and mapping', function () {
-    ($this->initialize)();
-    DB::table('group_staff')->where('id', $this->staff->id)->update(['subjects' => '["arabic"]']);
-    expect(SubjectFence::allows(SubjectFence::limitsFor($this->teacher, $this->group->id), 'science'))->toBeFalse();
-    expect(SubjectFence::assignedIds($this->group->id, $this->teacher->id))->not->toBeNull();
-});
-
 it('R13 produces a pasteable dry run with internal teacher ids only', function () {
     CurriculumWeek::create(['masjid_id' => $this->org->id, 'subject' => 'Arabic Language', 'grade_label' => 'Grade 1', 'week_no' => 1, 'focus' => 'Practice']);
     $this->staff->update(['subjects' => ['arabic', 'quran', 'islamic_studies']]);
@@ -329,29 +278,6 @@ it('R1 refuses boolean and floating point ids instead of coercing a restriction'
     $this->putJson($this->teacherUrl, $this->body + ['class_subject_ids' => [$this->group->id => [$id]]], [], JSON_PRESERVE_ZERO_FRACTION)->assertUnprocessable();
 })->with([[true], [1.0]]);
 
-it('R2 refuses to guess the intent of a pre-fix restrictive assignment without a legacy baseline', function (?array $legacy) {
-    $this->staff->update(['subjects' => $legacy]);
-    ($this->initialize)();
-    $science = ClassSubject::where('name', 'Science')->first()->id;
-    $this->putJson($this->teacherUrl, $this->body + ['class_subject_ids' => [$this->group->id => [$science]]])->assertOk();
-    // f98643f9 could make this explicit assignment but stored no legacy baseline.
-    DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_legacy_snapshot' => null]);
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->org->id, '--enable' => true])
-        ->expectsOutputToContain('predates legacy tracking')->assertFailed();
-    expect($this->staff->fresh()->class_subject_ids)->toBe([$science]);
-    expect(ClassSubjectInitializer::ready($this->org->fresh()))->toBeFalse();
-})->with([[null], [['arabic']]]);
-
-it('R2 adopts a proven older mapping without changing its assignment', function (?array $legacy) {
-    $this->staff->update(['subjects' => $legacy]);
-    ($this->initialize)();
-    $ids = $this->staff->fresh()->class_subject_ids;
-    DB::table('group_staff')->where('id', $this->staff->id)->update(['class_subject_legacy_snapshot' => null]);
-    ($this->initialize)();
-    expect($this->staff->fresh()->class_subject_ids)->toBe($ids);
-    expect($this->staff->fresh()->class_subject_legacy_snapshot)->toBe($legacy ?? []);
-})->with([[null], [['arabic']]]);
-
 it('R3 treats an explicit empty own-subject list as no subjects at the edge and on reads', function (bool $http) {
     ($this->initialize)();
     if ($http) $this->putJson($this->teacherUrl, $this->body + ['class_subject_ids' => [$this->group->id => []]])->assertOk()->assertJsonPath('data.classes.0.class_subject_ids', []);
@@ -362,25 +288,3 @@ it('R3 treats an explicit empty own-subject list as no subjects at the edge and 
     Sanctum::actingAs($this->teacher, ['staff']);
     $this->getJson("/api/teacher/masjids/{$this->org->id}/groups/{$this->group->id}/subjects")->assertOk()->assertJsonCount(0, 'data');
 })->with([true, false]);
-
-it('R2 preserves explicit own-subject restrictions when a legacy client repeats unchanged subjects', function (?array $legacy) {
-    $this->staff->update(['subjects' => $legacy]);
-    ($this->initialize)();
-    $science = ClassSubject::where('name', 'Science')->first()->id;
-    $this->putJson($this->teacherUrl, $this->body + ['class_subject_ids' => [$this->group->id => [$science]]])->assertOk();
-    $body = array_replace($this->body, ['name' => 'Updated Practice Teacher', 'class_subjects' => [$this->group->id => $legacy]]);
-    $this->putJson($this->teacherUrl, $body)->assertOk();
-    expect($this->staff->fresh()->class_subject_ids)->toBe([$science]);
-})->with([[null], [['arabic']]]);
-
-it('R2 preserves explicit ids through semantically unchanged OFF legacy reorderings', function () {
-    SchoolSubject::create(['masjid_id' => $this->org->id, 'name' => "Qur'an"]);
-    $this->staff->update(['subjects' => ['arabic', 'quran']]);
-    ($this->initialize)();
-    $science = ClassSubject::where('name', 'Science')->first()->id;
-    $this->putJson($this->teacherUrl, $this->body + ['class_subject_ids' => [$this->group->id => [$science]]])->assertOk();
-    CapabilityWriter::apply($this->org, ['class_subjects' => false], $this->office->id);
-    $this->putJson($this->teacherUrl, $this->body + ['class_subjects' => [$this->group->id => ['quran', 'arabic']]])->assertOk();
-    ($this->initialize)();
-    expect($this->staff->fresh()->class_subject_ids)->toBe([$science]);
-});

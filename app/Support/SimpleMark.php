@@ -120,4 +120,40 @@ final class SimpleMark
             ], self::ALL),
         ];
     }
+
+
+    public static function summaryForClassSubjects(int $membershipId, ?array $subjectIds = null): array
+    {
+        $rows = AssignmentScore::query()
+            ->where('assignment_scores.group_membership_id', $membershipId)
+            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
+            ->whereNull('class_assignments.deleted_at')
+            // A subject-limited teacher reads only their own subjects' marks
+            // (App\Support\SubjectFence). NULL is no filter.
+            ->when($subjectIds !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectIds))
+            ->where('class_assignments.scale', ClassAssignment::SCALE_SIMPLE)
+            ->whereIn('assignment_scores.status', AssignmentScore::COUNTS_TOWARD_AVERAGE)
+            ->groupBy('assignment_scores.status', 'assignment_scores.points_earned')
+            ->selectRaw('assignment_scores.status as status')
+            ->selectRaw('assignment_scores.points_earned as mark')
+            ->selectRaw('COUNT(*) as n')
+            ->get();
+
+        $scored = $rows->where('status', AssignmentScore::STATUS_SCORED);
+        $missing = (int) $rows->where('status', AssignmentScore::STATUS_MISSING)->sum('n');
+        $counted = (int) $scored->sum('n');
+
+        return [
+            'recorded' => $counted + $missing,
+            'counted' => $counted,
+            'missing' => $missing,
+            // Every word is present even at zero, so "no Excellent yet" is
+            // visible rather than absent.
+            'distribution' => array_map(fn (int $value): array => [
+                'value' => $value,
+                'label' => self::LABELS[$value],
+                'count' => (int) $scored->filter(fn ($r) => (int) $r->mark === $value)->sum('n'),
+            ], self::ALL),
+        ];
+    }
 }

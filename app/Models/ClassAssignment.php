@@ -20,6 +20,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class ClassAssignment extends Model
 {
+    use \App\Models\Concerns\HasClassSubjectWork;
+
     use HasFactory, SoftDeletes, BelongsToMasjid;
 
     /**
@@ -89,6 +91,7 @@ class ClassAssignment extends Model
 
     protected $fillable = [
         'masjid_id',
+        'class_subject_id',
         'group_id',
         'created_by_user_id',
         'title',
@@ -109,6 +112,8 @@ class ClassAssignment extends Model
      */
     protected $hidden = [
         'subject_key',
+        'class_subject_id',
+        'class_subject_link_checked_at',
     ];
 
     protected static function booted(): void
@@ -129,6 +134,8 @@ class ClassAssignment extends Model
             'points_possible' => 'integer',
             'weight' => 'integer',
             'curriculum_week_no' => 'integer',
+            'class_subject_id' => 'integer',
+            'class_subject_link_checked_at' => 'datetime',
         ];
     }
 

@@ -409,12 +409,14 @@ class TeacherMultiSchoolTest extends TestCase
             \App\Models\MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $school->id, 'paper_bucks_enabled' => true]);
         }
 
-        // ALL fixtures before the first request (see TeacherRealmWorld).
+        // Fixtures include unled classes. Seed as the system; real requests still act as the teacher.
+        \Illuminate\Support\Facades\Auth::guard()->forgetUser();
         $a = TeacherRealmWorld::seed($this->schoolA, $this->classA, $this->teacher, $skillA, 'A', true);
         $b = TeacherRealmWorld::seed($this->schoolB, $this->classB, $this->teacher, $skillB, 'B', true);
         $a2 = TeacherRealmWorld::seed($this->schoolA, $this->makeClass($this->schoolA, 'MARK-A2-CLASS'), $this->teacher, $skillA, 'A2', false);
         $b2 = TeacherRealmWorld::seed($this->schoolB, $this->makeClass($this->schoolB, 'MARK-B2-CLASS'), $this->teacher, $skillB, 'B2', false);
         $third = $this->makeSchool('Gamma School');
+        Sanctum::actingAs($this->teacher, ['staff']);
 
         // The two schools' own administrators, for the last phase (before any request).
         $adminA = $this->makeAdminOf($this->schoolA);
@@ -717,7 +719,7 @@ class TeacherMultiSchoolTest extends TestCase
 
             // -- lesson plans
             'POST /groups/{group_id}/lesson-plans' => [
-                'body' => fn (TeacherRealmWorld $w) => ['session_date' => $soon, 'subject' => 'Sweep', 'body' => 'Sweep plan.', 'resource_ids' => [$w->resource->id]],
+                'body' => fn (TeacherRealmWorld $w) => ['session_date' => $soon, 'subject' => $w->subject->name, 'body' => 'Sweep plan.', 'resource_ids' => [$w->resource->id]],
                 'refuse' => $bodyRefusal,
             ],
             'PUT /groups/{group_id}/lesson-plans' => [

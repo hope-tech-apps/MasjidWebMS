@@ -13,7 +13,9 @@ final class ClassSubjectRollback
     {
         if (Schema::hasTable('class_subjects') && DB::table('class_subjects')->exists()) self::refuse();
         foreach (['groups' => ['subject_seed_grades', 'class_subjects_initialized_at'],
-            'group_staff' => ['class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot']] as $table => $columns) {
+            'group_staff' => ['class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot', 'class_subjects_translated_from', 'class_subject_ids_edited_at'],
+            'class_assignments' => ['class_subject_id', 'class_subject_link_checked_at'],
+            'lesson_plans' => ['class_subject_id', 'class_subject_link_checked_at']] as $table => $columns) {
             foreach ($columns as $column) {
                 if (Schema::hasColumn($table, $column) && DB::table($table)->whereNotNull($column)->exists()) self::refuse();
             }

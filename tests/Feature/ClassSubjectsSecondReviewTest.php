@@ -90,15 +90,18 @@ it('supplies required migration columns on every feature insert and records the 
     try {
         ClassSubjectInitializer::run($this->org, false, true);
         $group = Group::factory()->create(['masjid_id' => $this->org->id, 'kind' => 'class']);
-        $this->postJson("/api/admin/masjids/{$this->org->id}/teachers", ['name' => 'Practice Teacher', 'email' => 'new@example.invalid', 'phone' => '+15555550107', 'class_ids' => [$group->id]])->assertCreated();
+        $this->postJson("/api/admin/masjids/{$this->org->id}/teachers", ['name' => 'Practice Teacher', 'email' => 'new@example.invalid', 'phone' => '+15555550107', 'class_ids' => [$group->id], 'class_subject_ids' => [$group->id => null]])->assertCreated();
         $this->postJson("/api/admin/masjids/{$this->org->id}/groups/{$group->id}/subjects", ['name' => 'Practice Subject', 'tool' => null, 'guide_subject' => null])->assertCreated();
         $contact = \App\Models\Contact::factory()->create(['masjid_id' => $this->org->id]);
-        \App\Models\GroupMembership::create(['masjid_id' => $this->org->id, 'group_id' => $group->id, 'contact_id' => $contact->id, 'role' => 'member']);
+        $member = \App\Models\GroupMembership::create(['masjid_id' => $this->org->id, 'group_id' => $group->id, 'contact_id' => $contact->id, 'role' => 'member']);
+        $work = ClassAssignment::create(['masjid_id' => $this->org->id, 'group_id' => $group->id, 'title' => 'Practice', 'subject' => 'Science', 'assigned_on' => '2026-10-08', 'points_possible' => 10]);
+        \App\Models\LessonPlan::create(['masjid_id' => $this->org->id, 'group_id' => $group->id, 'subject' => 'Science', 'session_date' => '2026-10-08', 'body' => 'Practice']);
+        \App\Models\AssignmentScore::create(['masjid_id' => $this->org->id, 'group_id' => $group->id, 'class_assignment_id' => $work->id, 'group_membership_id' => $member->id, 'status' => 'scored', 'points_earned' => 5]);
         SchoolSubject::create(['masjid_id' => $this->org->id, 'name' => 'Practice Subject']);
         $queries = DB::getQueryLog();
     } finally { DB::disableQueryLog(); }
     $required = [];
-    foreach (['groups', 'masjids', 'users', 'group_staff', 'school_subjects', 'class_subjects', 'masjid_user', 'group_memberships', 'contacts', 'masjid_capability_changes', 'account_invite_tokens', 'password_reset_tokens', 'model_has_roles'] as $table) {
+    foreach (['groups', 'masjids', 'users', 'group_staff', 'school_subjects', 'class_subjects', 'masjid_user', 'group_memberships', 'contacts', 'masjid_capability_changes', 'account_invite_tokens', 'password_reset_tokens', 'model_has_roles', 'class_assignments', 'lesson_plans', 'assignment_scores'] as $table) {
         $required[$table] = collect(\Illuminate\Support\Facades\Schema::getColumns($table))
             ->filter(fn ($column) => ! $column['nullable'] && $column['default'] === null && ! ($column['auto_increment'] ?? false))
             ->pluck('name')->all();
@@ -112,7 +115,7 @@ it('supplies required migration columns on every feature insert and records the 
         $inserts[$match[1]] = array_values(array_unique([...($inserts[$match[1]] ?? []), ...$columns]));
     }
     foreach (['class_subjects', 'groups', 'group_staff', 'users', 'masjid_user', 'masjid_capability_changes'] as $table) expect($inserts)->toHaveKey($table);
-    file_put_contents(base_path('artifacts/review2-insert-audit.json'), json_encode(['driver' => DB::getDriverName(), 'required' => $required, 'observed_insert_columns' => $inserts], JSON_PRETTY_PRINT)."\n");
+    file_put_contents(base_path('artifacts/convergence-insert-audit.json'), json_encode(['driver' => DB::getDriverName(), 'required' => $required, 'observed_insert_columns' => $inserts], JSON_PRETTY_PRINT)."\n");
 });
 
 it('supports a student in seven one-subject classes with class-local teacher assignments', function () {
@@ -148,13 +151,13 @@ it('dispatches model creation using the school the original tenant hook will sto
         if ($model === 'group') {
             $row = Group::create(['masjid_id' => $other->id, 'name' => 'Bound Practice Class', 'slug' => 'bound-practice-class', 'kind' => 'class']);
         } else {
-            $row = GroupStaff::create(['masjid_id' => $other->id, 'group_id' => $class->id, 'user_id' => $this->teacher->id, 'role' => 'teacher']);
+            $row = GroupStaff::create(['masjid_id' => $other->id, 'group_id' => $class->id, 'user_id' => $this->teacher->id, 'role' => 'teacher'] + ($enabled ? ['class_subject_ids' => []] : []));
         }
         $queries = DB::getQueryLog();
     } finally { DB::disableQueryLog(); }
     expect($row->fresh()->masjid_id)->toBe($this->org->id);
     if ($model === 'group') expect($row->fresh()->class_subjects_initialized_at !== null)->toBe($enabled);
-    else expect($row->fresh()->class_subjects_mapped_at !== null)->toBe($enabled);
+    else expect($row->fresh()->class_subject_ids_edited_at !== null)->toBe($enabled);
     if (! $enabled) {
         expect(collect($queries)->filter(fn ($q) => str_contains(strtolower($q['query']), 'for update')))->toHaveCount(0);
         expect(collect($queries)->filter(fn ($q) => str_starts_with(strtolower($q['query']), 'select') && ! str_contains($q['query'], 'capability_overrides')))->toHaveCount(0);

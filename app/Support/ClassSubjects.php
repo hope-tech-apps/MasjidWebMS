@@ -77,7 +77,7 @@ final class ClassSubjects
     {
         if (SubjectFence::usesClassSubjects($group)) {
             return \App\Models\ClassSubject::where('group_id', $group->id)->whereNull('hidden_at')->orderBy('position')->orderBy('id')->get()
-                ->map(fn ($s) => ['name' => $s->name, 'key' => $s->name_key])->all();
+                ->map(fn ($s) => ['name' => $s->name, 'key' => $s->name_key, 'class_subject_id' => (int) $s->id])->all();
         }
 
         $grades = $group->memberships()->participants()->current()
@@ -141,6 +141,10 @@ final class ClassSubjects
      */
     public static function fenced(array $offered, ?array $limits): array
     {
+        if ($limits !== null && array_key_exists('class_subject_ids', $limits)) {
+            return array_values(array_filter($offered, fn ($s) => SubjectFence::allowsWork($limits, $s['class_subject_id'] ?? null)));
+        }
+
         if ($limits === null) {
             return $offered;
         }

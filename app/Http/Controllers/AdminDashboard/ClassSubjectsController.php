@@ -48,7 +48,7 @@ class ClassSubjectsController extends Controller
         $subject = ClassSubject::where('group_id', $group->id)->findOrFail($subject_id);
         if ($request->user()->type === 'Teacher') {
             $ids = SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id);
-            abort_if($subject->hidden_at !== null || ($ids !== null && ! in_array((int) $subject->id, $ids, true)), 404);
+            abort_if($subject->hidden_at !== null || ! SubjectFence::allowsWork($ids === null ? null : ['class_subject_ids' => $ids], (int) $subject->id), 404);
         }
         return response()->json(['status' => 'success', 'data' => $subject]);
     }
@@ -104,13 +104,11 @@ class ClassSubjectsController extends Controller
         $others = ClassSubject::where('group_id', $group->id)->when($existing, fn ($q) => $q->where('id', '!=', $existing->id))->get();
         if (isset($fields['name'])) {
             $key = SubjectKey::for($fields['name']);
-            // Historical keys must stay unambiguous or another subject could expose old work.
+            // Selection keys must be unambiguous; work ownership is a separate ID.
             if ($others->contains(fn ($s) => in_array($key, $s->matchingKeys(), true))) {
-                throw ValidationException::withMessages(['name' => ['This class already has a subject using that name or a previous name.']]);
+                throw ValidationException::withMessages(['name' => ['This class already has a subject using that name.']]);
             }
-            if ($others->contains(fn ($s) => $s->guide_subject !== null && in_array(SubjectKey::for($s->guide_subject), ClassSubjectInitializer::aliases($key), true))) {
-                throw ValidationException::withMessages(['name' => ['Another subject follows the curriculum under that name. Clear its curriculum link first.']]);
-            }
+
         }
         if (isset($fields['tool']) && $others->contains('tool', $fields['tool'])) {
             throw ValidationException::withMessages(['tool' => ['Another subject in this class already holds that tool. Clear its Holds choice first.']]);
@@ -118,9 +116,7 @@ class ClassSubjectsController extends Controller
         if (isset($fields['guide_subject']) && ! CurriculumWeek::where('subject', $fields['guide_subject'])->exists()) {
             throw ValidationException::withMessages(['guide_subject' => ['Choose a subject from this school\'s curriculum.']]);
         }
-        if (isset($fields['guide_subject']) && $others->contains(fn ($s) => in_array(SubjectKey::for($fields['guide_subject']), $s->matchingKeys(), true))) {
-            throw ValidationException::withMessages(['guide_subject' => ['That curriculum name belongs to another subject in this class. Choose this subject\'s own guide.']]);
-        }
+
     }
 
     /** Merge the current roster's seed; preserve hidden rows, historical names and assignments. */

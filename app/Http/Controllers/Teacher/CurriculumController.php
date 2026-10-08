@@ -293,7 +293,6 @@ class CurriculumController extends TeacherController
             if ($request->filled('group_id')) {
                 $group = \App\Models\Group::findOrFail((int) $request->query('group_id'));
                 abort_unless(app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
-                if (! SubjectFence::usesClassSubjects($group)) return SubjectFence::assigned((int) $group->id, (int) $request->user()->id);
                 return SubjectFence::limitsForIds(SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id), $group, true);
             }
             $ids = []; $keys = [];

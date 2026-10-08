@@ -114,6 +114,7 @@ class StoreClassAssignmentRequest extends BaseFormRequest
     public function rules(): array
     {
         return [
+            ...(\App\Support\ClassSubjectMode::forGroup((int) $this->route('group_id')) ? ['class_subject_id' => ['sometimes', 'nullable', 'integer', 'min:1']] : []),
             'title' => ['required', 'string', 'max:200'],
             'scale' => ['required', Rule::in($this->offeredScales())],
             'points_possible' => [

@@ -162,7 +162,7 @@ class TeachersController extends Controller
                     $g = $groups->get($r->group_id);
 
                     // null = every subject; see GroupStaff::SUBJECTS.
-                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null] + ($subjectsOn ? \App\Support\ClassSubjectAssignmentResolution::officeFields($r) : []);
+                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null] + ($subjectsOn ? self::subjectIdFields($r) : []);
                 })
                 ->filter()
                 ->values();
@@ -639,12 +639,11 @@ class TeachersController extends Controller
         // assigned them is recorded by GroupStaff's creating hook: attach()
         // runs the extras through the pivot's fill(), which drops that column.
         foreach ($classes as $group) {
-            $group->staff()->attach($user->id, [
+            GroupStaff::withOfficeSubjectChoice(fn () => $group->staff()->attach($user->id, [
                 'masjid_id' => $group->masjid_id,
                 'role' => GroupStaff::ROLE_TEACHER,
-                'subjects' => $request->subjectsFor((int) $group->id),
                 'assigned_at' => now(),
-            ] + $request->subjectAssignmentFields($group));
+            ] + $request->subjectAssignmentFields($group)));
         }
     }
 
@@ -913,7 +912,7 @@ class TeachersController extends Controller
             }
         }
 
-        DB::transaction(function () use ($request, $user, $classIds, $classes, $shared) {
+        GroupStaff::withOfficeSubjectChoice(fn () => DB::transaction(function () use ($request, $user, $classIds, $classes, $shared) {
             Masjid::whereKey($this->tenant->get())->lockForUpdate()->firstOrFail();
             if (! $shared) {
                 $user->update([
@@ -938,51 +937,21 @@ class TeachersController extends Controller
             }
 
             foreach ($classes->whereIn('id', $toAdd) as $group) {
-                $subjects = $request->subjectsFor((int) $group->id);
-
                 $group->staff()->attach($user->id, [
                     'masjid_id' => $group->masjid_id,
                     'role' => GroupStaff::ROLE_TEACHER,
-                    'subjects' => $subjects,
                     'assigned_at' => now(),
                 ] + $request->subjectAssignmentFields($group));
             }
 
-            // A class the teacher ALREADY leads keeps its row, and may have its
-            // subjects changed — only when the request speaks about it, so a
-            // client that never sends `class_subjects` leaves every existing
-            // assignment exactly as it was.
+            // Omitted retained IDs stay exactly as stored. No legacy translation on this branch.
+            $idMap = $request->validated('class_subject_ids', []);
             foreach ($classes->whereIn('id', array_intersect($classIds, $current)) as $group) {
-                $legacyMap = $request->validated('class_subjects');
-                $idMap = $request->validated('class_subject_ids');
-                $legacySent = is_array($legacyMap) && array_key_exists($group->id, $legacyMap);
-                $idsSent = is_array($idMap) && array_key_exists($group->id, $idMap);
-                if (! $legacySent && ! $idsSent) continue;
-                $row = GroupStaff::where('user_id', $user->id)->where('group_id', $group->id)->firstOrFail();
-                if (\App\Support\ClassSubjectInitializer::needsMapping($row)) {
-                    $resolutions = $request->validated('class_subject_resolutions', []);
-                    if (! $idsSent || ! array_key_exists($group->id, $resolutions)) {
-                        \App\Support\ClassSubjectAssignmentResolution::refuse();
-                    }
-                    $fields = $request->subjectAssignmentFields($group);
-                    $fields['class_subject_legacy_snapshot'] = $legacySent ? ($request->subjectsFor((int) $group->id) ?: []) : ($row->subjects ?: []);
-                    if ($legacySent) $fields['subjects'] = $request->subjectsFor((int) $group->id);
-                    $row->resolveClassSubjectAssignment($fields, $resolutions[$group->id]);
-                    continue;
-                }
-                if ($legacySent) $row->subjects = $request->subjectsFor((int) $group->id);
-                $legacyChanged = ! \App\Support\ClassSubjectInitializer::sameLegacy($row->getOriginal('subjects'), $row->subjects);
-                if ($idsSent || ($legacySent && $legacyChanged && $this->subjectsOn())) {
-                    $fields = $idsSent ? $request->subjectAssignmentFields($group) : [
-                        'class_subject_ids' => \App\Support\ClassSubjectInitializer::mapLegacy($group, $row->subjects),
-                        'class_subjects_mapped_at' => now(),
-                    ];
-                    $row->forceFill($fields);
-                    $row->class_subject_legacy_snapshot = $row->subjects ?: [];
-                }
-                $row->save();
+                if (! array_key_exists($group->id, $idMap)) continue;
+                GroupStaff::where('user_id', $user->id)->where('group_id', $group->id)->firstOrFail()
+                    ->update($request->subjectAssignmentFields($group));
             }
-        });
+        }));
 
         $fresh = $user->fresh();
 
@@ -1221,7 +1190,7 @@ class TeachersController extends Controller
         return GroupStaff::query()
             ->where('user_id', $user->id)
             ->whereIn('group_id', Group::query()->select('id'))
-            ->get(['group_id', 'subjects', 'class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot']);
+            ->get(['group_id', 'subjects', 'class_subject_ids', 'class_subjects_mapped_at', 'class_subject_ids_edited_at']);
     }
 
     /** The ids of the LIVE classes this teacher leads in the bound school. */
@@ -1291,7 +1260,7 @@ class TeachersController extends Controller
         $subjectsOn = $this->subjectsOn();
         $rows = GroupStaff::query()
             ->where('user_id', $userId)
-            ->get(['group_id', 'subjects', 'class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot'])
+            ->get(['group_id', 'subjects', 'class_subject_ids', 'class_subjects_mapped_at', 'class_subject_ids_edited_at'])
             ->keyBy('group_id');
 
         return [
@@ -1302,8 +1271,13 @@ class TeachersController extends Controller
                 'id' => (int) $g->id,
                 'name' => $g->name,
                 'subjects' => $rows->get((int) $g->id)?->subjects ?: null,
-            ] + ($subjectsOn ? \App\Support\ClassSubjectAssignmentResolution::officeFields($rows->get((int) $g->id)) : []))->values(),
+            ] + ($subjectsOn ? self::subjectIdFields($rows->get((int) $g->id)) : []))->values(),
         ];
+    }
+
+    private static function subjectIdFields(?GroupStaff $row): array
+    {
+        return ['class_subject_ids' => $row === null || ($row->class_subjects_mapped_at === null && $row->class_subject_ids_edited_at === null) ? [] : $row->class_subject_ids];
     }
 
     private function subjectsOn(): bool
@@ -1313,11 +1287,7 @@ class TeachersController extends Controller
 
     private function assignmentMap($rows): array
     {
-        if (! $this->subjectsOn()) return [];
-        $stale = $rows->filter(fn ($r) => \App\Support\ClassSubjectInitializer::needsMapping($r));
-        return ['class_subject_ids' => $rows->reject(fn ($r) => \App\Support\ClassSubjectInitializer::needsMapping($r))
-            ->mapWithKeys(fn ($r) => [(int) $r->group_id => $r->class_subject_ids]),
-            'class_subject_attention' => $stale->mapWithKeys(fn ($r) => [(int) $r->group_id => true])];
+        return ['class_subject_ids' => $rows->mapWithKeys(fn ($r) => [(int) $r->group_id => self::subjectIdFields($r)['class_subject_ids']])];
     }
 
 }

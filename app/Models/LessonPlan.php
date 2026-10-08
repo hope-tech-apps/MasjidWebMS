@@ -32,6 +32,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class LessonPlan extends Model
 {
+    use \App\Models\Concerns\HasClassSubjectWork;
+
     use HasFactory, BelongsToMasjid;
 
     /**
@@ -88,6 +90,7 @@ class LessonPlan extends Model
 
     protected $fillable = [
         'masjid_id',
+        'class_subject_id',
         'group_id',
         'author_user_id',
         'session_date',
@@ -103,6 +106,8 @@ class LessonPlan extends Model
      */
     protected $hidden = [
         'subject_key',
+        'class_subject_id',
+        'class_subject_link_checked_at',
     ];
 
     protected static function booted(): void
@@ -149,6 +154,8 @@ class LessonPlan extends Model
             'learning_outcomes' => 'array',
             'teaching_methods' => 'array',
             'curriculum_week_no' => 'integer',
+            'class_subject_id' => 'integer',
+            'class_subject_link_checked_at' => 'datetime',
         ];
     }
 

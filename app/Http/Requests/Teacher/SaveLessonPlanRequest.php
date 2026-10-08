@@ -56,6 +56,7 @@ class SaveLessonPlanRequest extends BaseFormRequest
         $prose = (int) config('groups.lessons.max_section_length', 2000);
 
         return [
+            ...(\App\Support\ClassSubjectMode::forGroup((int) $this->route('group_id')) ? ['class_subject_id' => ['sometimes', 'nullable', 'integer', 'min:1']] : []),
             'session_date' => [
                 'required',
                 'date_format:Y-m-d',

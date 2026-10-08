@@ -5,67 +5,66 @@ namespace App\Support;
 use App\Models\ClassSubject;
 use App\Models\Group;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
+/** Activation/explicit office attachment only. Names never authorize saved work. */
 final class ClassSubjectSavedWork
 {
-    /** The two saved-work authorities matched by subject key; deleted gradework is retained. */
-    public static function counts(int $masjidId, int $groupId, ?array $keys = null, array $excluded = []): array
+    public const TABLES = ['class_assignments', 'lesson_plans'];
+
+    /** Unlinked rows, including withdrawn gradebook work; never include child prose. */
+    public static function rows(Group $group, bool $unexaminedOnly = false): array
     {
-        $counts = [];
-        // Use gradebook's native WHERE IN comparison, including the database collation.
-        foreach (DB::table('class_assignments')->where('masjid_id', $masjidId)->where('group_id', $groupId)
-            ->whereNotNull('subject_key')->where('subject_key', '<>', '')
-            ->when($keys !== null, fn ($q) => $q->whereIn('subject_key', $keys))
-            ->select('subject_key')->cursor() as $row) {
-            // Detail fences use exact keys. SQL GROUP BY/NOT IN can fold distinct
-            // keys together and wrongly treat another subject's details as already owned.
-            if (in_array($row->subject_key, $excluded, true)) continue;
-            $counts[$row->subject_key] = ($counts[$row->subject_key] ?? 0) + 1;
+        $rows = [];
+        foreach (self::TABLES as $table) {
+            foreach (DB::table($table)->where('masjid_id', $group->masjid_id)->where('group_id', $group->id)
+                ->whereNull('class_subject_id')->when($unexaminedOnly, fn ($q) => $q->whereNull('class_subject_link_checked_at'))
+                ->orderBy('id')->get(['id', 'subject', 'subject_key']) as $row) {
+                // Use stored keys exactly, without SQL collation or historical-name claims.
+                $rows[] = ['table' => $table, 'id' => $row->id, 'key' => $row->subject_key,
+                    'general' => $table === 'lesson_plans' && SubjectKey::clean($row->subject) === null];
+            }
         }
-        // Lesson plans retain an older storage key; their access fence folds the subject itself.
-        foreach (DB::table('lesson_plans')->where('masjid_id', $masjidId)->where('group_id', $groupId)
-            ->select('subject')->cursor() as $row) {
-            $key = SubjectKey::for($row->subject);
-            if ($key === '' || ($keys !== null && ! in_array($key, $keys, true)) || in_array($key, $excluded, true)) continue;
-            $counts[$key] = ($counts[$key] ?? 0) + 1;
-        }
-        ksort($counts);
-        return $counts;
+        return $rows;
     }
 
-    public static function check(ClassSubject $row, bool $attachOrphans = false): array
+    public static function matchingSubject(string $key, $subjects): ?ClassSubject
     {
-        $current = $row->exists ? ClassSubject::whereKey($row->getKey())->firstOrFail() : null;
-        if ($current !== null && ((int) $current->group_id !== (int) $row->group_id || (int) $current->masjid_id !== (int) $row->masjid_id)) {
-            throw ValidationException::withMessages(['name' => ['A class subject cannot be moved to another class or school.']]);
+        $matches = $subjects->filter(fn ($s) => in_array($key, ClassSubjectInitializer::aliases($s->name_key), true));
+        return $matches->count() === 1 ? $matches->first() : null;
+    }
+
+    /** Every examined row is stamped, so an unmatched key is never implicitly tried again. */
+    public static function linkAtActivation(Group $group, $subjects): void
+    {
+        foreach (self::rows($group, true) as $row) {
+            $current = DB::table($row['table'])->where('masjid_id', $group->masjid_id)->where('group_id', $group->id)
+                ->where('id', $row['id'])->lockForUpdate()->first(['subject', 'subject_key', 'class_subject_id', 'class_subject_link_checked_at']);
+            if ($current === null || $current->class_subject_id !== null || $current->class_subject_link_checked_at !== null) continue;
+            $general = $row['table'] === 'lesson_plans' && SubjectKey::clean($current->subject) === null;
+            $subject = $general ? null : self::matchingSubject($current->subject_key, $subjects);
+            DB::table($row['table'])->where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->where('id', $row['id'])
+                ->whereNull('class_subject_id')->whereNull('class_subject_link_checked_at')
+                ->update(['class_subject_id' => $subject?->id, 'class_subject_link_checked_at' => now()]);
         }
-        $before = $current?->matchingKeys() ?? [];
-        $added = array_diff($row->matchingKeys(), $before);
-        if ($added === []) return [];
-        $group = Group::withTrashed()->findOrFail($row->group_id);
-        $orgId = ! $row->exists ? (app(TenantContext::class)->get() ?? $row->masjid_id ?? $group->masjid_id) : ($row->masjid_id ?? $group->masjid_id);
-        if ((int) $orgId !== (int) $group->masjid_id) {
-            throw ValidationException::withMessages(['name' => ['Choose a class in this school.']]);
+    }
+
+    /** Caller holds school/class mutexes. Explicitly attach NULL links, never take another id's work. */
+    public static function attach(ClassSubject $subject): array
+    {
+        $group = Group::withTrashed()->where('masjid_id', $subject->masjid_id)->findOrFail($subject->group_id);
+        $subjects = ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->get();
+        $counts = [];
+        foreach (self::rows($group) as $row) {
+            $current = DB::table($row['table'])->where('masjid_id', $group->masjid_id)->where('group_id', $group->id)
+                ->where('id', $row['id'])->lockForUpdate()->first(['subject', 'subject_key', 'class_subject_id']);
+            if ($current === null || $current->class_subject_id !== null
+                || ($row['table'] === 'lesson_plans' && SubjectKey::clean($current->subject) === null)
+                || self::matchingSubject($current->subject_key, $subjects)?->id !== $subject->id) continue;
+            $count = DB::table($row['table'])->where('masjid_id', $group->masjid_id)->where('group_id', $group->id)
+                ->where('id', $row['id'])->whereNull('class_subject_id')
+                ->update(['class_subject_id' => $subject->id, 'class_subject_link_checked_at' => now()]);
+            $counts[$current->subject_key] = ($counts[$current->subject_key] ?? 0) + $count;
         }
-        $others = ClassSubject::where('masjid_id', $orgId)->where('group_id', $group->id)
-            ->when($row->exists, fn ($q) => $q->where('id', '<>', $row->id))->get();
-        $claimed = $others->flatMap(fn ($s) => $s->matchingKeys())->all();
-        foreach ($added as $key) {
-            if (in_array($key, $claimed, true)) {
-                throw ValidationException::withMessages(['name' => ["Subject key \"{$key}\" already belongs to another subject in this class."]]);
-            }
-        }
-        $attachments = self::counts((int) $orgId, (int) $group->id, array_values($added), $before);
-        foreach (array_keys($attachments) as $key) {
-            if (in_array($key, $claimed, true)) {
-                throw ValidationException::withMessages(['name' => ["Saved work uses subject key \"{$key}\". This subject cannot claim it."]]);
-            }
-        }
-        if ($attachments !== [] && ($row->exists || ! $attachOrphans)) {
-            $key = array_key_first($attachments);
-            throw ValidationException::withMessages(['name' => ["Saved work uses subject key \"{$key}\". This subject cannot claim it."]]);
-        }
-        return $attachments;
+        return $counts;
     }
 }

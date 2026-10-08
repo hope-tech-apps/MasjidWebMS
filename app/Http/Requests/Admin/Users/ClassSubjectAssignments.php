@@ -4,7 +4,6 @@ namespace App\Http\Requests\Admin\Users;
 
 use App\Models\ClassSubject;
 use App\Models\Group;
-use App\Support\ClassSubjectInitializer;
 use App\Support\SchoolSettings;
 use App\Support\TenantContext;
 use Illuminate\Validation\Validator;
@@ -20,7 +19,7 @@ trait ClassSubjectAssignments
     /** Normalize before validation and extraction; never cast an arbitrary key to a class id. */
     protected function prepareClassSubjectAssignments(): void
     {
-        foreach (['class_subjects', 'class_subject_ids', 'class_subject_resolutions'] as $field) {
+        foreach (['class_subject_ids'] as $field) {
             $given = $this->input($field);
             if (! is_array($given)) continue; // The field's array rule refuses other shapes.
             $out = [];
@@ -42,24 +41,13 @@ trait ClassSubjectAssignments
 
     private function subjectsForWithClassSubjects(int $classId): ?array
     {
-        $map = $this->validated('class_subjects');
-        if ($map === null) return null;
-        if (! is_array($map) || ! array_key_exists($classId, $map)) {
-            throw ValidationException::withMessages(['class_subjects' => ['State the subjects for this class explicitly.']]);
-        }
-        $given = $map[$classId];
-        if ($given === null || $given === []) return null;
-        if (! is_array($given) || array_diff($given, \App\Models\GroupStaff::SUBJECTS) !== []) {
-            throw ValidationException::withMessages(['class_subjects' => ['Choose valid subjects for this class.']]);
-        }
-        return array_values(array_unique($given));
+        // The legacy field is not an ON assignment input.
+        return null;
     }
 
     private function classSubjectRules(): array
     {
         return $this->classSubjectsOn() ? [
-            'class_subject_resolutions' => ['sometimes', 'array'],
-            'class_subject_resolutions.*' => [\Illuminate\Validation\Rule::in(['confirm_legacy', 'allow_more'])],
             'class_subject_ids' => ['sometimes', 'array'],
             'class_subject_ids.*' => ['nullable', 'array', 'list'],
             'class_subject_ids.*.*' => ['integer', 'min:1', 'distinct'],
@@ -71,11 +59,6 @@ trait ClassSubjectAssignments
         if (! $this->classSubjectsOn()) return;
         $validator->after(function (Validator $validator): void {
             if ($validator->errors()->isNotEmpty()) return;
-            foreach ($this->input('class_subject_resolutions', []) as $groupId => $resolution) {
-                if (! array_key_exists($groupId, $this->input('class_subject_ids', []))) {
-                    $validator->errors()->add('class_subject_resolutions', 'Explicitly supply the subject list being confirmed.');
-                }
-            }
             foreach ($this->input('class_subject_ids', []) as $groupId => $ids) {
                 $group = Group::where('kind', 'class')->find($groupId);
                 if (! \App\Support\SubjectFence::validStoredIds($ids) || $group === null || ! in_array((int) $groupId, array_map('intval', $this->input('class_ids', [])), true)
@@ -86,17 +69,14 @@ trait ClassSubjectAssignments
         });
     }
 
-    /** New assignments may still come from a legacy client. Map its restriction without widening it. */
+    /** Every new assignment needs the office's own explicit ID selection, including NULL for all. */
     public function subjectAssignmentFields(Group $group): array
     {
-        if (! $this->classSubjectsOn() || ! $group->teachesStudents()) return [];
         $given = $this->validated('class_subject_ids');
-        if ($given !== null && ! array_key_exists($group->id, $given)) {
-            throw ValidationException::withMessages(['class_subject_ids' => ['State the subjects for every new class explicitly.']]);
+        if (! is_array($given) || ! array_key_exists($group->id, $given)) {
+            throw ValidationException::withMessages(['class_subject_ids' => ['State the subjects for every new class explicitly; choose all subjects explicitly when intended.']]);
         }
-        $legacy = $this->subjectsFor((int) $group->id);
-        $ids = $given !== null ? $given[$group->id] : ClassSubjectInitializer::mapLegacy($group, $legacy);
-        return ['class_subject_ids' => $ids === null ? null : array_map('intval', $ids),
-            'class_subjects_mapped_at' => now(), 'class_subject_legacy_snapshot' => $legacy ?: []];
+        $ids = $given[$group->id];
+        return ['class_subject_ids' => $ids === null ? null : array_map('intval', $ids)];
     }
 }

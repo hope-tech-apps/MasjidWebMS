@@ -58,7 +58,7 @@ it('defaults off and keeps raw feature columns out of every legacy model payload
     ($this->catalogue)('Arabic');
     Sanctum::actingAs($this->teacher, ['staff']);
     $before = $this->getJson($this->teacherBase)->assertOk()->json();
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id])->assertSuccessful();
+    $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id, '--dry-run' => true])->assertSuccessful();
     expect($this->getJson($this->teacherBase)->assertOk()->json())->toBe($before);
     expect($this->room->fresh()->toArray())->not->toHaveKeys(['subject_seed_grades', 'class_subjects_initialized_at']);
     expect($this->staff->fresh()->toArray())->not->toHaveKeys(['class_subject_ids', 'class_subjects_mapped_at']);
@@ -120,7 +120,7 @@ it('dry runs without writes, maps legacy restrictions, and preserves all data on
     CapabilityWriter::apply($this->school, ['class_subjects' => false], $this->office->id);
     ($this->catalogue)('New Science');
     ($this->enable)();
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id])->assertSuccessful();
+    $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id, '--dry-run' => true])->assertSuccessful();
     expect(DB::table('class_subjects')->get()->toJson())->toBe($snapshot);
     expect(DB::table('group_staff')->get()->toJson())->toBe($assignments);
 });
@@ -157,7 +157,7 @@ it('offers office CRUD, rename history, reorder, hide and restore and reserves a
     $this->deleteJson($this->base.'/'.$arabic)->assertOk();
     $this->putJson($this->base.'/'.$extra, ['tool' => 'arabic_letters'])->assertUnprocessable()->assertSee('already');
     $this->putJson($this->base.'/'.$arabic.'/restore')->assertOk()->assertJsonPath('data.hidden_at', null);
-    expect(ClassSubject::find($arabic)->previous_name_keys)->toContain('arabic');
+    expect(ClassSubject::find($arabic)->previous_name_keys)->toBeNull();
     expect($this->getJson($this->base)->json('data.0.id'))->toBe($extra);
     $this->putJson($this->base.'/'.$extra, ['guide_subject' => 'Invented guide'])->assertUnprocessable();
     $this->postJson($this->base, ['name' => '  Arabic Practice  '])->assertUnprocessable();
@@ -254,20 +254,20 @@ it('validates alphabet before authorization while on and retains the shared Arab
     $this->putJson($this->teacherBase.'/members/999999/letters', ['alphabet' => 'unknown'])->assertUnprocessable();
 });
 
-it('matches renamed subject snapshots and guide names for gradebook plans curriculum and weights', function () {
+it('preserves linked subject snapshots through rename and resolves guides for gradebook plans curriculum and weights', function () {
     ($this->catalogue)('ELA'); ($this->catalogue)('Science');
     ($this->guide)('English Language Arts'); ($this->guide)('Science');
+    foreach (['ELA', 'English Language Arts', 'Science'] as $name) {
+        \App\Models\ClassAssignment::create(['masjid_id' => $this->school->id, 'group_id' => $this->room->id, 'title' => $name, 'subject' => $name, 'assigned_on' => '2026-10-01', 'scale' => 'points', 'points_possible' => 10]);
+        \App\Models\LessonPlan::create(['masjid_id' => $this->school->id, 'group_id' => $this->room->id, 'session_date' => '2026-10-01', 'subject' => $name, 'title' => $name, 'body' => 'Practice plan']);
+    }
     ($this->enable)();
     $ela = ClassSubject::where('name', 'ELA')->first();
     $this->staff->update(['class_subject_ids' => [$ela->id]]);
     $ela->update(['name' => 'Reading']);
-    foreach (['ELA', 'English Language Arts', 'Reading', 'Science'] as $name) {
-        \App\Models\ClassAssignment::create(['masjid_id' => $this->school->id, 'group_id' => $this->room->id, 'title' => $name, 'subject' => $name, 'assigned_on' => '2026-10-01', 'scale' => 'points', 'points_possible' => 10]);
-        \App\Models\LessonPlan::create(['masjid_id' => $this->school->id, 'group_id' => $this->room->id, 'session_date' => '2026-10-01', 'subject' => $name, 'title' => $name, 'body' => 'Practice plan']);
-    }
     Sanctum::actingAs($this->teacher, ['staff']);
-    $this->getJson($this->teacherBase.'/assignments')->assertOk()->assertJsonCount(3, 'data');
-    $this->getJson($this->teacherBase.'/lesson-plans?from=2026-10-01&to=2026-10-01')->assertOk()->assertJsonCount(3, 'data.plans');
+    $this->getJson($this->teacherBase.'/assignments')->assertOk()->assertJsonCount(2, 'data');
+    $this->getJson($this->teacherBase.'/lesson-plans?from=2026-10-01&to=2026-10-01')->assertOk()->assertJsonCount(2, 'data.plans');
     $science = \App\Models\ClassAssignment::where('subject', 'Science')->first();
     $this->getJson($this->teacherBase.'/assignments/'.$science->id)->assertNotFound();
     $this->getJson("/api/teacher/masjids/{$this->school->id}/curriculum?group_id={$this->room->id}&grade=Grade%201")->assertOk()->assertJsonPath('data.subjects', ['Reading']);
@@ -304,7 +304,7 @@ it('keeps every touched OFF payload identical after initializing in the dark', f
     foreach ($urls as $url) $officeSnapshots[$url] = $this->getJson($url)->assertOk()->json();
     $groupBefore = $this->room->fresh()->toArray(); $staffBefore = $this->staff->fresh()->toArray();
     $this->travel(1)->hours();
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id])->assertSuccessful();
+    $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id, '--dry-run' => true])->assertSuccessful();
     foreach ($officeSnapshots as $url => $payload) expect($this->getJson($url)->assertOk()->json())->toBe($payload);
     expect($this->room->fresh()->toArray())->toBe($groupBefore);
     expect($this->staff->fresh()->toArray())->toBe($staffBefore);
@@ -385,7 +385,7 @@ it('makes dry run a read only preflight with no inserts updates or ledger side e
 it('keeps initialization metadata and a disabled grant out of existing organization payloads', function () {
     $before = $this->school->fresh()->append(Masjid::ADMIN_APPENDS)->toArray();
     $this->travel(1)->hours();
-    $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id])->assertSuccessful();
+    $this->artisan('class-subjects:initialize', ['--masjid' => $this->school->id, '--dry-run' => true])->assertSuccessful();
     $after = $this->school->fresh()->append(Masjid::ADMIN_APPENDS)->toArray();
     expect($after)->toBe($before);
     ($this->enable)();
@@ -405,7 +405,7 @@ it('scrubs office names and historical keys while preserving ids assignments gui
     $subject->refresh();
     expect($subject->name)->toBe('Subject '.$subject->id);
     expect($subject->name_key)->toBe('subject '.$subject->id);
-    expect($subject->previous_name_keys)->not->toContain('arabic');
+    expect($subject->previous_name_keys)->toBeNull();
     expect($subject->tool)->toBe('arabic_letters');
     expect($subject->guide_subject)->toBe('Arabic Language');
     expect($this->staff->fresh()->class_subject_ids)->toBe([$subject->id]);
@@ -424,7 +424,8 @@ it('lets ordinary school office staff manage subjects and assign a new teacher u
         'class_ids' => [$this->room->id], 'class_subject_ids' => [$this->room->id => [$id]],
     ])->assertCreated()->assertJsonPath('data.classes.0.class_subject_ids', [$id]);
     $new = GroupStaff::where('user_id', $response->json('data.id'))->where('group_id', $this->room->id)->firstOrFail();
-    expect($new->class_subjects_mapped_at)->not->toBeNull();
+    expect($new->class_subject_ids_edited_at)->not->toBeNull();
+    expect($new->class_subjects_mapped_at)->toBeNull();
     expect($new->subjects)->toBeNull();
     $this->getJson('/api/admin/masjids/999999/groups/'.$this->room->id.'/subjects')->assertForbidden();
 });

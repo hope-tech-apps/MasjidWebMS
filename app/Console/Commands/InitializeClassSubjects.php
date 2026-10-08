@@ -29,7 +29,7 @@ class InitializeClassSubjects extends Command
             try {
                 $report = ClassSubjectInitializer::run($org, (bool) $this->option('dry-run'), (bool) $this->option('enable'));
                 $blockedReport = collect($report)->contains(fn ($row) => $row['blocked'] !== []);
-                $this->line(($this->option('dry-run') ? 'DRY RUN' : ($blockedReport ? 'BLOCKED' : 'INITIALIZED')).": {$org->name}");
+                $this->line(($this->option('dry-run') ? 'DRY RUN' : ($blockedReport ? 'BLOCKED' : 'ACTIVATED')).": {$org->name}");
                 $blocked = 0; $creates = 0; $maps = 0; $losses = 0;
                 foreach ($report as $row) {
                     $this->line("Class {$row['class']}: {$row['subjects_added']} subjects added; {$row['assignments_mapped']} assignments mapped.");
@@ -37,6 +37,7 @@ class InitializeClassSubjects extends Command
                         $this->line("  CREATE {$subject['name']} | holds=".($subject['tool'] ?? 'none')." | guide=".($subject['guide_subject'] ?? 'none'));
                         foreach ($subject['attaches_saved_work'] ?? [] as $key => $count) $this->line("    ATTACH saved work: {$key}, {$count} items");
                     }
+                    foreach ($row['saved_work_links'] ?? [] as $name => $count) $this->line("  LINK {$name}: {$count} items");
                     foreach ($row['orphaned_work'] ?? [] as $key => $count) {
                         $this->line("  saved work under a subject that is not in this class's list: {$key}, {$count} items");
                         $this->line("    Adding this subject with explicit attach_saved_work confirmation will attach these items.");
@@ -50,7 +51,7 @@ class InitializeClassSubjects extends Command
                     $blocked += count($row['blocked']); $creates += $row['subjects_added'];
                     $maps += $row['assignments_mapped']; $losses += count($row['losses']);
                 }
-                $this->line("School summary: ".count($report)." live classes; {$creates} subjects; {$maps} mappings; {$losses} losses; {$blocked} blocked mappings.");
+                $this->line("School summary: ".count($report)." classes (including archived); {$creates} subjects; {$maps} mappings; {$losses} losses; {$blocked} blocked mappings.");
                 if ($blocked > 0) {
                     $failed = true;
                     $this->error('No changes saved for this organization.');
