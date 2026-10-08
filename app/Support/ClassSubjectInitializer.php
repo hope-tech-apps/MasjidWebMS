@@ -35,12 +35,57 @@ final class ClassSubjectInitializer
         };
     }
 
+    /** Compare the legacy source with the baseline, including writes that bypass model events. */
+    public static function needsMapping(GroupStaff $staff): bool
+    {
+        return $staff->class_subjects_mapped_at === null || $staff->class_subject_legacy_snapshot === null
+            || ! self::sameLegacy($staff->subjects, $staff->class_subject_legacy_snapshot);
+    }
+
+    public static function sameLegacy(mixed $before, mixed $after): bool
+    {
+        return self::legacyValue($before) === self::legacyValue($after);
+    }
+
+    private static function legacyValue(mixed $value): mixed
+    {
+        if ($value === null || $value === []) return null;
+        if (! is_array($value)) return $value;
+        $value = array_values(array_unique($value));
+        sort($value);
+        return $value;
+    }
+
+    private static function baselineConflict(GroupStaff $staff, ?array $proposed): bool
+    {
+        if ($staff->class_subjects_mapped_at === null || $staff->class_subject_legacy_snapshot !== null) return false;
+        $stored = $staff->class_subject_ids;
+        if (! SubjectFence::validStoredIds($stored)) return true;
+        if ($stored === null || $proposed === null) return $stored !== $proposed;
+        $stored = array_map('intval', $stored);
+        sort($stored); sort($proposed);
+        return $stored !== $proposed;
+    }
+
+    private static function baselineMessage(Group $group): string
+    {
+        return "Class {$group->name}: this assignment predates legacy tracking and its stored subjects differ from the legacy subjects. Confirm the intended class subject assignment before activation; no restriction was changed.";
+    }
+
     public static function ready(Masjid $org): bool
     {
         if (empty(($org->capability_overrides ?? [])[self::MARKER])) return false;
-        $ids = Group::withoutMasjidScope()->withTrashed()->where('masjid_id', $org->id)->where('kind', Group::KIND_CLASS)->pluck('id');
-        return ! Group::withoutMasjidScope()->withTrashed()->whereIn('id', $ids)->whereNull('class_subjects_initialized_at')->exists()
-            && ! GroupStaff::withoutMasjidScope()->where('masjid_id', $org->id)->whereIn('group_id', $ids)->whereNull('class_subjects_mapped_at')->exists();
+        $groups = Group::withoutMasjidScope()->where('masjid_id', $org->id)->where('kind', Group::KIND_CLASS)->get();
+        foreach ($groups as $group) {
+            if ($group->class_subjects_initialized_at === null) return false;
+            $validIds = ClassSubject::withoutMasjidScope()->where('masjid_id', $org->id)->where('group_id', $group->id)->pluck('id')->all();
+            foreach (GroupStaff::withoutMasjidScope()->where('masjid_id', $org->id)->where('group_id', $group->id)->get() as $staff) {
+                if (self::needsMapping($staff)) return false;
+                $ids = $staff->class_subject_ids;
+                if (! SubjectFence::validStoredIds($ids) || ($ids !== null && array_diff($ids, $validIds) !== [])) return false;
+            }
+        }
+        return true;
     }
 
     public static function assertReady(Masjid $org): void
@@ -58,17 +103,20 @@ final class ClassSubjectInitializer
             try {
                 // First statement: PK mutex before any consistent read under InnoDB.
                 $locked = Masjid::whereKey($org->id)->lockForUpdate()->firstOrFail();
-                $report = [];
-                foreach (Group::withTrashed()->where('masjid_id', $org->id)->where('kind', Group::KIND_CLASS)->orderBy('id')->get() as $group) {
-                    $report[] = $dryRun ? self::previewGroup($group) : self::initializeGroup($group);
-                }
-                if ($dryRun) {
+                $groups = Group::where('masjid_id', $org->id)->where('kind', Group::KIND_CLASS)->orderBy('id')->get();
+                // Preflight every class and every restriction before writing anything.
+                $report = $groups->map(fn ($group) => self::previewGroup($group))->all();
+                $blocked = collect($report)->contains(fn ($row) => $row['blocked'] !== []);
+                if ($dryRun || $blocked) {
                     DB::rollBack();
                     return $report;
                 }
+                foreach ($groups as $i => $group) {
+                    $report[$i] = array_replace($report[$i], self::initializeGroup($group));
+                }
                 $overrides = $locked->capability_overrides ?? [];
                 if (empty($overrides[self::MARKER])) {
-                    $overrides[self::MARKER] = now()->toISOString();
+                    $overrides[self::MARKER] = ['at' => now()->toISOString(), 'overrides_were_null' => $locked->capability_overrides === null];
                     // Private initialization must not change an existing OFF payload's timestamp.
                     Masjid::withoutTimestamps(fn () => $locked->forceFill(['capability_overrides' => $overrides])->save());
                 }
@@ -86,13 +134,71 @@ final class ClassSubjectInitializer
     {
         $fields = $group->class_subjects_initialized_at === null ? self::startingList($group) : null;
         $subjects = $fields === null
-            ? ClassSubject::where('group_id', $group->id)->get()
+            ? ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->get()
             : collect($fields)->map(fn ($row, $position) => (new ClassSubject($row))->forceFill([
                 'id' => $position + 1, 'name_key' => SubjectKey::for($row['name']),
             ]));
-        $staff = GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->whereNull('class_subjects_mapped_at')->get();
-        foreach ($staff as $row) self::mapLegacy($group, $row->subjects, $subjects);
-        return ['class' => $group->name, 'subjects_added' => $fields === null ? 0 : count($fields), 'assignments_mapped' => $staff->count()];
+        $report = ['class' => $group->name, 'class_id' => $group->id, 'subjects_added' => count($fields ?? []),
+            'assignments_mapped' => 0, 'creates' => $fields ?? [], 'assignments' => [], 'losses' => [], 'blocked' => []];
+        foreach (GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->orderBy('user_id')->get() as $staff) {
+            $mapping = self::needsMapping($staff);
+            if ($mapping) $report['assignments_mapped']++;
+            $ids = $mapping ? null : $staff->class_subject_ids;
+            if (! $mapping && (! SubjectFence::validStoredIds($ids) || ($ids !== null && array_diff($ids, $subjects->pluck('id')->all()) !== []))) {
+                $report['blocked'][] = "Teacher #{$staff->user_id}: Class {$group->name}: assigned subjects do not belong to this class. Correct the assignment before activation.";
+                $ids = [];
+            }
+            $partial = [];
+            if ($mapping && $staff->subjects !== null && $staff->subjects !== []) {
+                foreach ($staff->subjects as $legacy) {
+                    try {
+                        $partial = [...$partial, ...self::mapLegacy($group, [$legacy], $subjects)];
+                    } catch (ValidationException $e) {
+                        foreach ($e->errors() as $messages) foreach ($messages as $message) {
+                            $report['blocked'][] = "Teacher #{$staff->user_id}: {$message}";
+                        }
+                    }
+                }
+                $ids = array_values(array_unique($partial));
+            }
+            $selected = $ids === null ? $subjects : $subjects->whereIn('id', $ids);
+            if (self::baselineConflict($staff, $ids)) {
+                $stored = $staff->class_subject_ids;
+                $existing = $stored === null ? $subjects : $subjects->whereIn('id', is_array($stored) ? $stored : []);
+                $report['blocked'][] = "Teacher #{$staff->user_id}: ".self::baselineMessage($group)
+                    .' Existing assignment: ['.$existing->pluck('name')->implode(', ').']; proposed: ['.$selected->pluck('name')->implode(', ').'].';
+            }
+            $report['assignments'][] = ['teacher_id' => $staff->user_id, 'legacy' => $staff->subjects,
+                'names' => $selected->pluck('name')->all(), 'will_map' => $mapping];
+            $legacy = $staff->subjects ?: null;
+            $oldAllows = fn ($subject) => $legacy === null || $legacy === [] || in_array($subject, $legacy, true);
+            foreach (['hifdh' => ['quran', 'Hifdh'], 'arabic_letters' => ['arabic', 'Arabic letters and daily notes'],
+                'english_letters' => ['arabic', 'English letters']] as $tool => [$oldSubject, $label]) {
+                if ($oldAllows($oldSubject) && ! $selected->contains('tool', $tool)) {
+                    $report['losses'][] = "LOSS Teacher #{$staff->user_id}: {$label}";
+                }
+            }
+            if ($ids !== null) {
+                $keys = $selected->flatMap(fn ($s) => $s->matchingKeys())->unique()->all();
+                foreach (['Gradebook' => $group->assignments(), 'Lesson plans' => $group->lessonPlans()] as $label => $work) {
+                    foreach ($work->select('subject')->distinct()->pluck('subject') as $name) {
+                        if ($label === 'Lesson plans' && SubjectKey::clean($name) === null) continue;
+                        if (SubjectFence::allows($legacy, SubjectKey::for($name)) && ! in_array(SubjectKey::for($name), $keys, true)) {
+                            $report['losses'][] = "LOSS Teacher #{$staff->user_id}: {$label} ({$name})";
+                        }
+                    }
+                }
+                if ($legacy === null || $legacy === []) $report['losses'][] = "LOSS Teacher #{$staff->user_id}: class-wide grade weights";
+                $guideKeys = $selected->flatMap(fn ($s) => $s->curriculumKeys())->unique()->all();
+                foreach (CurriculumWeek::where('masjid_id', $group->masjid_id)->distinct()->pluck('subject') as $name) {
+                    if (($legacy === null || $legacy === [] || SubjectFence::allows($legacy, SubjectKey::for($name)) || SubjectKey::staffKeys(SubjectKey::for($name)) === [])
+                        && ! in_array(SubjectKey::for($name), $guideKeys, true)) {
+                        $report['losses'][] = "LOSS Teacher #{$staff->user_id}: pacing guide ({$name})";
+                    }
+                }
+            }
+        }
+        return $report;
     }
 
     private static function enable(Masjid $org): void
@@ -115,8 +221,19 @@ final class ClassSubjectInitializer
             Group::withoutTimestamps(fn () => $group->forceFill(['class_subjects_initialized_at' => now()])->save());
         }
         $mapped = 0;
-        foreach (GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->whereNull('class_subjects_mapped_at')->get() as $staff) {
-            GroupStaff::withoutTimestamps(fn () => $staff->forceFill(['class_subject_ids' => self::mapLegacy($group, $staff->subjects), 'class_subjects_mapped_at' => now()])->save());
+        // A restore may run inside an older transaction: locking reads bypass its stale read view.
+        foreach (GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->lockForUpdate()->get() as $staff) {
+            if (! self::needsMapping($staff)) continue;
+            $ids = self::mapLegacy($group, $staff->subjects);
+            if (self::baselineConflict($staff, $ids)) {
+                throw ValidationException::withMessages(['class_subjects' => ["Teacher #{$staff->user_id}: ".self::baselineMessage($group)]]);
+            }
+            $fields = ['class_subject_legacy_snapshot' => $staff->subjects ?: []];
+            // An older, coherent mapping needs only a baseline; preserve its IDs and stamp.
+            if ($staff->class_subjects_mapped_at === null || $staff->class_subject_legacy_snapshot !== null) {
+                $fields += ['class_subject_ids' => $ids, 'class_subjects_mapped_at' => now()];
+            }
+            GroupStaff::withoutTimestamps(fn () => $staff->forceFill($fields)->save());
             $mapped++;
         }
         return ['class' => $group->name, 'subjects_added' => $seeded, 'assignments_mapped' => $mapped];
@@ -125,7 +242,7 @@ final class ClassSubjectInitializer
     public static function mapLegacy(Group $group, ?array $legacy, ?\Illuminate\Support\Collection $candidates = null): ?array
     {
         if ($legacy === null || $legacy === []) return null;
-        $subjects = $candidates ?? ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->get();
+        $subjects = $candidates ?? ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->lockForUpdate()->get();
         $ids = [];
         foreach ($legacy as $name) {
             $match = match ($name) {
@@ -142,10 +259,10 @@ final class ClassSubjectInitializer
         return array_values(array_unique($ids));
     }
 
-    public static function startingList(Group $group): array
+    public static function startingList(Group $group, bool $currentGradesOnly = false): array
     {
         $grades = $group->memberships()->participants()->current()->pluck('grade_label')->all();
-        if ($grades === []) $grades = $group->subject_seed_grades ?? [];
+        if ($grades === [] && ! $currentGradesOnly) $grades = $group->subject_seed_grades ?? [];
         $keys = array_map(fn ($g) => GradeLevel::key($g), $grades);
         $all = $keys === [] || in_array(null, $keys, true);
         $applies = fn ($g) => $all || in_array(GradeLevel::key($g), $keys, true);

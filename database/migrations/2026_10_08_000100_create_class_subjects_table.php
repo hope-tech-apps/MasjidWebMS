@@ -30,9 +30,7 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (DB::table('class_subjects')->exists()) {
-            throw new RuntimeException('Refusing to drop populated class subjects. Switch the capability off to roll back.');
-        }
+        \App\Support\ClassSubjectRollback::assertEmpty();
         Schema::dropIfExists('class_subjects');
     }
 };

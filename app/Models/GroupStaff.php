@@ -106,6 +106,7 @@ class GroupStaff extends Pivot
         'subjects',
         'class_subject_ids',
         'class_subjects_mapped_at',
+        'class_subject_legacy_snapshot',
         'assigned_at',
     ];
 
@@ -116,7 +117,7 @@ class GroupStaff extends Pivot
      * not a users.id), keeps NULL rather than a guess or a foreign id. Set here, not
      * at call sites, because attach() drops it there.
      */
-    protected $hidden = ['class_subject_ids', 'class_subjects_mapped_at'];
+    protected $hidden = ['class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot'];
 
     protected static function booted(): void
     {
@@ -127,9 +128,17 @@ class GroupStaff extends Pivot
                     $row->class_subject_ids = \App\Support\ClassSubjectInitializer::mapLegacy($group, $row->subjects);
                     $row->class_subjects_mapped_at = now();
                 }
+                $row->class_subject_legacy_snapshot = $row->subjects ?: [];
             }
             $actor = Auth::user();
             $row->assigned_by_user_id = $actor instanceof User ? $actor->getKey() : null;
+        });
+        static::saving(function (self $row): void {
+            if ($row->exists && $row->isDirty('subjects')
+                && ! \App\Support\ClassSubjectInitializer::sameLegacy($row->getOriginal('subjects'), $row->subjects)
+                && ! \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org($row->masjid_id))) {
+                $row->class_subjects_mapped_at = null;
+            }
         });
     }
 
@@ -140,6 +149,7 @@ class GroupStaff extends Pivot
             'subjects' => 'array',
             'class_subject_ids' => 'array',
             'class_subjects_mapped_at' => 'datetime',
+            'class_subject_legacy_snapshot' => 'array',
         ];
     }
 }

@@ -17,22 +17,9 @@ class TeacherUpdateRequest extends BaseFormRequest
 {
     use ClassSubjectAssignments;
 
-    /**
-     * The subjects for one class, as the assignment should store them: a unique,
-     * ordered list, or NULL for "everything". Empty means everything too, so an
-     * admin who unticks every box cannot lock a teacher out of their own class.
-     *
-     * @return list<string>|null
-     */
-    public function subjectsFor(int $classId): ?array
+    protected function prepareForValidation(): void
     {
-        $given = $this->validated('class_subjects')[$classId] ?? ($this->validated('class_subjects')[(string) $classId] ?? null);
-
-        if (! is_array($given) || $given === []) {
-            return null;
-        }
-
-        return array_values(array_intersect(\App\Models\GroupStaff::SUBJECTS, $given));
+        $this->prepareClassSubjectAssignments();
     }
 
     public function rules(): array

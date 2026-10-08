@@ -18,13 +18,14 @@ it('declares the subject primary key, column types and short named unique indexe
     foreach (['cs_group_name_uq', 'cs_group_tool_uq'] as $name) expect($indexes[$name]['unique'])->toBeTrue();
     expect($indexes['cs_group_position_idx']['columns'])->toBe(['group_id', 'position']);
     foreach (array_keys($indexes->all()) as $name) expect(strlen($name))->toBeLessThanOrEqual(64);
-    foreach (['groups' => 'subject_seed_grades', 'group_staff' => 'class_subject_ids'] as $table => $column) {
+    foreach (['groups' => ['subject_seed_grades'], 'group_staff' => ['class_subject_ids', 'class_subject_legacy_snapshot']] as $table => $names) {
+        foreach ($names as $column)
         expect(Schema::getColumnType($table, $column))->toBeIn(['text', 'json']);
     }
 });
 
-it('rolls three empty additive migrations down and up on SQLite', function () {
-    $files = glob(database_path('migrations/2026_10_08_000*'));
+it('rolls four empty additive migrations down and up on SQLite', function () {
+    $files = glob(database_path('migrations/2026_10_08_000[1234]00_*'));
     foreach (array_reverse($files) as $file) (require $file)->down();
     expect(Schema::hasTable('class_subjects'))->toBeFalse();
     expect(Schema::hasColumn('groups', 'subject_seed_grades'))->toBeFalse();
@@ -48,4 +49,5 @@ it('refuses every down with populated feature data', function (string $migration
     ['2026_10_08_000100_create_class_subjects_table', 'class_subjects', []],
     ['2026_10_08_000200_add_class_subject_initialization_to_groups', 'groups', ['subject_seed_grades' => '["1st"]']],
     ['2026_10_08_000300_add_class_subject_assignments_to_group_staff', 'group_staff', ['class_subject_ids' => '[1]']],
+    ['2026_10_08_000400_add_class_subject_legacy_snapshot_to_group_staff', 'group_staff', ['class_subject_legacy_snapshot' => '["arabic"]']],
 ]);

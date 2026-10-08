@@ -673,11 +673,11 @@ class TeacherAttachTest extends TestCase
         // `masjid_user_default_unique` would turn the second into a 500.
         $source = file_get_contents(app_path('Http/Controllers/AdminDashboard/TeachersController.php'));
 
-        $this->assertSame(2, substr_count($source, 'lockForUpdate()'), 'the lookup in store() and the lock in destroy() must both hold the user row');
+        $this->assertSame(2, preg_match_all('/User::withTrashed\(\)->whereKey\([^)]*\)->lockForUpdate\(\)/', $source), 'store() and destroy() must both hold the user row, independently of the school mutex');
         $this->assertLessThan(
             strpos($source, "'is_default' => ! MasjidUser::where('user_id', \$user->id)"),
-            strpos($source, '->lockForUpdate()'),
-            'the lock must be taken before is_default is derived'
+            strpos($source, 'User::withTrashed()->whereKey($foundId)->lockForUpdate()'),
+            'the user lock must be taken before is_default is derived'
         );
     }
 

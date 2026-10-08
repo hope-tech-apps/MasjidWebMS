@@ -151,7 +151,9 @@ class CapabilitiesEndpointTest extends TestCase
 
         $keys = collect($data['groups'])->flatMap(fn (array $group) => array_column($group['entries'], 'key'))->all();
         $this->assertSame(count($keys), count(array_unique($keys)), 'an entry appears twice');
-        $this->assertEqualsCanonicalizing(array_keys(config('capabilities')), $keys);
+        $expected = array_keys(array_filter(config('capabilities'), fn ($def) => $def['catalogue_when_off'] ?? true));
+        $this->assertEqualsCanonicalizing($expected, $keys);
+        $this->assertNotContains('class_subjects', $keys);
 
         $entries = $this->entries($data);
 

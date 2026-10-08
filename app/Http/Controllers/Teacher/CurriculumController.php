@@ -60,6 +60,7 @@ class CurriculumController extends TeacherController
         // teacher is never handed Arabic or Islamic Studies rows by asking for them.
         $limits = $this->limits($request);
         $subjectsOn = SchoolSettings::classSubjects(SchoolSettings::org($masjid_id));
+        if ($subjectsOn) $subject = $this->guideSubject($request, is_string($subject) ? $subject : null);
         $fenced = fn (?string $name): bool => SubjectFence::allows($limits, SubjectKey::for($name));
 
         $grades = CurriculumWeek::query()
@@ -158,21 +159,34 @@ class CurriculumController extends TeacherController
      *
      * @return list<string>|null
      */
+    private function guideSubject(Request $request, ?string $name): ?string
+    {
+        if (SubjectKey::clean($name) === null || ! $request->filled('group_id')) return $name;
+        $group = \App\Models\Group::findOrFail((int) $request->query('group_id'));
+        abort_unless($group->teachesStudents() && app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
+        $ids = SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id);
+        $subjects = \App\Models\ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->whereNull('hidden_at')
+            ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))->get();
+        $subject = $subjects->first(fn ($s) => in_array(SubjectKey::for($name), $s->matchingKeys(), true));
+        return $subject ? $subject->guide_subject : $name;
+    }
+
     private function limits(Request $request): ?array
     {
         if (SchoolSettings::classSubjects(SchoolSettings::org($request->route('masjid_id')))) {
             if ($request->filled('group_id')) {
                 $group = \App\Models\Group::findOrFail((int) $request->query('group_id'));
-                abort_unless(app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
-                return SubjectFence::limitsFor($request->user(), (int) $group->id);
+                abort_unless($group->teachesStudents() && app(\App\Support\GroupAudience::class)->isLeaderOf($request->user(), $group), 404);
+                return SubjectFence::limitsForIds(SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id), $group, true);
             }
-            $ids = [];
-            foreach (\App\Models\Group::whereIn('id', app(\App\Support\GroupAudience::class)->leaderGroupIdsFor($request->user()))->get() as $group) {
-                $limits = SubjectFence::limitsFor($request->user(), (int) $group->id);
+            $ids = []; $keys = [];
+            foreach (\App\Models\Group::where('kind', 'class')->whereIn('id', app(\App\Support\GroupAudience::class)->leaderGroupIdsFor($request->user()))->get() as $group) {
+                $limits = SubjectFence::limitsForIds(SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id), $group, true);
                 if ($limits === null) return null;
-                $ids = [...$ids, ...($limits['class_subject_ids'] ?? [])];
+                $ids = [...$ids, ...$limits['class_subject_ids']];
+                $keys = [...$keys, ...$limits['keys']];
             }
-            return SubjectFence::limitsForIds($ids === [] ? [0] : array_values(array_unique($ids)));
+            return ['class_subject_ids' => array_values(array_unique($ids)), 'keys' => array_values(array_unique($keys))];
         }
         return $request->filled('group_id')
             ? SubjectFence::limitsFor($request->user(), (int) $request->query('group_id'))
@@ -240,7 +254,7 @@ class CurriculumController extends TeacherController
     {
         $group = $request->filled('group_id') ? \App\Models\Group::find((int) $request->query('group_id')) : null;
         if ($group?->teachesStudents() && SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) {
-            return collect(\App\Support\ClassSubjects::fenced(\App\Support\ClassSubjects::offered($group), $this->limits($request)))
+            return collect(\App\Support\ClassSubjects::fenced(\App\Support\ClassSubjects::offered($group), SubjectFence::limitsFor($request->user(), (int) $group->id)))
                 ->pluck('name')->values();
         }
 
@@ -299,6 +313,7 @@ class CurriculumController extends TeacherController
         $q = trim((string) ($valid['q'] ?? ''));
         $grade = (string) ($valid['grade'] ?? '');
         $subject = (string) ($valid['subject'] ?? '');
+        if (SchoolSettings::classSubjects(SchoolSettings::org($masjid_id))) $subject = (string) $this->guideSubject($request, $subject);
         $week = (int) ($valid['week'] ?? 0);
 
         $needle = self::squash($q);

@@ -501,9 +501,11 @@ class Masjid extends Model implements HasMedia
     {
         $out = parent::attributesToArray();
         if (isset($out['capability_overrides']) && is_array($out['capability_overrides'])) {
+            $marker = $out['capability_overrides'][\App\Support\ClassSubjectInitializer::MARKER] ?? null;
+            $removed = $marker !== null || array_key_exists('class_subjects', $out['capability_overrides']);
             unset($out['capability_overrides'][\App\Support\ClassSubjectInitializer::MARKER]);
             if (! \App\Support\SchoolSettings::classSubjects($this)) unset($out['capability_overrides']['class_subjects']);
-            if ($out['capability_overrides'] === []) $out['capability_overrides'] = null;
+            if ($out['capability_overrides'] === [] && $removed && (! is_array($marker) || ($marker['overrides_were_null'] ?? true))) $out['capability_overrides'] = null;
         }
         return $out;
     }

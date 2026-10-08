@@ -134,7 +134,7 @@ class GroupsController extends Controller
                         [...array_intersect(GroupStaff::SUBJECTS, $subjects), ...array_diff($subjects, GroupStaff::SUBJECTS)]
                     ),
                 ] + ($subjectsOn
-                    ? ['class_subject_ids' => $row->class_subject_ids ?: null] : []);
+                    ? ['class_subject_ids' => $row->class_subject_ids ?? null] : []);
             })->values()->all())
             ->all();
     }
@@ -154,6 +154,8 @@ class GroupsController extends Controller
                 'data' => $group,
                 'meta' => $this->meta(),
             ], Response::HTTP_CREATED);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'failed',
@@ -208,6 +210,8 @@ class GroupsController extends Controller
                 'data' => $group,
                 'meta' => $this->meta(),
             ], Response::HTTP_OK);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'failed',

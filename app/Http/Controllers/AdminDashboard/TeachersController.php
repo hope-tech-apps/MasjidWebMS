@@ -98,7 +98,7 @@ class TeachersController extends Controller
                     $g = $groups->get($r->group_id);
 
                     // null = every subject; see GroupStaff::SUBJECTS.
-                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null] + ($subjectsOn ? ['class_subject_ids' => $r->class_subject_ids ?: null] : []);
+                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null] + ($subjectsOn ? ['class_subject_ids' => $r->class_subject_ids ?? null] : []);
                 })
                 ->filter()
                 ->values();
@@ -254,6 +254,8 @@ class TeachersController extends Controller
         }
 
         return DB::transaction(function () use ($request, $masjidId, $classes, $email, $foundId) {
+            // Serialize assignment writes with activation before taking a consistent read.
+            Masjid::whereKey($masjidId)->lockForUpdate()->firstOrFail();
             // The ONE row found, locked by key (nothing to lock for a new address).
             $existing = $foundId === null
                 ? null
@@ -492,6 +494,7 @@ class TeachersController extends Controller
         }
 
         DB::transaction(function () use ($request, $user, $classIds, $classes, $shared) {
+            Masjid::whereKey($this->tenant->get())->lockForUpdate()->firstOrFail();
             if (! $shared) {
                 $user->update([
                     'name' => $request->validated('name'),
@@ -529,32 +532,24 @@ class TeachersController extends Controller
             // subjects changed — only when the request speaks about it, so a
             // client that never sends `class_subjects` leaves every existing
             // assignment exactly as it was.
-            if ($request->has('class_subject_ids')) {
-                foreach ($classes->whereIn('id', array_intersect($classIds, $current)) as $group) {
-                    if (! array_key_exists($group->id, $request->validated('class_subject_ids'))) continue;
-                    $row = GroupStaff::where('user_id', $user->id)->where('group_id', $group->id)->firstOrFail();
-                    $row->forceFill($request->subjectAssignmentFields($group))->save();
+            foreach ($classes->whereIn('id', array_intersect($classIds, $current)) as $group) {
+                $legacyMap = $request->validated('class_subjects');
+                $idMap = $request->validated('class_subject_ids');
+                $legacySent = is_array($legacyMap) && array_key_exists($group->id, $legacyMap);
+                $idsSent = is_array($idMap) && array_key_exists($group->id, $idMap);
+                if (! $legacySent && ! $idsSent) continue;
+                $row = GroupStaff::where('user_id', $user->id)->where('group_id', $group->id)->firstOrFail();
+                if ($legacySent) $row->subjects = $request->subjectsFor((int) $group->id);
+                $legacyChanged = ! \App\Support\ClassSubjectInitializer::sameLegacy($row->getOriginal('subjects'), $row->subjects);
+                if ($idsSent || ($legacySent && $legacyChanged && $this->subjectsOn())) {
+                    $fields = $idsSent ? $request->subjectAssignmentFields($group) : [
+                        'class_subject_ids' => \App\Support\ClassSubjectInitializer::mapLegacy($group, $row->subjects),
+                        'class_subjects_mapped_at' => now(),
+                    ];
+                    $row->forceFill($fields);
+                    $row->class_subject_legacy_snapshot = $row->subjects ?: [];
                 }
-            }
-
-            if ($request->has('class_subjects')) {
-                foreach (array_intersect($classIds, $current) as $keptId) {
-                    $subjects = $request->subjectsFor((int) $keptId);
-
-                    GroupStaff::query()
-                        ->where('user_id', $user->id)
-                        ->where('group_id', $keptId)
-                        // A query update skips the model's casts, so this path
-                        // encodes for itself. attach() above goes through the
-                        // pivot model (->using(GroupStaff)) and must NOT encode,
-                        // or the list is stored twice and read back as a string.
-                        ->update(['subjects' => $subjects === null ? null : json_encode(array_values($subjects))]);
-                    $group = $classes->firstWhere('id', $keptId);
-                    if (! $request->has('class_subject_ids')) {
-                        $row = GroupStaff::where('user_id', $user->id)->where('group_id', $keptId)->firstOrFail();
-                        $row->forceFill($request->subjectAssignmentFields($group))->save();
-                    }
-                }
+                $row->save();
             }
         });
 
@@ -780,7 +775,7 @@ class TeachersController extends Controller
                 'id' => (int) $g->id,
                 'name' => $g->name,
                 'subjects' => $rows->get((int) $g->id)?->subjects ?: null,
-            ] + ($subjectsOn ? ['class_subject_ids' => $rows->get((int) $g->id)?->class_subject_ids ?: null] : []))->values(),
+            ] + ($subjectsOn ? ['class_subject_ids' => $rows->get((int) $g->id)?->class_subject_ids ?? null] : []))->values(),
         ];
     }
 
@@ -791,7 +786,7 @@ class TeachersController extends Controller
 
     private function assignmentMap($rows): array
     {
-        return $this->subjectsOn() ? ['class_subject_ids' => $rows->mapWithKeys(fn ($r) => [(int) $r->group_id => $r->class_subject_ids ?: null])] : [];
+        return $this->subjectsOn() ? ['class_subject_ids' => $rows->mapWithKeys(fn ($r) => [(int) $r->group_id => $r->class_subject_ids ?? null])] : [];
     }
 
 }

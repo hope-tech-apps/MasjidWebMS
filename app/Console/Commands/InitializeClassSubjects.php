@@ -28,9 +28,26 @@ class InitializeClassSubjects extends Command
         foreach ($orgs as $org) {
             try {
                 $report = ClassSubjectInitializer::run($org, (bool) $this->option('dry-run'), (bool) $this->option('enable'));
-                $this->line(($this->option('dry-run') ? 'DRY RUN' : 'INITIALIZED').": {$org->name}");
-                foreach ($report as $row) $this->line("Class {$row['class']}: {$row['subjects_added']} subjects added; {$row['assignments_mapped']} assignments mapped.");
-                if ($this->option('enable')) $this->line($this->option('dry-run') ? 'Would enable class subjects. No changes saved.' : 'Class subjects enabled.');
+                $blockedReport = collect($report)->contains(fn ($row) => $row['blocked'] !== []);
+                $this->line(($this->option('dry-run') ? 'DRY RUN' : ($blockedReport ? 'BLOCKED' : 'INITIALIZED')).": {$org->name}");
+                $blocked = 0; $creates = 0; $maps = 0; $losses = 0;
+                foreach ($report as $row) {
+                    $this->line("Class {$row['class']}: {$row['subjects_added']} subjects added; {$row['assignments_mapped']} assignments mapped.");
+                    foreach ($row['creates'] as $subject) $this->line("  CREATE {$subject['name']} | holds=".($subject['tool'] ?? 'none')." | guide=".($subject['guide_subject'] ?? 'none'));
+                    foreach ($row['assignments'] as $assignment) {
+                        $legacy = $assignment['legacy'] === null || $assignment['legacy'] === [] ? 'all' : implode(', ', $assignment['legacy']);
+                        $this->line("  Teacher #{$assignment['teacher_id']}: [{$legacy}] -> [".implode(', ', $assignment['names']).']'.($assignment['will_map'] ? '' : ' (unchanged)'));
+                    }
+                    foreach ($row['losses'] as $loss) $this->warn('  '.$loss);
+                    foreach ($row['blocked'] as $message) $this->error('  BLOCKED '.$message);
+                    $blocked += count($row['blocked']); $creates += $row['subjects_added'];
+                    $maps += $row['assignments_mapped']; $losses += count($row['losses']);
+                }
+                $this->line("School summary: ".count($report)." live classes; {$creates} subjects; {$maps} mappings; {$losses} losses; {$blocked} blocked mappings.");
+                if ($blocked > 0) {
+                    $failed = true;
+                    $this->error('No changes saved for this organization.');
+                } elseif ($this->option('enable')) $this->line($this->option('dry-run') ? 'Would enable class subjects. No changes saved.' : 'Class subjects enabled.');
             } catch (ValidationException $e) {
                 $failed = true;
                 foreach ($e->errors() as $messages) foreach ($messages as $message) $this->error($message);

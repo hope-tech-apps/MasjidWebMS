@@ -17,10 +17,7 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (DB::table('groups')->whereNotNull('subject_seed_grades')->orWhereNotNull('class_subjects_initialized_at')->exists()
-            || (Schema::hasTable('class_subjects') && DB::table('class_subjects')->exists())) {
-            throw new RuntimeException('Refusing to remove class subject initialization data. Switch the capability off to roll back.');
-        }
+        \App\Support\ClassSubjectRollback::assertEmpty();
         Schema::table('groups', fn (Blueprint $table) => $table->dropColumn(['subject_seed_grades', 'class_subjects_initialized_at']));
     }
 };

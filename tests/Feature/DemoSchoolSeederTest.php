@@ -94,6 +94,24 @@ class DemoSchoolSeederTest extends TestCase
         }
     }
 
+    #[Test]
+    public function it_initializes_classes_created_and_restored_by_provisioning_while_subjects_are_on(): void
+    {
+        $this->artisan('demo:seed-school')->assertSuccessful();
+        $org = $this->demoTenant();
+        $this->artisan('class-subjects:initialize', ['--masjid' => $org->id, '--enable' => true])->assertSuccessful();
+        $classes = Group::withoutMasjidScope()->where('masjid_id', $org->id)->where('kind', 'class')->orderBy('id')->get();
+        $restored = $classes->first();
+        $restored->delete();
+        // The seeder also creates a missing class. Clearing this fixture's slug is safe
+        // and leaves its existing records intact, while exercising the real creation path.
+        $classes->last()->update(['slug' => 'parked-practice-class']);
+        $this->artisan('demo:seed-school')->assertSuccessful();
+        $this->assertFalse($restored->fresh()->trashed());
+        $this->assertTrue(\App\Support\ClassSubjectInitializer::ready($org->fresh()));
+        $this->assertSame($classes->count() + 1, Group::withoutMasjidScope()->where('masjid_id', $org->id)->where('kind', 'class')->count());
+    }
+
     // ------------------------------------------------------------------
     // 1. A real school tenant
     // ------------------------------------------------------------------

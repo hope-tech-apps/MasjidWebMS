@@ -77,7 +77,8 @@ class CapabilityCatalogueEndpointTest extends TestCase
     {
         return array_keys(array_filter(
             config('capabilities'),
-            fn (array $def) => ($def['group'] ?? null) !== 'school' || $orgType === Masjid::ORG_TYPE_SCHOOL
+            fn (array $def) => (($def['group'] ?? null) !== 'school' || $orgType === Masjid::ORG_TYPE_SCHOOL)
+                && ($def['catalogue_when_off'] ?? true)
         ));
     }
 
@@ -170,7 +171,8 @@ class CapabilityCatalogueEndpointTest extends TestCase
 
         $school = $this->entries($this->catalogue('school'));
 
-        foreach (self::SCHOOL_KEYS as $key) {
+        $this->assertFalse($school->has('class_subjects'));
+        foreach (array_diff(self::SCHOOL_KEYS, ['class_subjects']) as $key) {
             $this->assertSame('optional', $school[$key]['visibility'], $key);
             $this->assertFalse($school[$key]['default_at_creation'], $key);
         }
@@ -391,9 +393,9 @@ class CapabilityCatalogueEndpointTest extends TestCase
             $panel = $this->entries($this->getJson("/api/admin/masjids/{$org->id}/capabilities")->assertOk()->json('data'));
             $catalogue = $this->entries($this->catalogue($orgType));
 
-            // The panel shows everything; Studio leaves out only what D14 hides.
+            // Both catalogues omit grants that must remain dark while OFF; Studio also applies D14.
             $this->assertEqualsCanonicalizing(
-                $orgType === Masjid::ORG_TYPE_SCHOOL ? [] : self::SCHOOL_KEYS,
+                $orgType === Masjid::ORG_TYPE_SCHOOL ? [] : array_values(array_diff(self::SCHOOL_KEYS, ['class_subjects'])),
                 $panel->keys()->diff($catalogue->keys())->values()->all(),
                 "what the panel shows a {$orgType} and Studio does not"
             );
