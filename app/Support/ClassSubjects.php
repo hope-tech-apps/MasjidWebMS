@@ -34,7 +34,48 @@ final class ClassSubjects
      */
     public static function offered(Group $group): array
     {
-        if ($group->teachesStudents() && SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) {
+        if (ClassSubjectMode::enabled($group->masjid_id)) {
+            return self::offeredWithClassSubjects($group);
+        }
+
+        $grades = $group->memberships()->participants()->current()
+            ->pluck('grade_label')
+            ->map(fn ($g) => is_string($g) && trim($g) !== '' ? trim($g) : null)
+            ->all();
+
+        $known = array_values(array_filter($grades));
+        // A child with no grade label means "unknown", which must not hide a
+        // subject: every subject applies to this class.
+        $unknownGradePresent = in_array(null, $grades, true) || $grades === [];
+
+        $out = [];
+
+        $catalogue = SchoolSubject::query()->orderBy('position')->orderBy('name')->get();
+
+        foreach ($catalogue as $subject) {
+            $applies = $unknownGradePresent || collect($known)->contains(fn ($g) => $subject->appliesToGrade($g));
+
+            if ($applies) {
+                self::push($out, $subject->name);
+            }
+        }
+
+        if ($catalogue->isEmpty()) {
+            $rows = CurriculumWeek::query()->select('grade_label', 'subject')->distinct()->orderBy('subject')->get();
+
+            foreach ($rows as $row) {
+                if ($unknownGradePresent || GradeLevel::in($row->grade_label, $known)) {
+                    self::push($out, $row->subject);
+                }
+            }
+        }
+
+        return array_values($out);
+    }
+
+    public static function offeredWithClassSubjects(Group $group): array
+    {
+        if (SubjectFence::usesClassSubjects($group)) {
             return \App\Models\ClassSubject::where('group_id', $group->id)->whereNull('hidden_at')->orderBy('position')->orderBy('id')->get()
                 ->map(fn ($s) => ['name' => $s->name, 'key' => $s->name_key])->all();
         }
@@ -117,6 +158,29 @@ final class ClassSubjects
      * @param  list<string>|null  $limits
      */
     public static function defaultFor(array $fenced, ?array $limits): ?string
+    {
+        if ($limits !== null && array_key_exists('class_subject_ids', $limits)) {
+            return self::defaultForWithClassSubjects($fenced, $limits);
+        }
+
+        if ($limits === null || count($limits) !== 1) {
+            return null;
+        }
+
+        // Prefer the catalogue's own entry for the staff subject; the combined
+        // guide column is never a default (it is two subjects).
+        $wanted = SubjectKey::for(SubjectKey::STAFF_CATALOGUE_NAMES[$limits[0]] ?? '');
+
+        foreach ($fenced as $s) {
+            if ($s['key'] === $wanted) {
+                return $s['name'];
+            }
+        }
+
+        return null;
+    }
+
+    public static function defaultForWithClassSubjects(array $fenced, ?array $limits): ?string
     {
         if ($limits !== null && array_key_exists('class_subject_ids', $limits)) {
             return count($limits['class_subject_ids']) === 1 && count($fenced) === 1 ? $fenced[0]['name'] : null;

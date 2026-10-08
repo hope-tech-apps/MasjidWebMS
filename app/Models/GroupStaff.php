@@ -119,26 +119,34 @@ class GroupStaff extends Pivot
      */
     protected $hidden = ['class_subject_ids', 'class_subjects_mapped_at', 'class_subject_legacy_snapshot'];
 
+    public function save(array $options = [])
+    {
+        $tenantId = app(\App\Support\TenantContext::class)->get();
+        // Creating hooks stamp the bound tenant before INSERT, overriding a supplied id.
+        $orgId = ! $this->exists && $tenantId !== null ? $tenantId : ($this->masjid_id ?? $tenantId);
+        if (! \App\Support\ClassSubjectMode::enabled($orgId)) return parent::save($options);
+        if ($this->exists) return parent::save($options);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($options, $orgId) {
+            $org = Masjid::withTrashed()->whereKey($orgId)->lockForUpdate()->firstOrFail();
+            if (\App\Support\SchoolSettings::classSubjects($org)) {
+                $group = Group::withTrashed()->find($this->group_id);
+                if ($group !== null && \App\Support\SubjectFence::usesClassSubjects($group)) {
+                    if ($this->class_subjects_mapped_at === null) {
+                        $this->class_subject_ids = \App\Support\ClassSubjectInitializer::mapLegacy($group, $this->subjects);
+                        $this->class_subjects_mapped_at = now();
+                    }
+                    $this->class_subject_legacy_snapshot = $this->subjects ?: [];
+                }
+            }
+            return parent::save($options);
+        });
+    }
+
     protected static function booted(): void
     {
         static::creating(function (self $row): void {
-            $group = Group::find($row->group_id);
-            if ($group?->teachesStudents() && \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org($group->masjid_id))) {
-                if ($row->class_subjects_mapped_at === null) {
-                    $row->class_subject_ids = \App\Support\ClassSubjectInitializer::mapLegacy($group, $row->subjects);
-                    $row->class_subjects_mapped_at = now();
-                }
-                $row->class_subject_legacy_snapshot = $row->subjects ?: [];
-            }
             $actor = Auth::user();
             $row->assigned_by_user_id = $actor instanceof User ? $actor->getKey() : null;
-        });
-        static::saving(function (self $row): void {
-            if ($row->exists && $row->isDirty('subjects')
-                && ! \App\Support\ClassSubjectInitializer::sameLegacy($row->getOriginal('subjects'), $row->subjects)
-                && ! \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org($row->masjid_id))) {
-                $row->class_subjects_mapped_at = null;
-            }
         });
     }
 

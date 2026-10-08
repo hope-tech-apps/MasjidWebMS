@@ -14,7 +14,7 @@ try {
         App\Support\ClassSubjectInitializer::run(App\Models\Masjid::findOrFail($input['masjid']));
     } elseif ($input['action'] === 'create') {
         app(App\Support\TenantContext::class)->set($input['masjid']);
-        App\Models\Group::create(['name' => 'Concurrent Practice Class', 'kind' => 'class']);
+        App\Models\Group::create(['name' => 'Concurrent Practice Class', 'slug' => 'concurrent-practice-'.Illuminate\Support\Str::uuid(), 'kind' => 'class']);
     } else {
         app(App\Support\TenantContext::class)->set($input['masjid']);
         $request = App\Http\Requests\Admin\Groups\SaveClassSubjectRequest::create('/subjects/'.$input['subject'], 'PUT', ['tool' => 'hifdh']);
@@ -27,6 +27,6 @@ try {
     echo "refused\n";
 } catch (Throwable $e) {
     echo get_class($e)."\n";
-    if ($e instanceof Illuminate\Database\QueryException) fwrite(STDERR, json_encode(['sqlstate' => $e->errorInfo[0] ?? null, 'driver_code' => $e->errorInfo[1] ?? null])."\n");
+    if ($e instanceof Illuminate\Database\QueryException) fwrite(STDERR, json_encode(Tests\Support\ClassSubjectWorkerFailure::identifiers($e))."\n");
     exit(1);
 }

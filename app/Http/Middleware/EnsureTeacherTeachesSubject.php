@@ -23,13 +23,34 @@ class EnsureTeacherTeachesSubject
 {
     public function handle(Request $request, Closure $next, string $subject): Response
     {
+        if (\App\Support\ClassSubjectMode::forGroup((int) $request->route('group_id'))) {
+            return $this->handleWithClassSubjects($request, $next, $subject);
+        }
+
+        $assignment = GroupStaff::query()
+            ->where('group_id', (int) $request->route('group_id'))
+            ->where('user_id', $request->user()?->getAuthIdentifier())
+            ->first();
+
+        // No row is impossible after `teacher.leads`; refuse rather than assume.
+        if ($assignment === null || ! $assignment->teaches($subject)) {
+            abort(Response::HTTP_FORBIDDEN, 'You do not teach '
+                .(GroupStaff::SUBJECT_LABELS[$subject] ?? $subject).' in this class.');
+        }
+
+        return $next($request);
+    }
+
+    private function handleWithClassSubjects(Request $request, Closure $next, string $subject): Response
+    {
         $assignment = GroupStaff::query()
             ->where('group_id', (int) $request->route('group_id'))
             ->where('user_id', $request->user()?->getAuthIdentifier())
             ->first();
 
         $group = \App\Models\Group::find((int) $request->route('group_id'));
-        if ($group?->teachesStudents() && \App\Support\SchoolSettings::classSubjects(\App\Support\SchoolSettings::org($group->masjid_id))) {
+        if ($group === null) return response()->json(['status' => 'error', 'message' => 'You do not teach the subject holding this tool in this class.'], 403);
+        if ($group !== null && \App\Support\SubjectFence::usesClassSubjects($group)) {
             $tool = $subject === 'quran' ? 'hifdh' : 'arabic_letters';
             $uri = $request->route()->uri();
             if ($subject === 'arabic' && str_contains($uri, '/letters') && ! str_ends_with($uri, '/letters/stage')) {

@@ -51,16 +51,39 @@ final class SubjectFence
      */
     public static function limitsFor(?User $user, int $groupId): ?array
     {
+        if (ClassSubjectMode::forGroup($groupId)) {
+            return self::limitsForWithClassSubjects($user, $groupId);
+        }
+
+        if ($user === null || $user->type !== 'Teacher') {
+            return null;
+        }
+
+        return self::assigned($groupId, (int) $user->getKey());
+    }
+
+    public static function limitsForWithClassSubjects(?User $user, int $groupId): ?array
+    {
         if ($user === null || $user->type !== 'Teacher') {
             return null;
         }
 
         $group = \App\Models\Group::find($groupId);
-        if ($group?->teachesStudents() && SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) {
+        if ($group === null) return ['class_subject_ids' => [], 'keys' => []];
+        if (self::usesClassSubjects($group)) {
             return self::limitsForIds(self::assignedIds($groupId, (int) $user->getKey()), $group);
         }
 
         return self::assigned($groupId, (int) $user->getKey());
+    }
+
+    /** ON only: kind changes never erase an existing subject authority. */
+    public static function usesClassSubjects(\App\Models\Group $group): bool
+    {
+        if ($group->teachesStudents() || $group->class_subjects_initialized_at !== null) return true;
+        if (GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)
+            ->where(fn ($q) => $q->whereNotNull('class_subject_ids')->orWhereNotNull('class_subjects_mapped_at')->orWhereNotNull('class_subject_legacy_snapshot'))->exists()) return true;
+        return \App\Models\ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->exists();
     }
 
     /**
@@ -120,7 +143,7 @@ final class SubjectFence
     /** Fields are additive: the legacy `my_subjects` still describes legacy assignments. */
     public static function payload(\App\Models\Group $group, ?User $user): array
     {
-        if (! $group->teachesStudents() || ! SchoolSettings::classSubjects(SchoolSettings::org($group->masjid_id))) return [];
+        if (! ClassSubjectMode::enabled($group->masjid_id) || ! self::usesClassSubjects($group)) return [];
         $ids = $user?->type === 'Teacher' ? self::assignedIds((int) $group->id, (int) $user->id) : null;
         $subjects = \App\Models\ClassSubject::where('group_id', $group->id)->whereNull('hidden_at')
             ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))->orderBy('position')->orderBy('id')->get();
@@ -143,6 +166,19 @@ final class SubjectFence
     /** May a teacher with these limits touch work whose subject key is `$subjectKey`? */
     public static function allows(?array $limits, ?string $subjectKey): bool
     {
+        if ($limits !== null && array_key_exists('class_subject_ids', $limits)) {
+            return self::allowsWithClassSubjects($limits, $subjectKey);
+        }
+
+        if ($limits === null) {
+            return true;
+        }
+
+        return array_intersect(SubjectKey::staffKeys((string) $subjectKey), $limits) !== [];
+    }
+
+    public static function allowsWithClassSubjects(?array $limits, ?string $subjectKey): bool
+    {
         if ($limits === null) {
             return true;
         }
@@ -161,6 +197,15 @@ final class SubjectFence
      * @return list<string>|null
      */
     public static function allowedKeys(?array $limits): ?array
+    {
+        if ($limits !== null && array_key_exists('class_subject_ids', $limits)) {
+            return self::allowedKeysWithClassSubjects($limits);
+        }
+
+        return $limits === null ? null : SubjectKey::keysFor($limits);
+    }
+
+    public static function allowedKeysWithClassSubjects(?array $limits): ?array
     {
         if ($limits === null) return null;
         if (array_key_exists('class_subject_ids', $limits)) {

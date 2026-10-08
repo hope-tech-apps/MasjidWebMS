@@ -48,7 +48,6 @@ final class CapabilityCatalogue
             if (! is_array($definition) || self::visibility($key, $definition, $orgType) === self::HIDDEN) {
                 continue;
             }
-            if (($definition['catalogue_when_off'] ?? true) === false && ! self::defaultAtCreation($key, $orgType)) continue;
 
             // The switch panel's fallback group, so the two place an entry alike.
             $entries[$definition['group'] ?? 'tools'][] = self::entry($key, $definition, $orgType);
@@ -127,6 +126,10 @@ final class CapabilityCatalogue
      */
     public static function visibility(string $key, array $def, string $orgType): string
     {
+        if ($key === 'class_subjects') {
+            return self::HIDDEN;
+        }
+
         if (($def['group'] ?? null) === 'school' && $orgType !== Masjid::ORG_TYPE_SCHOOL) {
             return self::HIDDEN;
         }
@@ -180,8 +183,6 @@ final class CapabilityCatalogue
             if (! is_array($definition) || self::visibility($key, $definition, $orgType) === self::HIDDEN) {
                 continue;
             }
-
-            if (($definition['catalogue_when_off'] ?? true) === false && ! self::defaultAtCreation($key, $orgType)) continue;
 
             $out[$key] = is_bool($choices[$key] ?? null)
                 ? $choices[$key]

@@ -96,6 +96,47 @@ abstract class TeacherController extends Controller
      */
     protected function classPayload(Group $group, ?int $unreadMessages = null): array
     {
+        if (\App\Support\ClassSubjectMode::enabled($group->masjid_id)) {
+            return $this->classPayloadWithClassSubjects($group, $unreadMessages);
+        }
+
+        $students = $group->memberships()
+            ->participants()->current()
+            ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
+            ->get();
+
+        // Students in a class only. This payload serves every kind of group a
+        // teacher leads and its roster includes a legacy `leader` row, so the
+        // condition lives in StudentAge::forRoster(), which reads the dates in
+        // its own query and hands back numbers. For a ḥalaqa, a team or a
+        // general group it reads nothing and every `age` below is null.
+        $ages = StudentAge::forRoster($group, $students, $this->schoolToday($group));
+
+        return [
+            'id' => (int) $group->id,
+            'name' => $group->name,
+            'kind' => $group->kind(),
+            'description' => $group->description,
+            'is_active' => (bool) $group->is_active,
+            'arabic_stage' => $group->arabicStage(),
+            // How this class's points read: 'running' or 'weekly' (T-003.2).
+            'points_period' => $group->pointsPeriod(),
+            // What THIS teacher teaches in this class: null for everything (every
+            // assignment before subjects existed, and a full-time teacher), else a
+            // list. The screen hides the tabs a subject owns; the server refuses
+            // them regardless (`teacher.teaches:`), so this is a courtesy, not the
+            // boundary.
+            'my_subjects' => $this->mySubjects($group),
+            'subject_labels' => \App\Models\GroupStaff::SUBJECT_LABELS,
+            'students' => $students->map(fn (GroupMembership $m): array => $this->student($m) + [
+                'age' => $ages[(int) $m->id] ?? null,
+            ])->values(),
+        ] + ($unreadMessages !== null ? ['unread_messages' => $unreadMessages] : [])
+          + $this->classStoreFlag($group);
+    }
+
+    protected function classPayloadWithClassSubjects(Group $group, ?int $unreadMessages = null): array
+    {
         $students = $group->memberships()
             ->participants()->current()
             ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)

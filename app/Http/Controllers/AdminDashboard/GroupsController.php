@@ -108,6 +108,40 @@ class GroupsController extends Controller
      */
     private function teachersByGroup(array $groupIds): array
     {
+        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+            return $this->teachersByGroupWithClassSubjects($groupIds);
+        }
+
+        if ($groupIds === []) {
+            return [];
+        }
+
+        return GroupStaff::query()
+            ->join('users', 'users.id', '=', 'group_staff.user_id')
+            ->whereNull('users.deleted_at')
+            ->where('group_staff.role', GroupStaff::ROLE_TEACHER)
+            ->whereIn('group_staff.group_id', $groupIds)
+            ->get(['group_staff.group_id', 'group_staff.user_id', 'group_staff.subjects', 'users.name'])
+            ->sort(fn (GroupStaff $a, GroupStaff $b) => strcmp(mb_strtolower((string) $a->name), mb_strtolower((string) $b->name))
+                ?: (int) $a->user_id <=> (int) $b->user_id)
+            ->groupBy(fn (GroupStaff $row) => (int) $row->group_id)
+            ->map(fn ($rows) => $rows->map(function (GroupStaff $row): array {
+                $subjects = $row->subjects ?: null;
+
+                return [
+                    'id' => (int) $row->user_id,
+                    'name' => (string) $row->name,
+                    'subjects' => $subjects === null ? null : array_map(
+                        fn (string $s): array => ['value' => $s, 'label' => GroupStaff::SUBJECT_LABELS[$s] ?? $s],
+                        [...array_intersect(GroupStaff::SUBJECTS, $subjects), ...array_diff($subjects, GroupStaff::SUBJECTS)]
+                    ),
+                ];
+            })->values()->all())
+            ->all();
+    }
+
+    private function teachersByGroupWithClassSubjects(array $groupIds): array
+    {
         if ($groupIds === []) {
             return [];
         }
@@ -146,6 +180,28 @@ class GroupsController extends Controller
      */
     public function store(StoreGroupRequest $request, $masjid_id)
     {
+        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+            return $this->storeWithClassSubjects($request, $masjid_id);
+        }
+
+        try {
+            $group = Group::create($request->validated());
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $group,
+                'meta' => $this->meta(),
+            ], Response::HTTP_CREATED);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => Errors::publicMessage($e),
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private function storeWithClassSubjects(StoreGroupRequest $request, $masjid_id)
+    {
         try {
             $group = \Illuminate\Support\Facades\DB::transaction(fn () => Group::create($request->validated()));
 
@@ -169,6 +225,33 @@ class GroupsController extends Controller
      * organization's id resolves to a 404 rather than leaking the row.
      */
     public function show(Request $request, $masjid_id, $group_id)
+    {
+        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+            return $this->showWithClassSubjects($request, $masjid_id, $group_id);
+        }
+
+        $group = Group::with([
+            'memberships.contact',
+            'memberships.guardianOf',
+        ])->findOrFail($group_id);
+
+        // Messages this user has not seen. Counted only over the conversations
+        // they may read (the same decision the thread list makes), so an office
+        // user with no standing in the class gets 0, not an error.
+        $user = $request->user();
+        $readable = $user !== null ? app(GroupAudience::class)->readableThreadsQuery($user, $group) : null;
+        $group->setAttribute('unread_messages', $readable === null
+            ? 0
+            : (GroupThreadUnread::byGroup((int) $user->id, [(int) $group->id], $readable)[(int) $group->id] ?? 0));
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $group,
+            'meta' => $this->meta(),
+        ], Response::HTTP_OK);
+    }
+
+    private function showWithClassSubjects(Request $request, $masjid_id, $group_id)
     {
         $group = Group::with([
             'memberships.contact',
@@ -199,6 +282,30 @@ class GroupsController extends Controller
      * swallowed into a 500 by the catch below.
      */
     public function update(UpdateGroupRequest $request, $masjid_id, $group_id)
+    {
+        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+            return $this->updateWithClassSubjects($request, $masjid_id, $group_id);
+        }
+
+        $group = Group::findOrFail($group_id);
+
+        try {
+            $group->update($request->validated());
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $group,
+                'meta' => $this->meta(),
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => Errors::publicMessage($e),
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private function updateWithClassSubjects(UpdateGroupRequest $request, $masjid_id, $group_id)
     {
         $group = Group::findOrFail($group_id);
 

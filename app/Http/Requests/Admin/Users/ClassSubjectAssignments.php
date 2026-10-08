@@ -14,14 +14,13 @@ trait ClassSubjectAssignments
 {
     private function classSubjectsOn(): bool
     {
-        return SchoolSettings::classSubjects(SchoolSettings::org(app(TenantContext::class)->get()));
+        return \App\Support\ClassSubjectMode::enabled(app(TenantContext::class)->get());
     }
 
     /** Normalize before validation and extraction; never cast an arbitrary key to a class id. */
     protected function prepareClassSubjectAssignments(): void
     {
-        if (! $this->classSubjectsOn()) $this->offsetUnset('class_subject_ids');
-        foreach (['class_subjects', ...($this->classSubjectsOn() ? ['class_subject_ids'] : [])] as $field) {
+        foreach (['class_subjects', 'class_subject_ids'] as $field) {
             $given = $this->input($field);
             if (! is_array($given)) continue; // The field's array rule refuses other shapes.
             $out = [];
@@ -33,9 +32,6 @@ trait ClassSubjectAssignments
                     throw ValidationException::withMessages([$field => ['Use each positive class id once, without signs, fractions or other text.']]);
                 }
                 if (! in_array((int) $digits, array_map('intval', (array) $this->input('class_ids', [])), true)) {
-                    // Legacy OFF forms retain null entries for classes just unticked.
-                    // These express no restriction; a nonempty unmatched restriction is refused.
-                    if ($field === 'class_subjects' && ! $this->classSubjectsOn() && ($value === null || $value === [])) continue;
                     throw ValidationException::withMessages([$field => ['A subject restriction must name one of the selected classes.']]);
                 }
                 $out[(int) $digits] = $value;
@@ -44,13 +40,10 @@ trait ClassSubjectAssignments
         }
     }
 
-    public function subjectsFor(int $classId): ?array
+    private function subjectsForWithClassSubjects(int $classId): ?array
     {
         $map = $this->validated('class_subjects');
         if ($map === null) return null;
-        // OFF's legacy contract: no entry means no restriction was offered for this class.
-        // Every supplied restriction was canonicalized and matched at the edge above.
-        if (! $this->classSubjectsOn() && is_array($map) && ! array_key_exists($classId, $map)) return null;
         if (! is_array($map) || ! array_key_exists($classId, $map)) {
             throw ValidationException::withMessages(['class_subjects' => ['State the subjects for this class explicitly.']]);
         }
@@ -73,8 +66,9 @@ trait ClassSubjectAssignments
 
     public function withValidator(Validator $validator): void
     {
+        if (! $this->classSubjectsOn()) return;
         $validator->after(function (Validator $validator): void {
-            if ($validator->errors()->isNotEmpty() || ! $this->classSubjectsOn()) return;
+            if ($validator->errors()->isNotEmpty()) return;
             foreach ($this->input('class_subject_ids', []) as $groupId => $ids) {
                 $group = Group::where('kind', 'class')->find($groupId);
                 if (! \App\Support\SubjectFence::validStoredIds($ids) || $group === null || ! in_array((int) $groupId, array_map('intval', $this->input('class_ids', [])), true)

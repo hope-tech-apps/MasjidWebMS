@@ -351,6 +351,143 @@ class MasjidsController extends Controller
      */
     public function capabilities(string $masjid_id)
     {
+        if (\App\Support\ClassSubjectMode::enabled((int) $masjid_id)) {
+            return $this->capabilitiesWithClassSubjects($masjid_id);
+        }
+        $response = $this->legacyCapabilities($masjid_id);
+        $payload = $response->getData(true);
+        foreach ($payload['data']['groups'] as &$group) {
+            $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== 'class_subjects'));
+        }
+        unset($group);
+        return $response->setData($payload);
+    }
+
+    private function legacyCapabilities(string $masjid_id)
+    {
+        if (Auth::user()?->type !== 'SuperAdmin') {
+            abort(Response::HTTP_FORBIDDEN, 'Only a super admin can see what an organisation has.');
+        }
+
+        $masjid = Masjid::findOrFail($masjid_id);
+        $overrides = is_array($masjid->capability_overrides) ? $masjid->capability_overrides : [];
+        $inUse = $this->sectionsInUse($masjid);
+
+        $groupLabels = config('capability_groups', []);
+        $entries = [];
+
+        foreach (config('capabilities', []) as $key => $definition) {
+            if (! is_array($definition)) {
+                continue;
+            }
+
+            $column = $definition['column'] ?? null;
+            $isModule = ($definition['kind'] ?? null) === 'module';
+
+            $entries[$definition['group'] ?? 'tools'][] = [
+                'key' => $key,
+                'label' => $definition['label'] ?? $key,
+                'description' => $definition['description'] ?? '',
+                'kind' => $isModule ? 'module' : 'grant',
+                // crm and assistant keep their own endpoints; everything else is
+                // PATCH .../capabilities/{key}.
+                'writer' => $column ? $key : 'capability',
+                'enabled' => $isModule ? ! $masjid->moduleIsOff($key) : $masjid->hasCapability($key),
+                'default_for_org_type' => $column ? null : (bool) ($definition['defaults'][$masjid->orgType()] ?? false),
+                // Whether this org type has it before anyone decides. For a module
+                // it is Masjid::MODULE_DEFAULTS (pinned equal to the config, so it
+                // matches default_for_org_type); false marks a masjid screen a
+                // SuperAdmin can switch ON here, so the SPA need not copy the
+                // table. For a grant it repeats default_for_org_type (false for
+                // the column-backed ones).
+                'offered_by_default' => $isModule
+                    ? $masjid->moduleOfferedByDefault($key)
+                    : ! $column && (bool) ($definition['defaults'][$masjid->orgType()] ?? false),
+                'overridden' => ! $column && array_key_exists($key, $overrides),
+                'in_use' => $inUse[$key] ?? null,
+                // A module that lives inside another screen (Prayer times: tabs on
+                // the Details screen) names the place; the SPA prints
+                // "{Details menu title} › {where}". Null for everything else.
+                'where' => isset($definition['where']) && is_string($definition['where']) && $definition['where'] !== ''
+                    ? $definition['where']
+                    : null,
+                // The third placement: a module with no admin screen at all
+                // ('app'), which decides whether the mobile app's menu lists
+                // its entry. The SPA places its row with "Where: Mobile app
+                // menu" and leaves it out of the staff sentences about
+                // switched-off screens. Null for everything else.
+                'surface' => isset($definition['surface']) && is_string($definition['surface']) && $definition['surface'] !== ''
+                    ? $definition['surface']
+                    : null,
+                // What keeps moving if this is switched off (App\Support\ModuleFacts).
+                // A list for every entry; [] where there is nothing to say.
+                'facts' => $isModule ? ModuleFacts::for($masjid, $key) : [],
+            ];
+        }
+
+        $groups = [];
+
+        // Configured groups first, in their order; a group the config does not
+        // name (a stale config cache) still shows, labelled by its key.
+        foreach (array_unique(array_merge(array_keys($groupLabels), array_keys($entries))) as $groupKey) {
+            if (empty($entries[$groupKey])) {
+                continue;
+            }
+
+            $groups[] = [
+                'key' => $groupKey,
+                'label' => $groupLabels[$groupKey] ?? $groupKey,
+                'entries' => $entries[$groupKey],
+            ];
+        }
+
+        $changes = MasjidCapabilityChange::where('masjid_id', $masjid->id)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit(25)
+            ->get();
+
+        // withTrashed: a soft-deleted operator still has a name worth showing on
+        // an audit row. Null only when the user row is gone entirely.
+        $actors = User::withTrashed()
+            ->whereIn('id', $changes->pluck('actor_user_id')->filter()->unique()->values()->all())
+            ->pluck('name', 'id');
+
+        $history = $changes->map(fn (MasjidCapabilityChange $change) => [
+            'id' => (int) $change->id,
+            'capability' => $change->capability,
+            'label' => $change->capability === CapabilityLedger::DIRECTORY_LISTING
+                ? 'Directory listing'
+                : config("capabilities.{$change->capability}.label", $change->capability),
+            'enabled_before' => $change->enabled_before,
+            'enabled_after' => $change->enabled_after,
+            'override_before' => $change->override_before,
+            'actor_name' => $change->actor_user_id !== null ? ($actors[$change->actor_user_id] ?? null) : null,
+            'created_at' => $change->created_at?->toIso8601String(),
+        ])->values();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'org' => [
+                    'id' => (int) $masjid->id,
+                    'name' => $masjid->name,
+                    'org_type' => $masjid->orgType(),
+                    // Whether the apps have a donation link to fall back on. Both
+                    // apps show it on Donate while no fund is offered (Giving off),
+                    // and "No donation options are available right now" when it is
+                    // blank, so the Giving confirm picks its sentence from this.
+                    // The same hasOne row the apps read; never follows a module.
+                    'donation_link_set' => filled($masjid->donationLink()->value('link')),
+                ],
+                'groups' => $groups,
+                'history' => $history,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    private function capabilitiesWithClassSubjects(string $masjid_id)
+    {
         if (Auth::user()?->type !== 'SuperAdmin') {
             abort(Response::HTTP_FORBIDDEN, 'Only a super admin can see what an organisation has.');
         }

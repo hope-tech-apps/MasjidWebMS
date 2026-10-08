@@ -68,6 +68,64 @@ class GradebookController extends TeacherController
     /** Work set for this class, newest first, each with how much of it is marked. */
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
+        if (\App\Support\ClassSubjectMode::enabled(app(\App\Support\TenantContext::class)->get())) {
+            return $this->indexWithClassSubjects($request, $masjid_id, $group_id);
+        }
+
+        $group = Group::findOrFail($group_id);
+        $org = SchoolSettings::org($masjid_id);
+        $limits = $this->limits($group);
+
+        $roster = $group->memberships()->participants()->current()->count();
+
+        $assignments = $group->assignments()
+            ->withCount('scores')
+            // The subject fence: a limited teacher lists only their own subjects.
+            ->when($limits !== null, fn ($q) => $q->whereIn('subject_key', SubjectFence::allowedKeys($limits)))
+            ->orderByDesc('assigned_on')
+            ->orderByDesc('id')
+            ->get();
+
+        $offered = ClassSubjects::fenced(ClassSubjects::offered($group), $limits);
+        $weights = ClassGradeWeight::forGroup((int) $group->id);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $assignments->map(fn (ClassAssignment $a): array => $this->assignment($a) + [
+                'scored' => (int) $a->scores_count,
+                'roster' => $roster,
+            ])->values(),
+            // A SIBLING of `data`, not a member of it: `data` is a bare list here
+            // and every existing caller indexes into it, so nesting it inside
+            // would have been a breaking change to read the key off.
+            'performance_levels' => PerformanceLevel::key(),
+            // The ORGANISATION'S choices (App\Support\SchoolSettings): levels or
+            // points everywhere, points or Excellent / Good / Needs work where
+            // `simple_marking` is on. `default_scale` is what the form starts on.
+            'default_scale' => SchoolSettings::defaultScale($org),
+            'scales' => SchoolSettings::gradingScales($org),
+            'simple_marks' => SimpleMark::key(),
+            // The vocabulary of the new fields, served rather than hardcoded so
+            // no screen re-spells a type or re-derives what a teacher may pick.
+            'types' => array_map(fn (string $t): array => [
+                'key' => $t, 'label' => ClassAssignment::TYPE_LABELS[$t],
+            ], ClassAssignment::TYPES),
+            // The class's weight per type; `{}` (never `[]`) when unweighted.
+            'weights' => (object) $weights,
+            'weighting_enabled' => $weights !== [],
+            'weight_max' => ClassGradeWeight::MAX,
+            // What THIS teacher may file work under, and where the form starts.
+            'subjects' => $offered,
+            'default_subject' => ClassSubjects::defaultFor($offered, $limits),
+            'my_subjects' => $limits,
+            // Off where the school teaches no pacing guide (BISS): the form hides
+            // the Standard field and the server would not write it.
+            'standards_enabled' => SchoolSettings::showsStandards($org),
+        ], Response::HTTP_OK);
+    }
+
+    private function indexWithClassSubjects(Request $request, $masjid_id, $group_id): JsonResponse
+    {
         $group = Group::findOrFail($group_id);
         $org = SchoolSettings::org($masjid_id);
         $limits = $this->limits($group);

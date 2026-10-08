@@ -496,22 +496,21 @@ class Masjid extends Model implements HasMedia
         return (bool) (self::MODULE_DEFAULTS[$key][$this->orgType()] ?? true);
     }
 
-    /** Initialization metadata is private even on the admin model response. */
-    public function attributesToArray(): array
+    /** Keep private feature metadata out of serialization without changing the array cast. */
+    protected function addCastAttributesToArray(array $attributes, array $mutatedAttributes)
     {
-        $out = parent::attributesToArray();
-        if (isset($out['capability_overrides']) && is_array($out['capability_overrides'])) {
-            $marker = $out['capability_overrides'][\App\Support\ClassSubjectInitializer::MARKER] ?? null;
-            $removed = $marker !== null || array_key_exists('class_subjects', $out['capability_overrides']);
-            unset($out['capability_overrides'][\App\Support\ClassSubjectInitializer::MARKER]);
-            if (! \App\Support\SchoolSettings::classSubjects($this)) unset($out['capability_overrides']['class_subjects']);
-            if ($out['capability_overrides'] === [] && $removed && (! is_array($marker) || ($marker['overrides_were_null'] ?? true))) $out['capability_overrides'] = null;
+        if (! array_key_exists('capability_overrides', $attributes)) return parent::addCastAttributesToArray($attributes, $mutatedAttributes);
+        $value = $this->capability_overrides;
+        if (! is_array($value) || (! array_key_exists(\App\Support\ClassSubjectInitializer::MARKER, $value) && ! array_key_exists('class_subjects', $value))) {
+            return parent::addCastAttributesToArray($attributes, $mutatedAttributes);
         }
+        $out = parent::addCastAttributesToArray($attributes, $mutatedAttributes);
+        if (array_key_exists('capability_overrides', $out)) $out['capability_overrides'] = \App\Support\ClassSubjectSerialization::overrides($this, $out['capability_overrides']);
         return $out;
     }
 
     /**
-     * Every enabled class-subject grant and every other catalogue GRANT rides the
+     * Every catalogue GRANT rides the
      * ADMIN payload only (ADMIN_APPENDS), where the SPA reads it for
      * `requiresCapability` (strictly `=== true`).
      *
@@ -521,6 +520,32 @@ class Masjid extends Model implements HasMedia
      * backend.
      */
     public function getCapabilitiesAttribute(): array
+    {
+        if (\App\Support\SchoolSettings::classSubjects($this)) {
+            return $this->capabilitiesWithClassSubjects();
+        }
+        $out = $this->legacyCapabilities();
+        // The new definition is not part of origin/main's catalogue.
+        unset($out['class_subjects']);
+        return $out;
+    }
+
+    private function legacyCapabilities(): array
+    {
+        $out = [];
+
+        foreach (config('capabilities', []) as $key => $definition) {
+            if (is_array($definition) && ($definition['kind'] ?? null) === 'module') {
+                continue;
+            }
+
+            $out[$key] = $this->hasCapability($key);
+        }
+
+        return $out;
+    }
+
+    private function capabilitiesWithClassSubjects(): array
     {
         $out = [];
 

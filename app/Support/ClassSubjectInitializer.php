@@ -58,7 +58,7 @@ final class ClassSubjectInitializer
 
     private static function baselineConflict(GroupStaff $staff, ?array $proposed): bool
     {
-        if ($staff->class_subjects_mapped_at === null || $staff->class_subject_legacy_snapshot !== null) return false;
+        if (($staff->class_subjects_mapped_at === null && $staff->class_subject_ids === null) || $staff->class_subject_legacy_snapshot !== null) return false;
         $stored = $staff->class_subject_ids;
         if (! SubjectFence::validStoredIds($stored)) return true;
         if ($stored === null || $proposed === null) return $stored !== $proposed;
@@ -75,7 +75,7 @@ final class ClassSubjectInitializer
     public static function ready(Masjid $org): bool
     {
         if (empty(($org->capability_overrides ?? [])[self::MARKER])) return false;
-        $groups = Group::withoutMasjidScope()->where('masjid_id', $org->id)->where('kind', Group::KIND_CLASS)->get();
+        $groups = self::featureGroups($org)->get();
         foreach ($groups as $group) {
             if ($group->class_subjects_initialized_at === null) return false;
             $validIds = ClassSubject::withoutMasjidScope()->where('masjid_id', $org->id)->where('group_id', $group->id)->pluck('id')->all();
@@ -86,6 +86,16 @@ final class ClassSubjectInitializer
             }
         }
         return true;
+    }
+
+    /** Include historical subject authorities after a kind change; ordinary groups stay legacy. */
+    private static function featureGroups(Masjid $org): \Illuminate\Database\Eloquent\Builder
+    {
+        return Group::withoutMasjidScope()->where('masjid_id', $org->id)->where(fn ($q) => $q
+            ->where('kind', Group::KIND_CLASS)->orWhereNotNull('class_subjects_initialized_at')
+            ->orWhereIn('id', ClassSubject::withoutMasjidScope()->where('masjid_id', $org->id)->select('group_id'))
+            ->orWhereIn('id', GroupStaff::withoutMasjidScope()->where('masjid_id', $org->id)
+                ->where(fn ($staff) => $staff->whereNotNull('class_subject_ids')->orWhereNotNull('class_subjects_mapped_at')->orWhereNotNull('class_subject_legacy_snapshot'))->select('group_id')));
     }
 
     public static function assertReady(Masjid $org): void
@@ -103,7 +113,7 @@ final class ClassSubjectInitializer
             try {
                 // First statement: PK mutex before any consistent read under InnoDB.
                 $locked = Masjid::whereKey($org->id)->lockForUpdate()->firstOrFail();
-                $groups = Group::where('masjid_id', $org->id)->where('kind', Group::KIND_CLASS)->orderBy('id')->get();
+                $groups = self::featureGroups($org)->orderBy('id')->get();
                 // Preflight every class and every restriction before writing anything.
                 $report = $groups->map(fn ($group) => self::previewGroup($group))->all();
                 $blocked = collect($report)->contains(fn ($row) => $row['blocked'] !== []);
@@ -222,7 +232,7 @@ final class ClassSubjectInitializer
         }
         $mapped = 0;
         // A restore may run inside an older transaction: locking reads bypass its stale read view.
-        foreach (GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->lockForUpdate()->get() as $staff) {
+        foreach (self::currentStaff($group) as $staff) {
             if (! self::needsMapping($staff)) continue;
             $ids = self::mapLegacy($group, $staff->subjects);
             if (self::baselineConflict($staff, $ids)) {
@@ -242,7 +252,7 @@ final class ClassSubjectInitializer
     public static function mapLegacy(Group $group, ?array $legacy, ?\Illuminate\Support\Collection $candidates = null): ?array
     {
         if ($legacy === null || $legacy === []) return null;
-        $subjects = $candidates ?? ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->lockForUpdate()->get();
+        $subjects = $candidates ?? self::currentSubjects($group);
         $ids = [];
         foreach ($legacy as $name) {
             $match = match ($name) {
@@ -257,6 +267,21 @@ final class ClassSubjectInitializer
             $ids[] = (int) $match->id;
         }
         return array_values(array_unique($ids));
+    }
+
+    /** Discover without range locks; only existing primary keys take current row locks. */
+    public static function currentStaff(Group $group): \Illuminate\Support\Collection
+    {
+        $ids = GroupStaff::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->orderBy('id')->pluck('id');
+        return $ids->map(fn ($id) => GroupStaff::withoutMasjidScope()->whereKey($id)->lockForUpdate()->first())
+            ->filter(fn ($row) => $row !== null && (int) $row->masjid_id === (int) $group->masjid_id && (int) $row->group_id === (int) $group->id)->values();
+    }
+
+    private static function currentSubjects(Group $group): \Illuminate\Support\Collection
+    {
+        $ids = ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->orderBy('id')->pluck('id');
+        return $ids->map(fn ($id) => ClassSubject::withoutMasjidScope()->whereKey($id)->lockForUpdate()->first())
+            ->filter(fn ($row) => $row !== null && (int) $row->masjid_id === (int) $group->masjid_id && (int) $row->group_id === (int) $group->id)->values();
     }
 
     public static function startingList(Group $group, bool $currentGradesOnly = false): array

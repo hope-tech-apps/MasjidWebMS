@@ -91,3 +91,32 @@ it('restores a ready class from current restrictions after an older read view wa
         if ($user !== null) DB::table('users')->where('id', $user->id)->delete();
     }
 });
+
+it('does not gap lock another schools staff insert when initializing an empty class', function () {
+    expect(DB::connection()->transactionLevel())->toBe(0);
+    $orgs = []; $user = null;
+    try {
+        foreach (['A', 'B'] as $label) $orgs[] = Masjid::create(['name' => 'Gap Practice '.$label.' '.uniqid(), 'email' => uniqid().'@example.invalid', 'phone' => '+1'.random_int(1000000000, 9999999999), 'country_id' => '1', 'city_id' => '1', 'address' => 'Practice', 'latitude' => 0, 'longitude' => 0, 'org_type' => 'school']);
+        $a = Group::factory()->create(['masjid_id' => $orgs[0]->id, 'kind' => 'class']);
+        $b = Group::factory()->create(['masjid_id' => $orgs[1]->id, 'kind' => 'class']);
+        $user = \App\Models\User::factory()->create(['type' => 'Teacher', 'phone' => '+1'.random_int(1000000000, 9999999999)]);
+        config(['database.connections.class_subject_gap_peer' => array_replace(DB::connection()->getConfig(), ['name' => 'class_subject_gap_peer'])]);
+        $peer = DB::connection('class_subject_gap_peer');
+        $peer->statement('SET SESSION innodb_lock_wait_timeout = 2');
+        DB::beginTransaction();
+        ClassSubjectInitializer::run($orgs[0]);
+        // Keep A's locks open. B must INSERT now, before A commits/rolls back.
+        $peer->table('group_staff')->insert(['masjid_id' => $orgs[1]->id, 'group_id' => $b->id, 'user_id' => $user->id, 'role' => 'teacher']);
+        expect($peer->table('group_staff')->where('group_id', $b->id)->count())->toBe(1);
+        DB::rollBack();
+    } finally {
+        while (DB::connection()->transactionLevel() > 0) DB::rollBack();
+        DB::purge('class_subject_gap_peer');
+        foreach ($orgs as $org) {
+            DB::table('masjid_capability_changes')->where('masjid_id', $org->id)->delete();
+            DB::table('groups')->where('masjid_id', $org->id)->delete();
+            DB::table('masjids')->where('id', $org->id)->delete();
+        }
+        if ($user !== null) DB::table('users')->where('id', $user->id)->delete();
+    }
+});

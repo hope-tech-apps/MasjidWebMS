@@ -179,14 +179,35 @@ class Group extends Model
      */
     public function save(array $options = [])
     {
+        $tenantId = app(\App\Support\TenantContext::class)->get();
+        // Creating hooks stamp the bound tenant before INSERT, overriding a supplied id.
+        $orgId = ! $this->exists && $tenantId !== null ? $tenantId : ($this->masjid_id ?? $tenantId);
+        $loaded = $this->relationLoaded('masjid') ? $this->getRelation('masjid') : null;
+        if (! \App\Support\ClassSubjectMode::enabled($orgId, $loaded)) return parent::save($options);
+        return $this->saveWithClassSubjects($options, $orgId);
+    }
+
+    private function saveWithClassSubjects(array $options, int|string $orgId)
+    {
         $transition = $this->teachesStudents() && (! $this->exists || $this->isDirty('kind')
             || ($this->isDirty('deleted_at') && $this->deleted_at === null));
-        if (! $transition) return parent::save($options);
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($options) {
-            $orgId = app(\App\Support\TenantContext::class)->get() ?? $this->masjid_id;
-            $org = Masjid::whereKey($orgId)->lockForUpdate()->firstOrFail();
+        $leaving = $this->exists && $this->isDirty('kind') && ! $this->teachesStudents()
+            && ($this->getOriginal('kind') === self::KIND_CLASS || \App\Support\SubjectFence::usesClassSubjects($this));
+        if (! $transition && ! $leaving) return parent::save($options);
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($options, $leaving, $transition, $orgId) {
+            $org = Masjid::withTrashed()->whereKey($orgId)->lockForUpdate()->firstOrFail();
+            if (! \App\Support\SchoolSettings::classSubjects($org)) return parent::save($options);
+            if ($leaving) {
+                $restricted = \App\Support\ClassSubjectInitializer::currentStaff($this)->contains(fn ($row) =>
+                    $row->class_subject_ids !== null || \App\Support\ClassSubjectInitializer::needsMapping($row));
+                $work = $this->assignments()->whereNotNull('subject')->exists()
+                    || $this->lessonPlans()->whereNotNull('subject')->exists()
+                    || $this->hifzEntries()->exists() || $this->arabicLetterProgress()->exists()
+                    || \App\Models\ArabicDailyNote::where('group_id', $this->id)->exists();
+                if ($restricted || $work) throw \Illuminate\Validation\ValidationException::withMessages(['kind' => ['Keep this group as a class while it has subject restrictions or saved subject work.']]);
+            }
             $saved = parent::save($options);
-            if ($saved && \App\Support\SchoolSettings::classSubjects($org)) {
+            if ($saved && $transition) {
                 \App\Support\ClassSubjectInitializer::initializeGroup($this);
                 $this->refresh();
             }
