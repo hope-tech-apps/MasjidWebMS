@@ -1,6 +1,7 @@
 <template>
     <section class="class-subject-manager border rounded p-3 mb-4" aria-label="Class subjects">
-        <h3 class="h5">Class subjects</h3>
+        <button type="button" class="btn btn-outline-secondary" :aria-expanded="String(expanded)" :aria-controls="`${id}-body`" @click="expanded = !expanded">Class subjects ({{ subjects.length }})</button>
+        <div v-if="expanded" :id="`${id}-body`" class="mt-3">
         <p class="text-muted small">The office manages this class's subjects. Removing a subject hides it and keeps all its work.</p>
         <p v-if="loading" role="status">Loading subjects…</p>
         <div v-if="error" class="alert alert-warning" role="alert">
@@ -17,11 +18,11 @@
                         <span v-if="subject.guide_subject" class="text-muted small">Follows the curriculum for: {{ subject.guide_subject }}</span>
                     </div>
                     <div class="d-flex flex-wrap gap-2 mt-2">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving" @click="edit(subject)">Rename {{ subject.name }}</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving || index === 0" @click="move(index, -1)">Move {{ subject.name }} up</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving || index === subjects.length - 1" @click="move(index, 1)">Move {{ subject.name }} down</button>
-                        <button v-if="subject.hidden_at" type="button" class="btn btn-sm btn-outline-success" :disabled="saving" @click="restore(subject)">Bring back {{ subject.name }}</button>
-                        <button v-else type="button" class="btn btn-sm btn-outline-danger" :disabled="saving" @click="removing = subject">Remove {{ subject.name }}</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving" :aria-label="`Rename ${subject.name}`" @click="edit(subject)">Rename</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving || subject.hidden_at != null || visibleNeighbour(index, -1) === null" :aria-label="`Move ${subject.name} up`" @click="move(index, -1)">Up</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving || subject.hidden_at != null || visibleNeighbour(index, 1) === null" :aria-label="`Move ${subject.name} down`" @click="move(index, 1)">Down</button>
+                        <button v-if="subject.hidden_at" type="button" class="btn btn-sm btn-outline-success" :disabled="saving" :aria-label="`Bring back ${subject.name}`" @click="restore(subject)">Bring back</button>
+                        <button v-else type="button" class="btn btn-sm btn-outline-danger" :disabled="saving" :aria-label="`Remove ${subject.name}`" @click="removing = subject">Remove</button>
                     </div>
                     <div v-if="removing?.id === subject.id" class="alert alert-warning mt-2 mb-0">
                         Hide {{ subject.name }}? All its work is kept. Nothing is deleted.
@@ -87,6 +88,7 @@
             <button type="button" class="btn btn-outline-success mt-3" :disabled="saving" @click="addCurrentGrades">Add subjects for current grades</button>
             <p class="text-muted small mt-2 mb-0">Adds missing subjects for the students' current grades. Existing subjects and work are kept.</p>
         </template>
+        </div>
     </section>
 </template>
 
@@ -100,6 +102,7 @@ import type { ClassSubject, ClassSubjectTool } from '@/core/types/data/masjid-re
 const props = defineProps<{ base: string }>();
 const emit = defineEmits<{ changed: [subjects: ClassSubject[]] }>();
 const id = `class-subject-form-${useId()}`;
+const expanded = ref(false);
 const subjects = ref<ClassSubject[]>([]);
 const guideSubjects = ref<string[]>([]);
 const schoolNames = ref<string[]>([]);
@@ -179,9 +182,16 @@ const save = () => {
     if (editing.value === null && attachSavedWork.value) payload.attach_saved_work = true;
     return mutate(() => api().save(editing.value, payload), editing.value === null ? 'Subject added.' : 'Subject saved.', cancel);
 };
+// Visible subjects exchange their slots; hidden rows keep their ordered positions.
+const visibleNeighbour = (index: number, direction: number): number | null => {
+    for (let candidate = index + direction; candidate >= 0 && candidate < subjects.value.length; candidate += direction) {
+        if (!subjects.value[candidate].hidden_at) return candidate;
+    }
+    return null;
+};
 const move = (index: number, direction: number) => {
-    const target = index + direction;
-    if (saving.value || target < 0 || target >= subjects.value.length) return;
+    const target = visibleNeighbour(index, direction);
+    if (saving.value || subjects.value[index].hidden_at || target === null) return;
     const ids = subjects.value.map(s => s.id); [ids[index], ids[target]] = [ids[target], ids[index]];
     return mutate(() => api().reorder(ids), 'Subject order saved.');
 };
@@ -193,6 +203,6 @@ onBeforeUnmount(() => { alive = false; ++generation; });
 </script>
 
 <style scoped>
-.class-subject-manager { min-width: 0; overflow-wrap: anywhere; }
+.class-subject-manager { text-align: start; min-width: 0; overflow-wrap: anywhere; }
 .class-subject-manager .btn { white-space: normal; min-height: 44px; }
 </style>

@@ -275,3 +275,10 @@ const signOut = async () => {
     }
 }
 </style>
+
+<style>
+/* Add the menu's width to the legacy content width only on subject-enabled pages. */
+@media (min-width: 1280px) {
+    .mn-realm > main.container:has(.class-workspace) { max-width: calc(960px + 13.5rem) !important; }
+}
+</style>

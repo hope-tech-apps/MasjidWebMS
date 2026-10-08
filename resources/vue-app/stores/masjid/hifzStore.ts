@@ -48,7 +48,7 @@ export const useHifzStore = defineStore('hifzStore', () => {
     const masjidStore = useMasjidStore();
 
     /** The halaqa's recitation log, newest first, pre-filtered to what the caller may read. */
-    async function fetchEntries(groupId: number | string, page: number = 1): Promise<void> {
+    async function fetchEntries(groupId: number | string, page: number = 1, keepResponse: () => boolean = () => true): Promise<void> {
         if (!masjidStore.masjid?.id) return;
 
         if (entriesPaginated.value) {
@@ -58,6 +58,7 @@ export const useHifzStore = defineStore('hifzStore', () => {
         const res: AxiosResponse = await ApiService.get(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/hifz?page=${page}` as BackendApiRoute
         );
+        if (!keepResponse()) return;
         if (res.data?.status === 'success' && res.data?.data) {
             entriesPaginated.value = res.data.data;
             hifzMeta.value = res.data.meta;
@@ -70,13 +71,15 @@ export const useHifzStore = defineStore('hifzStore', () => {
      */
     async function fetchProgress(
         groupId: number | string,
-        membershipId: number
+        membershipId: number,
+        keepResponse: () => boolean = () => true
     ): Promise<HifzProgress | null> {
         if (!masjidStore.masjid?.id) return null;
 
         const res: AxiosResponse = await ApiService.get(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members/${membershipId}/hifz/progress` as BackendApiRoute
         );
+        if (!keepResponse()) return null;
         if (res.data?.status === 'success' && res.data?.data) {
             progressByMembership.value = { ...progressByMembership.value, [membershipId]: res.data.data };
             return res.data.data;

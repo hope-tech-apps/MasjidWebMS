@@ -92,6 +92,7 @@
         <div v-if="memberships.length === 0" class="text-center py-5 text-muted">
             <i class="bi bi-person-x fs-1 d-block mb-3"></i>
             <p class="mb-0">Nobody is on this roster yet</p>
+            <slot name="afterMembers" />
         </div>
 
         <div v-else>
@@ -263,6 +264,8 @@
                     </tbody>
                 </table>
             </div>
+
+            <slot name="afterMembers" />
 
             <!--
                 GUARDIAN EDGES, rendered as what they actually are.

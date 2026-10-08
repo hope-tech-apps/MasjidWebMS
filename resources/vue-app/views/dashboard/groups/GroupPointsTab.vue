@@ -255,6 +255,7 @@
 </template>
 
 <script setup lang="ts">
+import { useToolResponseGuard } from '@/composables/useToolResponseGuard';
 import { ref, computed, onBeforeMount, watch } from 'vue';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
@@ -282,9 +283,14 @@ import Swal from 'sweetalert2';
 
 const props = defineProps<{
     groupId: number;
+    masjidId?: number;
+    classSubjectsEnabled?: boolean;
+    subjectId?: number | null;
     memberships: GroupMembership[];
 }>();
 
+const keepResponseFor = useToolResponseGuard(() => props.classSubjectsEnabled === true,
+    () => JSON.stringify([props.masjidId, props.groupId, props.subjectId]));
 // Stores
 const behaviorStore = useBehaviorStore();
 
@@ -303,6 +309,9 @@ const emptyAwardForm = (): BehaviorAwardPayload => ({
     membership_id: 0, behavior_skill_id: 0, points: null, note: ''
 });
 const awardForm = ref<BehaviorAwardPayload>(emptyAwardForm());
+watch(() => awardForm.value.membership_id, () => {
+    if (props.classSubjectsEnabled) awarding.value = false;
+}, { flush: 'sync' });
 
 const emptySkillForm = (): BehaviorSkillPayload => ({
     label: '', polarity: 'positive', default_points: 1, is_active: true
@@ -360,24 +369,31 @@ const loadAll = async () => {
     loading.value = true;
     loadError.value = '';
     forbidden.value = false;
+    const keepResponse = keepResponseFor(() => props.groupId, 'list');
     try {
-        await behaviorStore.fetchAwards(props.groupId, 1);
+        await behaviorStore.fetchAwards(props.groupId, 1, keepResponse);
+        if (!keepResponse()) return;
         await loadSummaries();
+        if (!keepResponse()) return;
     } catch (error) {
+        if (!keepResponse()) return;
         if (isForbidden(error)) {
             forbidden.value = true;
         } else {
             loadError.value = apiErrorText(error, 'Failed to load the behaviour records.');
         }
     } finally {
+        if (!keepResponse()) return;
         loading.value = false;
     }
 
     // The vocabulary is tenant-level and never audience-gated, so it loads even
     // when the awards above were refused — the "give points" path still works.
     try {
-        await behaviorStore.fetchSkills();
+        await behaviorStore.fetchSkills(false, keepResponse);
+        if (!keepResponse()) return;
     } catch (error) {
+        if (!keepResponse()) return;
         // A missing vocabulary shows as an empty picker with its own hint.
     }
 };
@@ -393,7 +409,7 @@ const loadAll = async () => {
 const loadSummaries = async () => {
     await Promise.all(participants.value.map(async (participant) => {
         try {
-            await behaviorStore.fetchSummary(props.groupId, participant.id);
+            await behaviorStore.fetchSummary(props.groupId, participant.id, keepResponseFor(() => participant.id, `student:${participant.id}`));
         } catch (error) {
             // That student's cell falls back to zero; the log below is unaffected.
         }
@@ -402,10 +418,16 @@ const loadSummaries = async () => {
 
 const pageChange = async (data: PageChangeData) => {
     if (data.toPage === (paginationOptions.value?.currentPage ?? 1)) return;
+    const keepResponse = keepResponseFor(() => props.groupId, 'list');
+    if (props.classSubjectsEnabled) loading.value = true;
     try {
-        await behaviorStore.fetchAwards(props.groupId, data.toPage);
+        await behaviorStore.fetchAwards(props.groupId, data.toPage, keepResponse);
+        if (!keepResponse()) return;
     } catch (error) {
+        if (!keepResponse()) return;
         loadError.value = apiErrorText(error, 'Failed to load the behaviour records.');
+    } finally {
+        if (props.classSubjectsEnabled && keepResponse()) loading.value = false;
     }
 };
 
@@ -429,17 +451,22 @@ const applyDefaultPoints = () => {
 const submitAward = async () => {
     if (!canAward.value) return;
     awarding.value = true;
+    const keepResponse = keepResponseFor(() => awardForm.value.membership_id, 'submitAward');
     try {
         await behaviorStore.awardSkill(props.groupId, {
             ...awardForm.value,
             points: pointsOverride.value
         });
+        if (!keepResponse()) return;
         showAwardModal.value = false;
         await loadAll();
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'success', title: 'Recorded', timer: 1600, showConfirmButton: false });
     } catch (error) {
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to record the award.') });
     } finally {
+        if (!keepResponse()) return;
         awarding.value = false;
     }
 };
@@ -447,18 +474,24 @@ const submitAward = async () => {
 const submitSkill = async () => {
     if (!skillForm.value.label) return;
     savingSkill.value = true;
+    const keepResponse = keepResponseFor(() => props.groupId, 'submitSkill');
     try {
         await behaviorStore.createSkill(skillForm.value);
+        if (!keepResponse()) return;
         skillForm.value = emptySkillForm();
-        await behaviorStore.fetchSkills();
+        await behaviorStore.fetchSkills(false, keepResponse);
+        if (!keepResponse()) return;
     } catch (error) {
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to create the skill.') });
     } finally {
+        if (!keepResponse()) return;
         savingSkill.value = false;
     }
 };
 
 const confirmRevoke = async (award: BehaviorAward) => {
+    const keepResponse = keepResponseFor(() => props.groupId, 'confirmRevoke');
     const result = await Swal.fire({
         title: 'Revoke this award?',
         text: 'It leaves every listing and every total at once, and the correction is recorded against your account.',
@@ -468,14 +501,18 @@ const confirmRevoke = async (award: BehaviorAward) => {
         cancelButtonColor: '#3085d6',
         confirmButtonText: 'Yes, revoke'
     });
+    if (!keepResponse()) return;
 
     if (!result.isConfirmed) return;
 
     try {
         await behaviorStore.revokeAward(props.groupId, award.id);
+        if (!keepResponse()) return;
         await loadAll();
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'success', title: 'Revoked', timer: 1600, showConfirmButton: false });
     } catch (error) {
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to revoke the award.') });
     }
 };

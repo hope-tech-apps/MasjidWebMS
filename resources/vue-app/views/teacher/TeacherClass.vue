@@ -4056,15 +4056,19 @@ const toggleStudent = async (s: any) => {
     studentGrades.value = null;
     studentError.value = '';
     studentLoading.value = true;
+    const keepResponse = classSubjects.keepRead(() => openStudentId.value, 'toggleStudent');
     try {
         const res = await TeacherApiService.get(`${base.value}/members/${s.membership_id}/grades`);
+        if (!keepResponse()) return;
         // A slower answer for a child the teacher has already moved off is dropped.
         if (openStudentId.value !== s.membership_id) return;
         studentGrades.value = res.data?.data ?? null;
         levelKey.value = res.data?.performance_levels ?? levelKey.value;
     } catch {
+        if (!keepResponse()) return;
         if (openStudentId.value === s.membership_id) studentError.value = 'Could not load that child’s marks.';
     } finally {
+        if (!keepResponse()) return;
         if (openStudentId.value === s.membership_id) studentLoading.value = false;
     }
 };
@@ -4571,7 +4575,7 @@ const NEXT: Record<string, string> = { not_started: 'learning', learning: 'maste
  * reports its own failure.
  */
 const loadLettersOverview = async (which: string = lettersAlphabet.value) => {
-    const keepRead = classSubjects.keepRead(() => lettersAlphabet.value);
+    const keepRead = classSubjects.keepRead(() => lettersAlphabet.value, 'letters-overview');
     try {
         const res = await TeacherApiService.get(`${base.value}/letters?alphabet=${which}`);
         if (keepRead()) lettersOverview.value = res.data?.data ?? null;
@@ -4595,7 +4599,7 @@ const closeLetters = () => {
 
 const openLetters = async (s: any) => {
     selected.value = s;
-    const keepRead = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`);
+    const keepRead = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'openLetters');
     openTile.value = null;
     letterError.value = '';
     tracker.value = null;
@@ -4663,6 +4667,7 @@ const advance = async (drill: any) => {
     if (!selected.value) return;
     marking.value = drill.id;
     letterError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'advance');
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters`,
@@ -4671,9 +4676,11 @@ const advance = async (drill: any) => {
             // the other, and the server judges it against the named one.
             { drill_id: drill.id, status: NEXT[drill.status] ?? 'learning', alphabet: lettersAlphabet.value }
         );
+        if (!keepResponse()) return;
         // Marking returns the whole tracker, so totals and tile colour move together.
         tracker.value = res.data?.data ?? tracker.value;
     } catch (e: any) {
+        if (!keepResponse()) return;
         // The tile is deliberately left where it was — a failed write must never
         // lie about progress. But it must SAY SO: this catch was silent, and a
         // teacher tapping a letter that never moved had no way to tell a refusal
@@ -4681,6 +4688,7 @@ const advance = async (drill: any) => {
         letterError.value = e?.response?.data?.message
             ?? 'That did not save. Check your connection and tap again.';
     } finally {
+        if (!keepResponse()) return;
         marking.value = null;
     }
 };
@@ -4703,20 +4711,24 @@ const masterAll = async (scope: 'stage' | 'everything' = 'stage') => {
     masteringAll.value = true;
     masterAllError.value = '';
     masterAllNote.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'masterAll');
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters/master-all`,
             { alphabet: lettersAlphabet.value, scope }
         );
+        if (!keepResponse()) return;
         tracker.value = res.data?.data ?? tracker.value;
         masterAllNote.value = res.data?.message ?? 'Marked mastered.';
         confirmMasterAll.value = false;
     } catch (e: any) {
+        if (!keepResponse()) return;
         // Nothing is shown as mastered unless the server said so: the tracker is
         // only replaced by a successful response.
         masterAllError.value = e?.response?.data?.message
             ?? 'That did not save. Check your connection and try again.';
     } finally {
+        if (!keepResponse()) return;
         masteringAll.value = false;
     }
 };
@@ -4750,18 +4762,22 @@ const masterGroup = async (group: any) => {
     if (!selected.value) return;
     masteringGroup.value = group.id;
     groupError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'masterGroup');
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters/master-all`,
             { alphabet: lettersAlphabet.value, scope: 'group', group: group.id }
         );
+        if (!keepResponse()) return;
         tracker.value = res.data?.data ?? tracker.value;
         masterAllNote.value = res.data?.message ?? 'Marked mastered.';
         confirmGroup.value = null;
     } catch (e: any) {
+        if (!keepResponse()) return;
         groupError.value = e?.response?.data?.message
             ?? 'That did not save. Check your connection and try again.';
     } finally {
+        if (!keepResponse()) return;
         masteringGroup.value = null;
     }
 };
@@ -4778,17 +4794,22 @@ watch([selected, lettersAlphabet], () => {
 const setStage = async (stage: string) => {
     savingStage.value = true;
     stageNote.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'setStage');
     try {
         const res = await TeacherApiService.put(`${base.value}/letters/stage`, { stage });
+        if (!keepResponse()) return;
         stageNote.value = res.data?.message ?? 'Class stage updated.';
         if (group.value) group.value.arabic_stage = stage;
         // A narrower stage re-scopes an open tracker — and the whole class's
         // denominator with it, so the list behind the child is re-read too.
         await loadLettersOverview();
+        if (!keepResponse()) return;
         if (selected.value) await openLetters(selected.value);
     } catch {
+        if (!keepResponse()) return;
         stageNote.value = 'The class stage could not be changed.';
     } finally {
+        if (!keepResponse()) return;
         savingStage.value = false;
     }
 };
@@ -4840,6 +4861,7 @@ const saveDrillNote = async (drill: any, note?: string) => {
     if (!selected.value) return;
     savingDrillNote.value = true;
     drillNoteError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'saveDrillNote');
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters`,
@@ -4850,10 +4872,12 @@ const saveDrillNote = async (drill: any, note?: string) => {
                 note: note ?? drillNoteDraft.value,
             }
         );
+        if (!keepResponse()) return;
         tracker.value = res.data?.data ?? tracker.value;
         lettersMeta.value = res.data?.meta ?? lettersMeta.value;
         openDrillNote.value = null;
     } catch (e: any) {
+        if (!keepResponse()) return;
         // The editor stays OPEN and the draft stays in it. A teacher who has
         // just typed three sentences about a child and hit a dead connection
         // must not lose them to a closing panel.
@@ -4863,6 +4887,7 @@ const saveDrillNote = async (drill: any, note?: string) => {
         // and the save looks like it silently did nothing.
         drillNoteError.value = apiErrorText(e, 'That note did not save. Check your connection and try again.');
     } finally {
+        if (!keepResponse()) return;
         savingDrillNote.value = false;
     }
 };
@@ -4920,13 +4945,16 @@ const loadDailyNotes = async () => {
     dailyNotesLoading.value = true;
     dailyNotesFailed.value = '';
     dailyNoteError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'loadDailyNotes');
     try {
         const res = await TeacherApiService.get(
             `${base.value}/members/${selected.value.membership_id}/arabic-notes`
         );
+        if (!keepResponse()) return;
         dailyNotes.value = rowsOf(res.data?.data);
         lettersMeta.value = res.data?.meta ?? lettersMeta.value;
     } catch (e: any) {
+        if (!keepResponse()) return;
         // NOT a silent empty list. "No daily notes for this student yet" and
         // "we could not ask" are different sentences, and this module has
         // already been bitten by a screen that rendered a failed read as a
@@ -4935,6 +4963,7 @@ const loadDailyNotes = async () => {
         dailyNotes.value = [];
         dailyNotesFailed.value = apiErrorText(e, 'They could not be loaded.');
     } finally {
+        if (!keepResponse()) return;
         dailyNotesLoading.value = false;
     }
 };
@@ -4955,18 +4984,23 @@ const saveDailyNote = async () => {
     if (!selected.value || !dailyNoteDraft.value.trim()) return;
     savingDailyNote.value = true;
     dailyNoteError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'saveDailyNote');
     try {
         await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/arabic-notes`,
             { session_date: dailyNoteDate.value, note: dailyNoteDraft.value }
         );
+        if (!keepResponse()) return;
         // Re-read rather than splice the response in: the list is ordered by day
         // and an edited day moves within it, so building the new list here is a
         // second place that can disagree with the server about what is filed.
         await loadDailyNotes();
+        if (!keepResponse()) return;
     } catch (e: any) {
+        if (!keepResponse()) return;
         dailyNoteError.value = apiErrorText(e, 'That note did not save. Check your connection and try again.');
     } finally {
+        if (!keepResponse()) return;
         savingDailyNote.value = false;
     }
 };
@@ -4986,14 +5020,19 @@ const deleteDailyNote = async (n: any) => {
 
     deletingDailyNote.value = n.id;
     dailyNoteError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${lettersAlphabet.value}:${selected.value?.membership_id}`, 'deleteDailyNote');
     try {
         await TeacherApiService.delete(
             `${base.value}/members/${selected.value.membership_id}/arabic-notes/${n.id}`
         );
+        if (!keepResponse()) return;
         await loadDailyNotes();
+        if (!keepResponse()) return;
     } catch (e: any) {
+        if (!keepResponse()) return;
         dailyNoteError.value = apiErrorText(e, 'That note could not be removed.');
     } finally {
+        if (!keepResponse()) return;
         deletingDailyNote.value = null;
     }
 };
@@ -5037,6 +5076,7 @@ const createSkill = async () => {
     if (!newSkill.value.label) return;
     addingSkill.value = true;
     skillError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${pointsMembership.value}:${route.query.week ?? ''}`, 'createSkill');
     try {
         const res = await TeacherApiService.post(
             `/api/teacher/masjids/${masjidId.value}/behavior-skills`,
@@ -5049,6 +5089,7 @@ const createSkill = async () => {
                 is_active: true,
             }
         );
+        if (!keepResponse()) return;
         const created = res.data?.data;
         if (created?.id) {
             skills.value = withSkillInserted(skills.value, created);
@@ -5056,10 +5097,12 @@ const createSkill = async () => {
         }
         newSkill.value = { label: '', polarity: 'positive', default_points: 1 };
     } catch (e: any) {
+        if (!keepResponse()) return;
         skillError.value = e?.response?.data?.data?.label?.[0]
             ?? e?.response?.data?.data?.default_points?.[0]
             ?? 'That could not be added.';
     } finally {
+        if (!keepResponse()) return;
         addingSkill.value = false;
     }
 };
@@ -5073,16 +5116,23 @@ const pointsTotalsFailed = ref(false);
 // week in progress. Stepping is by the server's own `previous` / `next`, never by
 // arithmetic on the browser's clock (the browser's zone is not the school's).
 const loadPointsTotals = async (week: string | null = null) => {
+    if (classSubjects.enabled.value && weekFromQuery(route.query.week) !== (week ?? null)) {
+        // The address watcher owns this read, so a week button sends only once.
+        return classSubjects.setWeek(week ?? null);
+    }
     pointsTotalsFailed.value = false;
+    const keepResponse = classSubjects.keepRead(() => route.query.week ?? null, 'loadPointsTotals');
     try {
         const res = await TeacherApiService.get(
             `${base.value}/awards/totals${week ? `?week=${encodeURIComponent(week)}` : ''}`
         );
+        if (!keepResponse()) return;
         pointsTotals.value = res.data?.data ?? null;
         // The server's word on how this class reads (another teacher of the class
         // may have changed it since this screen loaded).
         if (group.value && pointsTotals.value?.points_period) group.value.points_period = pointsTotals.value.points_period;
     } catch {
+        if (!keepResponse()) return;
         // Hidden rather than shown as zeros: a failed read is not "no points".
         pointsTotals.value = null;
         pointsTotalsFailed.value = true;
@@ -5113,19 +5163,25 @@ const setPointsPeriod = async (input: HTMLInputElement) => {
     const weekly = input.checked;
     savingPeriod.value = true;
     periodError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${pointsMembership.value}:${route.query.week ?? ''}`, 'setPointsPeriod');
     try {
         const res = await TeacherApiService.put(`${base.value}/points-period`, {
             points_period: weekly ? 'weekly' : 'running',
         });
+        if (!keepResponse()) return;
         // The server's word, not the checkbox's: what is stored is what is shown.
         const stored = res.data?.data?.points_period ?? (weekly ? 'weekly' : 'running');
         if (group.value) group.value.points_period = stored;
-        await loadPointsTotals(pointsTotals.value?.week?.is_current === false ? pointsTotals.value.week.start : null);
+        await loadPointsTotals(classSubjects.enabled.value ? weekFromQuery(route.query.week)
+            : (pointsTotals.value?.week?.is_current === false ? pointsTotals.value.week.start : null));
+        if (!keepResponse()) return;
     } catch (e: any) {
+        if (!keepResponse()) return;
         periodError.value = apiErrorText(e, 'That could not be saved.');
         // The switch shows what is actually stored, not what was tapped.
         input.checked = !weekly;
     } finally {
+        if (!keepResponse()) return;
         savingPeriod.value = false;
     }
 };
@@ -5135,8 +5191,10 @@ const loadAwards = async () => {
     if (!pointsMembership.value) return;
     awardsLoading.value = true;
     awardError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${pointsMembership.value}:${route.query.week ?? ''}`, 'loadAwards');
     try {
         const res = await TeacherApiService.get(`${base.value}/members/${pointsMembership.value}/awards`);
+        if (!keepResponse()) return;
         awards.value = rowsOf(res.data?.data);
         // The behaviour vocabulary, if the payload carries it alongside the log.
         const s = res.data?.data?.skills ?? group.value?.behavior_skills ?? [];
@@ -5146,8 +5204,10 @@ const loadAwards = async () => {
             awardSkillId.value = picker.selectedId;
         }
     } catch {
+        if (!keepResponse()) return;
         awardError.value = 'The behaviour record could not be loaded.';
     } finally {
+        if (!keepResponse()) return;
         awardsLoading.value = false;
     }
 };
@@ -5156,8 +5216,10 @@ const loadAwards = async () => {
 // per class), so it is loaded from the teacher's school, once.
 const loadSkills = async () => {
     if (skills.value.length) return;
+    const keepResponse = classSubjects.keepRead(() => null, 'loadSkills');
     try {
         const res = await TeacherApiService.get(`/api/teacher/masjids/${masjidId.value}/behavior-skills`);
+        if (!keepResponse()) return;
         const s = rowsOf(res.data?.data);
         if (s.length) {
             const picker = pickerFrom(s, awardSkillId.value);
@@ -5165,6 +5227,7 @@ const loadSkills = async () => {
             awardSkillId.value = picker.selectedId;
         }
     } catch {
+        if (!keepResponse()) return;
         // Falls back to whatever the awards payload carried.
     }
 };
@@ -5173,6 +5236,7 @@ const giveAward = async () => {
     if (!pointsMembership.value || !awardSkillId.value) return;
     awarding.value = true;
     awardError.value = '';
+    const keepResponse = classSubjects.keepRead(() => `${pointsMembership.value}:${route.query.week ?? ''}`, 'giveAward');
     try {
         const body: Record<string, any> = {
             membership_id: pointsMembership.value,
@@ -5181,26 +5245,34 @@ const giveAward = async () => {
         if (awardPoints.value !== null && awardPoints.value !== undefined) body.points = awardPoints.value;
         if (awardNote.value) body.note = awardNote.value;
         await TeacherApiService.post(`${base.value}/awards`, body);
+        if (!keepResponse()) return;
         awardPoints.value = null;
         awardNote.value = '';
         await loadAwards();
-        loadPointsTotals();
+        if (!keepResponse()) return;
+        loadPointsTotals(classSubjects.enabled.value ? weekFromQuery(route.query.week) : null);
     } catch (e: any) {
+        if (!keepResponse()) return;
         awardError.value = e?.response?.data?.message || 'Those points could not be given.';
     } finally {
+        if (!keepResponse()) return;
         awarding.value = false;
     }
 };
 
 const removeAward = async (award: any) => {
     removingAward.value = award.id;
+    const keepResponse = classSubjects.keepRead(() => `${pointsMembership.value}:${route.query.week ?? ''}`, 'removeAward');
     try {
         await TeacherApiService.delete(`${base.value}/awards/${award.id}`);
+        if (!keepResponse()) return;
         awards.value = awards.value.filter((a) => a.id !== award.id);
-        loadPointsTotals();
+        loadPointsTotals(classSubjects.enabled.value ? weekFromQuery(route.query.week) : null);
     } catch {
+        if (!keepResponse()) return;
         awardError.value = 'That entry could not be removed.';
     } finally {
+        if (!keepResponse()) return;
         removingAward.value = null;
     }
 };
@@ -5293,10 +5365,13 @@ const hifzValid = computed(() =>
 
 const loadSurahs = async () => {
     if (surahs.value.length) return;
+    const keepResponse = classSubjects.keepRead(() => null, 'loadSurahs');
     try {
         const res = await TeacherApiService.get(`/api/teacher/masjids/${masjidId.value}/quran-surahs`);
+        if (!keepResponse()) return;
         surahs.value = res.data?.data ?? [];
     } catch {
+        if (!keepResponse()) return;
         // The form still submits by number if the index cannot be reached.
     }
 };
@@ -5403,6 +5478,7 @@ const saveHifzEdit = async () => {
 
     recordingHifz.value = true;
     hifzError.value = '';
+    const keepResponse = classSubjects.keepRead(() => hifzMembership.value, 'saveHifzEdit');
     try {
         const res = await TeacherApiService.post(`${base.value}/hifz/${entry.id}/correct`, {
             kind: f.kind,
@@ -5413,6 +5489,7 @@ const saveHifzEdit = async () => {
             note: noteNow,
             ...(dayChanged ? { recited_at: hifzDayToSend(dayNow) } : {}),
         });
+        if (!keepResponse()) return;
         const saved = res.data?.data;
         endHifzEdit();
         if (saved && saved.id === entry.id && !saved.corrected_at) {
@@ -5425,11 +5502,14 @@ const saveHifzEdit = async () => {
         } else {
             // An answer that does not say what was stored: show what the server holds.
             await loadHifz();
+            if (!keepResponse()) return;
         }
     } catch (e: any) {
+        if (!keepResponse()) return;
         // Nothing has changed on the server. The form keeps what was typed.
         hifzError.value = apiErrorText(e, 'The change was not saved. Check your connection and try again.');
     } finally {
+        if (!keepResponse()) return;
         recordingHifz.value = false;
     }
 };
@@ -5467,8 +5547,10 @@ const saveHifzNote = async (entry: any, note?: string) => {
     if (hifzBusy.value) return;
     savingHifzNote.value = true;
     hifzNoteError.value = '';
+    const keepResponse = classSubjects.keepRead(() => hifzMembership.value, 'saveHifzNote');
     try {
         const res = await TeacherApiService.put(`${base.value}/hifz/${entry.id}`, { note: note ?? hifzNoteDraft.value });
+        if (!keepResponse()) return;
         const saved = res.data?.data;
         const row = hifz.value.find((h) => h.id === entry.id);
         if (saved && saved.id === entry.id && 'note' in saved) {
@@ -5479,11 +5561,13 @@ const saveHifzNote = async (entry: any, note?: string) => {
             // An answer that does not say what was stored is not a save the
             // screen can vouch for: show what the server holds.
             await loadHifz();
+            if (!keepResponse()) return;
         }
         // Only the editor this save belongs to. The teacher may have opened
         // another line's while it was in flight.
         if (openHifzNote.value === entry.id) openHifzNote.value = null;
     } catch (e: any) {
+        if (!keepResponse()) return;
         // The editor stays OPEN with the draft in it. apiErrorText, not
         // `data.message`: the likeliest refusal is the length rule, which
         // arrives as a validation bag with no top-level message.
@@ -5495,6 +5579,7 @@ const saveHifzNote = async (entry: any, note?: string) => {
         if (openHifzNote.value === entry.id) hifzNoteError.value = why;
         else hifzError.value = why;
     } finally {
+        if (!keepResponse()) return;
         savingHifzNote.value = false;
     }
 };
@@ -5577,25 +5662,29 @@ const copyHifz = async (entry: any) => {
         ...(entry.recited_at ? { recited_at: entry.recited_at } : {}),
     };
     const from = hifzMembership.value;
+    const copyBase = base.value;
+    const copyNames = new Map(students.value.map(s => [s.membership_id, name(s.contact)]));
     copyingHifz.value = true;
     hifzCopyError.value = '';
     hifzCopyDone.value = null;
     const copied: string[] = [];
     const failed: { id: string | number; text: string }[] = [];
+    const keepResponse = classSubjects.keepRead(() => hifzMembership.value, 'copyHifz');
     try {
         for (const id of chosen) {
-            const student = students.value.find((s) => s.membership_id === id);
-            const who = student ? name(student.contact) : 'a student';
+            const who = copyNames.get(id) ?? 'a student';
             try {
-                await TeacherApiService.post(`${base.value}/hifz`, { membership_id: id, ...line });
+                await TeacherApiService.post(`${copyBase}/hifz`, { membership_id: id, ...line });
                 copied.push(who);
             } catch (e: any) {
                 failed.push({ id, text: `Not copied for ${who}: ${apiErrorText(e, 'the line could not be recorded.')}` });
             }
         }
     } finally {
+        if (!keepResponse()) return;
         copyingHifz.value = false;
     }
+    if (!keepResponse()) return;
     const said = [
         copied.length ? `Copied to ${copied.join(', ')}.` : '',
         ...failed.map((f) => f.text),
@@ -5634,8 +5723,10 @@ const loadHifz = async () => {
     if (!hifzMembership.value) return;
     hifzLoading.value = true;
     hifzError.value = '';
+    const keepResponse = classSubjects.keepRead(() => hifzMembership.value, 'loadHifz');
     try {
         const res = await TeacherApiService.get(`${base.value}/members/${hifzMembership.value}/hifz`);
+        if (!keepResponse()) return;
         // An older student's answer, arriving late: the newer load owns the list.
         if (seq !== hifzSeq) return;
         hifz.value = rowsOf(res.data?.data);
@@ -5644,8 +5735,10 @@ const loadHifz = async () => {
         // with the backend and offered a value the API rejects.
         hifzMeta.value = res.data?.meta ?? null;
     } catch {
+        if (!keepResponse()) return;
         if (seq === hifzSeq) hifzError.value = 'The recitation log could not be loaded.';
     } finally {
+        if (!keepResponse()) return;
         if (seq === hifzSeq) hifzLoading.value = false;
     }
 };
@@ -5654,6 +5747,7 @@ const recordHifz = async () => {
     if (!hifzMembership.value || !hifzValid.value || hifzBusy.value || hifzEditing.value) return;
     recordingHifz.value = true;
     hifzError.value = '';
+    const keepResponse = classSubjects.keepRead(() => hifzMembership.value, 'recordHifz');
     try {
         await TeacherApiService.post(`${base.value}/hifz`, {
             membership_id: hifzMembership.value,
@@ -5682,6 +5776,7 @@ const recordHifz = async () => {
                 ? { recited_at: hifzDayToSend(hifzForm.value.recited_on) }
                 : {}),
         });
+        if (!keepResponse()) return;
         // The surah is KEPT: the next entry for this child is usually the next
         // few āyāt of the same one.
         hifzForm.value.from_ayah = hifzForm.value.to_ayah = null;
@@ -5696,9 +5791,12 @@ const recordHifz = async () => {
         // record.
         hifzForm.value.note = '';
         await loadHifz();
+        if (!keepResponse()) return;
     } catch (e: any) {
+        if (!keepResponse()) return;
         hifzError.value = e?.response?.data?.message || 'That recitation could not be recorded.';
     } finally {
+        if (!keepResponse()) return;
         recordingHifz.value = false;
     }
 };
@@ -5706,15 +5804,19 @@ const recordHifz = async () => {
 const removeHifz = async (entry: any) => {
     if (hifzBusy.value || hifzEditing.value) return;
     removingHifz.value = entry.id;
+    const keepResponse = classSubjects.keepRead(() => hifzMembership.value, 'removeHifz');
     try {
         await TeacherApiService.delete(`${base.value}/hifz/${entry.id}`);
+        if (!keepResponse()) return;
         hifz.value = hifz.value.filter((h) => h.id !== entry.id);
         if (openHifzNote.value === entry.id) openHifzNote.value = null;
         if (openHifzCopy.value === entry.id) openHifzCopy.value = null;
         if (hifzEditing.value?.id === entry.id) endHifzEdit();
     } catch {
+        if (!keepResponse()) return;
         hifzError.value = 'That entry could not be removed.';
     } finally {
+        if (!keepResponse()) return;
         removingHifz.value = null;
     }
 };
@@ -6500,7 +6602,10 @@ watch(activeTab, (tab) => {
         else loadPointsTotals();
     }
     if (tab === 'attendance') loadAttendance();
-    if (tab === 'hifz') loadSurahs();
+    if (tab === 'hifz') {
+        loadSurahs();
+        if (classSubjects.enabled.value && hifzMembership.value) loadHifz();
+    }
     // Every time, not once: the counts move whenever a child is marked, and this
     // is the screen the teacher comes back to between children.
     if (tab === 'letters') loadLettersOverview();
@@ -6512,7 +6617,10 @@ watch(activeTab, (tab) => {
     if (tab === 'grades' && !assignments.value.length) loadAssignments();
     if (tab === 'files' && !resources.value.length) loadResources();
     if (tab === 'reports' && !reportRows.value.length && !reportsLoading.value) loadReportCards();
-    if (tab !== 'grades') { openAssignment.value = null; }
+    if (tab !== 'grades') {
+        openAssignment.value = null;
+        if (classSubjects.enabled.value) { openStudentId.value = null; studentGrades.value = null; }
+    }
     // Unlike the gradebook above, an open report card is nulled only when there
     // is nothing unsaved: a half-marked card is not stale state, it is the
     // teacher's afternoon, and one stray tap on "More" would otherwise bin it.
@@ -6528,15 +6636,30 @@ const classSubjects = useClassSubjects({
         if (alphabet && lettersAlphabet.value !== alphabet) {
             selected.value = null;
             tracker.value = null;
+            lettersOverview.value = null;
             lettersAlphabet.value = alphabet;
         }
         activeTab.value = tab as TabKey;
     },
 });
+watch([classSubjects.enabled, activeTab, lettersAlphabet, selected, hifzMembership, pointsMembership, () => route.query.week], (values, previous) => {
+    if (!values[0] && !previous?.[0]) return;
+    trackerLoading.value = false; marking.value = null; savingStage.value = false;
+    masteringAll.value = false; masteringGroup.value = null; savingDrillNote.value = false;
+    dailyNotesLoading.value = false; savingDailyNote.value = false; deletingDailyNote.value = null;
+    studentLoading.value = false;
+    addingSkill.value = false; savingPeriod.value = false; awardsLoading.value = false;
+    awarding.value = false; removingAward.value = null;
+    hifzLoading.value = false; recordingHifz.value = false; savingHifzNote.value = false;
+    copyingHifz.value = false; removingHifz.value = null;
+}, { flush: 'sync' });
 // An ON address can choose another week without changing the Points line.
 watch(() => [route.query.tab, route.query.week], ([tab, week], [previousTab]) => {
     if (classSubjects.enabled.value && tab === 'points' && previousTab === 'points') {
+        pointsTotals.value = null;
         loadPointsTotals(weekFromQuery(week));
+        if (pointsMembership.value) loadAwards();
+        if (!skills.value.length) loadSkills();
     }
 });
 </script>

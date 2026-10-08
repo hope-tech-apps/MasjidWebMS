@@ -172,10 +172,11 @@
 </template>
 
 <script setup lang="ts">
+import { useToolResponseGuard } from '@/composables/useToolResponseGuard';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import ApiService from '@/core/services/ApiService';
 import { letterIdOfTile, letterRuns, toggledTileKey } from '@/core/helpers/letterRuns';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 const props = defineProps<{ groupId: number; masjidId: number; fixedAlphabet?: string | null }>();
 
@@ -217,7 +218,12 @@ const ALPHABETS = [
  */
 const alphabet = ref<string>(props.fixedAlphabet ?? 'arabic');
 
+watch(selected, () => {
+    if (props.fixedAlphabet) { marking.value = null; savingStage.value = false; }
+}, { flush: 'sync' });
 const base = computed(() => `/api/admin/masjids/${props.masjidId}/groups/${props.groupId}`);
+const keepResponseFor = useToolResponseGuard(() => !!props.fixedAlphabet,
+    () => JSON.stringify([base.value, props.fixedAlphabet]));
 // The runs of tiles to draw: two for English (Capitals, Lower case), one for Arabic.
 const letterRunsOf = computed(() => letterRuns(tracker.value));
 
@@ -288,14 +294,18 @@ const NEXT: Record<string, string> = {
  * switch the whole point is that the previous track stays.
  */
 const loadOverview = async (which: string = alphabet.value) => {
+    const keepResponse = keepResponseFor(() => alphabet.value, 'loadOverview');
     const res = await ApiService.get(`${base.value}/letters?alphabet=${which}` as any);
+    if (!keepResponse()) return;
     overview.value = res.data?.data ?? null;
 };
 
 onMounted(async () => {
+    const keepResponse = keepResponseFor(() => alphabet.value, 'mount');
     try {
         await loadOverview();
     } catch (e: any) {
+        if (!keepResponse()) return;
         // Without this the rejection escaped the component entirely and the tab
         // sat on an empty stage card with nothing said. The roster below is
         // empty for the same reason, so the note is the only thing on screen
@@ -304,7 +314,7 @@ onMounted(async () => {
         stageNote.value = e?.response?.data?.message
             ?? 'The letters for this class could not be loaded. Reload the page to try again.';
     } finally {
-        loading.value = false;
+        if (keepResponse()) loading.value = false;
     }
 });
 
@@ -319,15 +329,19 @@ onMounted(async () => {
  */
 const open = async (student: any, which: string = alphabet.value) => {
     selected.value = student;
+    if (props.fixedAlphabet) tracker.value = null;
     openTile.value = null;
     letterError.value = '';
 
+    const keepResponse = keepResponseFor(() => `${alphabet.value}:${selected.value?.membership_id}`, 'open');
     try {
         const res = await ApiService.get(
             `${base.value}/members/${student.membership_id}/letters?alphabet=${which}` as any
         );
+        if (!keepResponse()) return;
         tracker.value = res.data?.data ?? null;
     } catch (e: any) {
+        if (!keepResponse()) return;
         selected.value = null;
         tracker.value = null;
         stageFailed.value = true;
@@ -397,20 +411,24 @@ const setStage = async (stage: string) => {
     savingStage.value = true;
     stageNote.value = '';
     stageFailed.value = false;
+    const keepResponse = keepResponseFor(() => `${alphabet.value}:${selected.value?.membership_id}`, 'setStage');
     try {
         const res = await ApiService.put(`${base.value}/letters/stage` as any, { stage });
+        if (!keepResponse()) return;
         overview.value = res.data?.data ?? overview.value;
         stageNote.value = res.data?.message ?? '';
         // A narrower stage hides later work rather than deleting it, so a child
         // already open must be re-read against the new scope.
         if (selected.value) await open(selected.value);
     } catch (e: any) {
+        if (!keepResponse()) return;
         // The select snaps back to the stage the payload still holds, and this
         // says why rather than leaving a refusal looking like a slow save.
         stageFailed.value = true;
         stageNote.value = e?.response?.data?.message
             ?? 'The class stage could not be changed.';
     } finally {
+        if (!keepResponse()) return;
         savingStage.value = false;
     }
 };
@@ -423,14 +441,18 @@ const setStage = async (stage: string) => {
 const advance = async (drill: any) => {
     marking.value = drill.id;
     letterError.value = '';
+    const keepResponse = keepResponseFor(() => `${alphabet.value}:${selected.value?.membership_id}`, 'advance');
     try {
         const res = await ApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters` as any,
             { drill_id: drill.id, status: NEXT[drill.status] ?? 'learning', alphabet: alphabet.value }
         );
+        if (!keepResponse()) return;
         tracker.value = res.data?.data ?? tracker.value;
         await loadOverview();
+        if (!keepResponse()) return;
     } catch (e: any) {
+        if (!keepResponse()) return;
         // The tile deliberately stays where it was — a failed write must never
         // lie about progress — but it has to SAY SO. This catch did not exist,
         // which is the defect already found and fixed on the teacher's copy of
@@ -439,6 +461,7 @@ const advance = async (drill: any) => {
         letterError.value = e?.response?.data?.message
             ?? 'That did not save. Check your connection and tap again.';
     } finally {
+        if (!keepResponse()) return;
         marking.value = null;
     }
 };

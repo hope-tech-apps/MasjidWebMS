@@ -10,6 +10,7 @@
             <nav aria-label="Class navigation">
                 <div v-for="section in sections" :key="section.label" class="class-menu-section">
                     <h3 class="class-menu-heading" data-class-section>{{ section.label }}</h3>
+                    <p v-if="section.label === 'Subjects' && !section.items.length" class="text-muted small mb-0">No subjects assigned.</p>
                     <a v-for="item in section.items" :key="item.key" :href="href(item)" data-class-choice
                        :aria-current="currentKey === item.key ? 'page' : undefined"
                        class="class-menu-line" @click="select($event, item)">{{ item.label }}</a>
@@ -81,6 +82,7 @@ const show = async () => {
         }
         node = node.parentElement;
     }
+    await revealSelection();
     (panel.value && focusableIn(panel.value)[0] || panel.value)?.focus();
 };
 const keydown = (event: KeyboardEvent) => {
@@ -97,6 +99,18 @@ const select = (event: MouseEvent, item: ClassChoice) => {
     close(false);
     emit('choose', item);
     nextTick(() => { if (mounted) heading.value?.focus(); });
+};
+// Adjust the menu's own scroll position. scrollIntoView would also move the page.
+const revealSelection = async () => {
+    await nextTick();
+    if (!mounted || !props.enabled || !panel.value) return;
+    const selected = Array.from(panel.value.querySelectorAll<HTMLElement>('[data-class-choice]'))
+        .find(node => node.getAttribute('aria-current') === 'page');
+    if (!selected) return;
+    const bounds = panel.value.getBoundingClientRect();
+    const line = selected.getBoundingClientRect();
+    if (line.top < bounds.top) panel.value.scrollTop -= bounds.top - line.top;
+    else if (line.bottom > bounds.bottom) panel.value.scrollTop += line.bottom - bounds.bottom;
 };
 const resize = () => { phone.value = media?.matches ?? false; if (!phone.value) close(); };
 const start = () => {
@@ -116,26 +130,35 @@ const stop = () => {
     }
     listening = false;
 };
-onMounted(() => { mounted = true; start(); });
+onMounted(() => { mounted = true; start(); revealSelection(); });
 watch(() => props.enabled, enabled => { if (mounted) enabled ? start() : stop(); });
-watch(() => props.currentKey, async () => { if (props.enabled && !props.busy) { await nextTick(); if (mounted) heading.value?.focus(); } });
+watch(() => [props.currentKey, props.busy, props.enabled], async () => {
+    await revealSelection();
+    if (props.enabled && !props.busy) { await nextTick(); if (mounted) heading.value?.focus(); }
+});
 onBeforeUnmount(() => { mounted = false; stop(); });
 </script>
 
 <style scoped>
 .class-workspace { display: grid; grid-template-columns: 12rem minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .class-menu { min-width: 0; padding: .75rem; border: 1px solid var(--bs-border-color, #ddd); border-radius: .5rem; background: white; }
-.class-menu-section + .class-menu-section { margin-top: 1.25rem; }
+.class-menu-section + .class-menu-section { margin-top: .5rem; }
 .class-menu-heading { font-size: .85rem; font-weight: 700; margin: 0 0 .4rem; color: var(--bs-secondary-color, #555); }
-.class-menu-line { display: block; padding: .65rem .5rem; min-height: 44px; color: #198754; border-radius: .25rem; text-decoration: none; overflow-wrap: anywhere; }
+.class-menu-line { display: block; padding: .25rem .5rem; min-height: 32px; line-height: 1.4; color: #198754; border-radius: .25rem; text-decoration: none; overflow-wrap: anywhere; }
 .class-menu-line[aria-current="page"] { background: #e8f3ed; font-weight: 700; }
 .class-menu-line:focus-visible, .class-menu-trigger:focus-visible { outline: 2px solid #198754; outline-offset: 2px; }
+.class-workspace-content > h2:focus { outline: none; }
 .class-workspace-content { min-width: 0; overflow-wrap: anywhere; }
 .class-workspace-content :deep(.table-responsive) { max-width: 100%; }
 .class-workspace-content :deep(input), .class-workspace-content :deep(select), .class-workspace-content :deep(textarea) { max-width: 100%; }
 .class-menu-trigger { justify-self: start; min-height: 44px; }
 .class-menu-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 45%); z-index: 1090; }
+@media (min-width: 768px) {
+    .class-menu { position: sticky; top: var(--class-menu-top, 80px); max-height: calc(100dvh - var(--class-menu-top, 80px) - 1rem); overflow-y: auto; overscroll-behavior: contain; }
+}
+@media (pointer: coarse) { .class-menu-line { min-height: 44px; } }
 @media (max-width: 767.98px) {
+    .class-menu-line { min-height: 44px; padding-top: .5rem; padding-bottom: .5rem; }
     .class-workspace { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
     .class-menu-open { position: fixed; inset: 0 auto 0 0; width: min(19rem, 90vw); max-width: 100vw; border-radius: 0; overflow-y: auto; z-index: 1091; animation: class-slide .18s ease-out; }
     .class-workspace-content :deep(.btn) { min-height: 44px; }

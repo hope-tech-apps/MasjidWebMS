@@ -59,7 +59,7 @@ export const useBehaviorStore = defineStore('behaviorStore', () => {
     // ------------------------------------------------------- the vocabulary
 
     /** The tenant's skills, positives first then by label — the order a teacher reaches for. */
-    async function fetchSkills(activeOnly: boolean = false): Promise<void> {
+    async function fetchSkills(activeOnly: boolean = false, keepResponse: () => boolean = () => true): Promise<void> {
         if (!masjidStore.masjid?.id) return;
 
         skills.value = [];
@@ -68,6 +68,7 @@ export const useBehaviorStore = defineStore('behaviorStore', () => {
         const res: AxiosResponse = await ApiService.get(
             `/api/admin/masjids/${masjidStore.masjid.id}/behavior-skills${query}` as BackendApiRoute
         );
+        if (!keepResponse()) return;
         if (res.data?.status === 'success' && res.data?.data?.data) {
             skills.value = res.data.data.data;
             behaviorMeta.value = res.data.meta;
@@ -102,7 +103,7 @@ export const useBehaviorStore = defineStore('behaviorStore', () => {
      * This group's awards, newest first, PRE-FILTERED server-side to what this
      * caller may read. Throws 403 when the caller has no standing in the group.
      */
-    async function fetchAwards(groupId: number | string, page: number = 1): Promise<void> {
+    async function fetchAwards(groupId: number | string, page: number = 1, keepResponse: () => boolean = () => true): Promise<void> {
         if (!masjidStore.masjid?.id) return;
 
         if (awardsPaginated.value) {
@@ -112,6 +113,7 @@ export const useBehaviorStore = defineStore('behaviorStore', () => {
         const res: AxiosResponse = await ApiService.get(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/awards?page=${page}` as BackendApiRoute
         );
+        if (!keepResponse()) return;
         if (res.data?.status === 'success' && res.data?.data) {
             awardsPaginated.value = res.data.data;
             behaviorMeta.value = res.data.meta;
@@ -124,13 +126,15 @@ export const useBehaviorStore = defineStore('behaviorStore', () => {
      */
     async function fetchSummary(
         groupId: number | string,
-        membershipId: number
+        membershipId: number,
+        keepResponse: () => boolean = () => true
     ): Promise<BehaviorAwardSummary | null> {
         if (!masjidStore.masjid?.id) return null;
 
         const res: AxiosResponse = await ApiService.get(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members/${membershipId}/awards/summary` as BackendApiRoute
         );
+        if (!keepResponse()) return null;
         if (res.data?.status === 'success' && res.data?.data) {
             summaries.value = { ...summaries.value, [membershipId]: res.data.data };
             return res.data.data;

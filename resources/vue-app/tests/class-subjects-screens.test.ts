@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as vue from 'vue';
@@ -17,6 +18,8 @@ doc.body = { style: {} };
     const walk = (n: Node) => { for (const c of n.children) { if (c.kind === 'el' && (c.tag === 'button' || c.tag === 'a')) out.push(c); walk(c); } };
     walk(this); return out;
 };
+(Node.prototype as any).getAttribute = function(key: string) { return this.props[key]; };
+(Node.prototype as any).getBoundingClientRect = function() { return { top: 0, bottom: 0 }; };
 (Node.prototype as any).getClientRects = function() { return [{}]; };
 (Node.prototype as any).closest = function(selector: string): any { return selector === '[inert]' && this.props.inert !== undefined ? this : this.parent?.closest(selector); };
 (Node.prototype as any).contains = function(n: Node): boolean { return n === this || this.children.some((c: any) => c.contains(n)); };
@@ -51,7 +54,7 @@ const moreWords = ['Lesson Plans', 'Grades', 'Reports', 'Files'];
 const officeWords = ['Roster', 'Class Story', 'Points', 'Letters', 'Gradebook', 'Lesson Plans', 'Hifdh', 'Messages', 'Files'];
 const navLinks = (screen: any) => screen.all((n: Node) => n.tag === 'a' && n.props['data-class-choice'] !== undefined);
 const exactButton = (screen: any, words: string) => {
-    const found = screen.all((n: Node) => n.tag === 'button' && n.textContent === words);
+    const found = screen.all((n: Node) => n.tag === 'button' && (n.textContent === words || n.props['aria-label'] === words));
     assert.equal(found.length, 1, words); return found[0];
 };
 const field = (screen: any, name: string) => { const result = screen.all((n: Node) => n.props['data-subject-field'] === name); assert.equal(result.length, 1, name); return result[0]; };
@@ -89,7 +92,7 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
             return ok(structuredClone(subject));
         }
         if (options.read) { const response = options.read(url); if (response !== undefined) return response; }
-        if (url.includes('/letters')) return ok(url.includes('/members/') ? trackerFor(url.includes('english') ? 'english' : 'arabic') : { students: [{ ...student, name: 'Practice student', mastered: 4, total: 26 }], stage: null, stages: [] });
+        if (url.includes('/letters')) return ok(url.includes('/members/') ? trackerFor(url.includes('english') ? 'english' : 'arabic') : { students: [{ ...student, name: 'Practice student', mastered: 4, total: 26 }], stage: null, stages: [], total: 26 });
         if (/\/(posts|threads|awards)\?/.test(url)) return ok({ data: [], current_page: 1, total: 0, per_page: 25, last_page: 1 });
         if (url.endsWith('/hifz')) return ok([row]);
         if (url.endsWith('/awards/summary')) return ok({ totals: { awards: 0, points: 0 }, by_polarity: { positive: { points: 0 }, negative: { points: 0 } } });
@@ -100,6 +103,7 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
     };
     const write = async (method: string, url: string, body: any) => {
         calls.push({ method, url, body });
+        if (options.write) { const response = options.write(method, url, body); if (response !== undefined) return response; }
         if (options.refuse?.(method, url, body)) throw httpError(422, options.refuse(method, url, body));
         const id = Number(url.match(/subjects\/(\d+)/)?.[1]);
         if (url.endsWith('/reorder')) catalog = body.subject_ids.map((id: number, position: number) => ({ ...catalog.find((s: any) => s.id === id), position }));
@@ -112,11 +116,11 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
     };
     const api: any = { get, post: (u: string, b: any) => write('post', u, b), put: (u: string, b: any) => write('put', u, b), delete: (u: string) => write('delete', u, undefined), blobUrl: async () => 'blob:practice' };
     api.VueApp = { axios: { get: api.get, post: api.post, put: api.put } };
-    const groupsStore = vue.reactive<any>({ memberships: [membership], rosterMeta: { teaches_students: true, school_today: '2026-10-08' }, pendingClaims: 0, contestedClaims: 0,
+    const groupsStore = vue.reactive<any>({ memberships: data.memberships, rosterMeta: { teaches_students: true, school_today: '2026-10-08' }, pendingClaims: 0, contestedClaims: 0,
         fetchGroup: async () => (await get('/api/admin/masjids/1/groups/2')).data.data,
         fetchMemberships: async () => { calls.push({ method: 'get', url: '/api/admin/masjids/1/groups/2/memberships' }); } });
     const hifzStore = vue.reactive<any>({ entriesPaginated: { data: [row], current_page: 1, per_page: 25, total: 26, last_page: 2 }, progressByMembership: {}, surahs: [],
-        fetchEntries: async (_id: any, p = 1) => { calls.push({ method: 'hifz-page', page: p }); hifzStore.entriesPaginated.current_page = p; }, fetchProgress: async () => {}, fetchSurahs: async () => {} });
+        fetchEntries: async (_id: any, p = 1) => { calls.push({ method: 'hifz-page', page: p }); hifzStore.entriesPaginated.current_page = p; }, fetchProgress: async () => {}, fetchSurahs: async () => {}, ...options.hifzStore });
     const masjid = { masjid: { id: 1 }, term: (x: string) => x === 'groups' ? 'Classrooms' : x, orgType: 'school' };
     const overrides: any = {
         '../masjidStore': { useMasjidStore: () => masjid },
@@ -133,6 +137,10 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
     const file = realm === 'teacher' ? 'views/teacher/TeacherClass.vue' : 'views/dashboard/GroupDetailView.vue';
     const screen = await mountSfc(file, {}, await realClassModules(file, overrides));
     await flush(10);
+    if (realm === 'office' && !options.closed) {
+        const disclosure = screen.all((n: Node) => n.tag === 'button' && /^Class subjects \(\d+\)$/.test(n.textContent))[0];
+        if (disclosure) { click(disclosure); await flush(); }
+    }
     return { screen, data, calls, router, route, hifzStore };
 }
 
@@ -223,7 +231,7 @@ test('check 7: rename keeps letters, Holds and curriculum pickers save, each ser
         chooseOption(field(screen, 'guide'), 'Science'); submit(screen.all((n) => n.props['data-subject-form'] !== undefined)[0]); await flush();
         await pick(screen, 'Arabic Language'); assert.match(screen.text(), /Practice student/);
         assert.ok(calls.some((c) => c.url?.endsWith('/letters?alphabet=arabic')));
-        await pick(screen, 'Roster');
+        await pick(screen, 'Roster'); click(exactButton(screen, 'Class subjects (4)')); await flush();
         click(exactButton(screen, 'Rename Healthful Living')); await flush(); chooseOption(field(screen, 'tool'), 'english_letters'); submit(screen.all((n) => n.props['data-subject-form'] !== undefined)[0]); await flush();
         assert.equal(calls.filter((c) => c.method === 'put').at(-1).body.tool, 'english_letters');
     } finally { screen.unmount(); }
@@ -402,7 +410,10 @@ test('manager write failure keeps its draft and server words; second submit duri
         'vue-router': { useRoute: () => ({ query: {} }), useRouter: () => ({}) },
     }));
     try {
-        await flush(); type(field(manager, 'name'), 'Practice elective');
+        await flush();
+        const disclosure = manager.all((n: Node) => n.tag === 'button' && /^Class subjects \(\d+\)$/.test(n.textContent))[0];
+        if (disclosure) { click(disclosure); await flush(); }
+        type(field(manager, 'name'), 'Practice elective');
         const form = manager.all((n) => n.props['data-subject-form'] !== undefined)[0]; submit(form); submit(form); await flush(); assert.equal(requests, 1);
         answer.reject(httpError(422, { message: 'That name would collide with saved work.' })); await flush();
         assert.equal(field(manager, 'name').value, 'Practice elective'); assert.match(manager.text(), /That name would collide with saved work\./);
@@ -433,5 +444,194 @@ test('hiding and restoring Arabic preserves its existing tool and saved marks in
         click(screen.button('Practice student')); await flush(); assert.match(screen.text(), /1 of 2 mastered/);
         assert.ok(screen.all((n) => String(n.props.class).includes('letter-tile--mastered')).length);
         assert.ok(calls.some((c) => c.url?.endsWith('/members/9/letters?alphabet=arabic')));
+    } finally { screen.unmount(); }
+});
+
+
+// Follow-up regressions: deferred real tool reads/writes, not mocked panels.
+const secondStudent = { ...student, membership_id: 10, contact: { id: 4, first_name: 'Second practice student', last_name: '' } };
+const arabicDrillTracker = () => ({ ...trackerFor('arabic'), letters: [{ id: 'alif', glyph: 'ا', transliteration: 'Alif', status: 'learning', drills: [{ id: 'alif.single', label: 'Arabic drill', text: 'ا', status: 'learning' }] }] });
+const totalsFor = (start: string, end: string) => ok({ points_period: 'weekly', week: { start, end }, students: [], class: {} });
+
+test('follow-up 1: late Arabic daily notes never enter another student’s editor', async () => {
+    const late = deferred();
+    const { screen } = await setup('teacher', { data: { students: [student, secondStudent] }, read: (url: string) => {
+        if (url.endsWith('/members/9/arabic-notes')) return late.promise;
+        if (url.endsWith('/letters?alphabet=arabic') && !url.includes('/members/')) return ok({ students: [student, secondStudent], total: 28 });
+        if (url.endsWith('/members/10/arabic-notes')) return ok([{ id: 2, session_date: '2026-10-08', note: 'Second student’s own note' }]);
+        return undefined;
+    } });
+    try {
+        await pick(screen, 'Arabic'); click(screen.button('Practice student')); await flush();
+        await pick(screen, 'ELA'); await pick(screen, 'Arabic'); click(screen.button('Second practice student')); await flush();
+        late.resolve(ok([{ id: 1, session_date: '2026-10-08', note: 'Late first student note' }])); await flush();
+        assert.doesNotMatch(screen.text(), /Late first student note/);
+        assert.match(screen.text(), /Second student’s own note/);
+    } finally { screen.unmount(); }
+});
+test('follow-up 2: a delayed Arabic mark cannot replace ELA’s English tracker or error', async () => {
+    for (const refused of [false, true]) {
+        const late = deferred();
+        const { screen } = await setup('teacher', {
+            read: (url: string) => url.endsWith('/members/9/letters?alphabet=arabic') ? ok(arabicDrillTracker()) : undefined,
+            write: (_: string, url: string) => url.endsWith('/members/9/letters') ? late.promise : undefined,
+        });
+        try {
+            await pick(screen, 'Arabic'); click(screen.button('Practice student')); await flush();
+            click(screen.all((n) => String(n.props.class).includes('letter-tile'))[0]); await flush();
+            click(screen.all((n) => n.tag === 'button' && n.textContent.includes('Arabic drill') && !n.textContent.startsWith('Note on'))[0]); await flush();
+            await pick(screen, 'ELA'); click(screen.button('Practice student')); await flush();
+            if (refused) late.reject(httpError(422, { message: 'Late Arabic refusal' })); else late.resolve(ok(arabicDrillTracker()));
+            await flush(); assert.match(screen.text(), /Capitals/); assert.doesNotMatch(screen.text(), /Alif|Late Arabic refusal/);
+        } finally { screen.unmount(); }
+    }
+});
+test('follow-up 3: overlapping Points reads keep the week selected by the address', async () => {
+    const late = deferred();
+    const { screen, router, route } = await setup('teacher', { query: { tab: 'points', week: '2026-09-20' }, read: (url: string) => {
+        if (url.endsWith('/awards/totals?week=2026-09-20')) return late.promise;
+        if (url.endsWith('/awards/totals?week=2026-09-27')) return totalsFor('2026-09-27', '2026-10-03');
+        return undefined;
+    } });
+    try {
+        await router.push({ query: { tab: 'points', week: '2026-09-27' } }); await flush();
+        late.resolve(totalsFor('2026-09-20', '2026-09-26')); await flush();
+        assert.equal(route.query.week, '2026-09-27'); assert.match(screen.text(), /Sep 27 - Oct 3, 2026/); assert.doesNotMatch(screen.text(), /Sep 20 - Sep 26/);
+    } finally { screen.unmount(); }
+});
+test('follow-up 4: English overview loading clears Arabic progress immediately', async () => {
+    const late = deferred();
+    const { screen } = await setup('teacher', { read: (url: string) => url.endsWith('/letters?alphabet=english') && !url.includes('/members/') ? late.promise : undefined });
+    try {
+        await pick(screen, 'Arabic'); assert.match(screen.text(), /4 \/ 26/);
+        await pick(screen, 'ELA'); assert.equal(screen.all((n) => n.tag === 'h2')[0].textContent, 'ELA'); assert.doesNotMatch(screen.text(), /4 \/ 26/);
+        late.resolve(ok({ students: [], stage: null, stages: [] })); await flush();
+    } finally { screen.unmount(); }
+});
+test('follow-up 5: [] means no assigned subjects; null means all and the heading stays visible', async () => {
+    for (const mine of [[], null]) {
+        const { screen } = await setup('teacher', { mine });
+        try {
+            assert.equal(navLinks(screen).filter((n) => String(n.props.href).includes('subject=')).length, mine === null ? 4 : 0);
+            assert.ok(screen.all((n) => n.props['data-class-section'] !== undefined && n.textContent === 'Subjects').length);
+            if (mine !== null) assert.match(screen.text(), /No subjects assigned\./);
+        } finally { screen.unmount(); }
+    }
+});
+test('follow-up 7: office manager follows the members, starts closed and uses short named controls', async () => {
+    const { screen } = await setup('office', { closed: true });
+    try {
+        const disclosure = exactButton(screen, 'Class subjects (4)');
+        assert.equal(disclosure.props['aria-expanded'], 'false'); assert.equal(screen.all((n) => n.props['data-subject-form'] !== undefined).length, 0);
+        assert.ok(screen.text().indexOf('Practice student') < screen.text().indexOf('Class subjects (4)'));
+        click(disclosure); await flush(); assert.equal(disclosure.props['aria-expanded'], 'true');
+        assert.equal(exactButton(screen, 'Rename Arabic').textContent, 'Rename');
+        assert.equal(exactButton(screen, 'Move Arabic up').textContent, 'Up');
+        assert.equal(exactButton(screen, 'Move Arabic down').textContent, 'Down');
+        assert.equal(exactButton(screen, 'Remove Arabic').textContent, 'Remove');
+    } finally { screen.unmount(); }
+});
+test('follow-up 8: reorder swaps visible neighbours, retains hidden slots and disables visible ends', async () => {
+    const ordered = [ { ...subjects[0], position: 0 }, { ...subjects[3], id: 100, name: 'Hidden elective', position: 1, hidden_at: '2026-10-08' }, ...subjects.slice(1).map((s, i) => ({ ...s, position: i + 2 })) ];
+    const { screen, calls } = await setup('office', { subjects: ordered });
+    try {
+        assert.equal(exactButton(screen, "Move Qur'an up").props.disabled, true);
+        assert.equal(exactButton(screen, 'Move Healthful Living down').props.disabled, true);
+        click(exactButton(screen, 'Move Arabic up')); await flush();
+        assert.deepEqual(calls.find((c) => c.url?.endsWith('/reorder')).body.subject_ids, [102, 100, 101, 103, 104]);
+        assert.deepEqual(navLinks(screen).filter((n) => String(n.props.href).includes('subject=')).map((n) => n.textContent), ['Arabic', "Qur'an", 'ELA', 'Healthful Living']);
+        assert.equal(exactButton(screen, 'Move Arabic up').props.disabled, true);
+    } finally { screen.unmount(); }
+});
+test('follow-up 6: selection scrolls inside the menu without scrolling the page', async () => {
+    const { screen } = await setup('teacher');
+    try {
+        const menu = screen.all((n) => n.tag === 'aside' && String(n.props.class).includes('class-menu'))[0] as any;
+        menu.getBoundingClientRect = () => ({ top: 80, bottom: 300 }); menu.scrollTop = 0;
+        for (const link of navLinks(screen)) (link as any).getBoundingClientRect = () => ({ top: link.textContent === 'Files' ? 500 : 90, bottom: link.textContent === 'Files' ? 532 : 122 });
+        await pick(screen, 'Files'); assert.equal(menu.scrollTop, 232); assert.equal(doc.activeElement.tag, 'h2');
+    } finally { screen.unmount(); }
+});
+test('follow-up 6, 9, 10: bounded sticky compact menu, quiet heading and ON-only wide containers', () => {
+    const navigation = readFileSync('resources/vue-app/components/classes/ClassNavigation.vue', 'utf8');
+    assert.match(navigation, /position: sticky/); assert.match(navigation, /max-height: calc\(100dvh/); assert.match(navigation, /overflow-y: auto/);
+    assert.match(navigation, /\.class-workspace-content > h2:focus[^}]*outline: none/);
+    assert.match(navigation, /\.class-menu-line:focus-visible/);
+    const layout = readFileSync('resources/vue-app/layouts/TeacherLayout.vue', 'utf8');
+    assert.match(layout, /@media \(min-width: 1280px\)/); assert.match(layout, /:has\(\.class-workspace\)/);
+    const office = readFileSync('resources/vue-app/views/dashboard/GroupDetailView.vue', 'utf8');
+    assert.match(office, /class-subjects-enabled/); assert.match(office, /max-width: none/);
+});
+
+test('guard coverage: office student detail ignores an older tracker after returning to the roster', async () => {
+    const late = deferred();
+    const { screen } = await setup('office', { read: (url: string) => {
+        if (url.endsWith('/letters?alphabet=arabic') && !url.includes('/members/')) return ok({ students: [student, secondStudent], total: 28 });
+        if (url.endsWith('/members/9/letters?alphabet=arabic')) return late.promise;
+        return undefined;
+    } });
+    try {
+        await pick(screen, 'Arabic'); click(screen.button('Practice student')); await flush();
+        // Return to the roster while A's read is pending, then choose B.
+        click(screen.button('All students')); await flush();
+        click(screen.button('Second practice student')); await flush();
+        late.resolve(ok({ ...trackerFor('arabic'), totals: { mastered: 28, total: 28 } })); await flush();
+        assert.match(screen.text(), /1 of 2 mastered/); assert.doesNotMatch(screen.text(), /28 of 28 mastered/);
+    } finally { screen.unmount(); }
+});
+test('guard coverage: leaving and reopening Hifdh starts a new log load and drops the old answer', async () => {
+    const late = deferred(); let reads = 0;
+    const { screen } = await setup('teacher', { read: (url: string) => {
+        if (url.endsWith('/members/9/hifz')) return ++reads === 1 ? late.promise : ok([{ ...row, note: 'Current recitation note' }]);
+        return undefined;
+    } });
+    try {
+        await pick(screen, "Qur'an");
+        const select = screen.all((n) => n.tag === 'select' && n.children.some((c) => c.textContent.includes('Choose a student')))[0];
+        chooseOption(select, 9); await flush(); await pick(screen, 'Healthful Living'); await pick(screen, "Qur'an");
+        late.resolve(ok([{ ...row, note: 'Late recitation note' }])); await flush();
+        assert.ok(reads >= 2); assert.match(screen.text(), /Current recitation note/); assert.doesNotMatch(screen.text(), /Late recitation note/);
+    } finally { screen.unmount(); }
+});
+
+test('Points week buttons update the ON address and Back restores the previous week', async () => {
+    const { screen, route, router } = await setup('teacher', { query: { tab: 'points', week: '2026-09-27' }, read: (url: string) => {
+        if (!url.includes('/awards/totals')) return undefined;
+        const start = url.includes('2026-09-20') ? '2026-09-20' : '2026-09-27';
+        return ok({ points_period: 'weekly', week: { start, end: start === '2026-09-20' ? '2026-09-26' : '2026-10-03', previous: '2026-09-20', next: '2026-09-27', is_current: false }, students: [], class: {} });
+    } });
+    try {
+        click(exactButton(screen, 'Previous week')); await flush(); assert.equal(route.query.week, '2026-09-20'); assert.match(screen.text(), /Sep 20 - Sep 26/);
+        router.back(); await flush(); assert.equal(route.query.week, '2026-09-27'); assert.match(screen.text(), /Sep 27 - Oct 3/);
+    } finally { screen.unmount(); }
+});
+
+
+test('office Hifdh discards a late record for A and leaves B’s form usable', async () => {
+    const late = deferred();
+    const { screen } = await setup('office', { hifzStore: { recordEntry: () => late.promise }, data: { memberships: [membership, { ...membership, id: 10, ...secondStudent }] } });
+    try {
+        await pick(screen, "Qur'an"); click(exactButton(screen, 'Record recitation')); await flush();
+        const picker = screen.all((n) => n.tag === 'select' && n.children.some((c) => c.textContent.includes('Choose a student')))[0];
+        chooseOption(picker, 9); await flush(); submit(screen.all((n) => n.tag === 'form')[0]); await flush();
+        chooseOption(picker, 10); await flush(); late.resolve(row); await flush();
+        assert.equal(Boolean(exactButton(screen, 'Record').props.disabled), false); assert.equal(picker.options.find((option) => option.selected)?.value, 10);
+        assert.match(screen.text(), /Record recitation/);
+    } finally { screen.unmount(); }
+});
+test('office Letters discards A’s mark and releases the mark button on B’s tracker', async () => {
+    const late = deferred();
+    const { screen } = await setup('office', { read: (url: string) => {
+        if (url.endsWith('/letters?alphabet=arabic') && !url.includes('/members/')) return ok({ students: [student, secondStudent], total: 28 });
+        if (url.includes('/members/') && url.endsWith('/letters?alphabet=arabic')) return ok(arabicDrillTracker());
+        return undefined;
+    }, write: (_: string, url: string) => url.endsWith('/members/9/letters') ? late.promise : undefined });
+    try {
+        await pick(screen, 'Arabic'); click(screen.button('Practice student')); await flush();
+        click(screen.all((n) => String(n.props.class).includes('letter-tile'))[0]); await flush(); click(screen.button('Arabic drill')); await flush();
+        click(screen.button('All students')); await flush(); click(screen.button('Second practice student')); await flush();
+        click(screen.all((n) => String(n.props.class).includes('letter-tile'))[0]); await flush();
+        late.resolve(ok({ ...arabicDrillTracker(), totals: { mastered: 28, total: 28 } })); await flush();
+        assert.doesNotMatch(screen.text(), /28 of 28 mastered/); assert.equal(Boolean(screen.button('Arabic drill').props.disabled), false);
     } finally { screen.unmount(); }
 });

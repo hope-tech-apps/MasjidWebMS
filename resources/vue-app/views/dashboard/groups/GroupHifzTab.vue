@@ -201,6 +201,7 @@
 </template>
 
 <script setup lang="ts">
+import { useToolResponseGuard } from '@/composables/useToolResponseGuard';
 import { ref, computed, onBeforeMount, watch } from 'vue';
 import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
 import { hifzDayLabel } from '@/core/helpers/hifzDay';
@@ -239,9 +240,14 @@ import Swal from 'sweetalert2';
 
 const props = defineProps<{
     groupId: number;
+    masjidId?: number;
+    classSubjectsEnabled?: boolean;
+    subjectId?: number | null;
     memberships: GroupMembership[];
 }>();
 
+const keepResponseFor = useToolResponseGuard(() => props.classSubjectsEnabled === true,
+    () => JSON.stringify([props.masjidId, props.groupId, props.subjectId]));
 // Stores
 const hifzStore = useHifzStore();
 
@@ -265,6 +271,9 @@ const emptyEntryForm = (): HifzEntryPayload => ({
     note: ''
 });
 const entryForm = ref<HifzEntryPayload>(emptyEntryForm());
+watch(() => entryForm.value.membership_id, () => {
+    if (props.classSubjectsEnabled) recording.value = false;
+}, { flush: 'sync' });
 
 // Computed
 /** A recitation is heard from a PARTICIPANT; a guardian edge names a relationship. */
@@ -337,16 +346,21 @@ const loadAll = async () => {
     loading.value = true;
     loadError.value = '';
     forbidden.value = false;
+    const keepResponse = keepResponseFor(() => props.groupId, 'list');
     try {
-        await hifzStore.fetchEntries(props.groupId, 1);
+        await hifzStore.fetchEntries(props.groupId, 1, keepResponse);
+        if (!keepResponse()) return;
         await loadProgress();
+        if (!keepResponse()) return;
     } catch (error) {
+        if (!keepResponse()) return;
         if (isForbidden(error)) {
             forbidden.value = true;
         } else {
             loadError.value = apiErrorText(error, 'Failed to load the memorization records.');
         }
     } finally {
+        if (!keepResponse()) return;
         loading.value = false;
     }
 };
@@ -361,7 +375,7 @@ const loadAll = async () => {
 const loadProgress = async () => {
     await Promise.all(participants.value.map(async (participant) => {
         try {
-            await hifzStore.fetchProgress(props.groupId, participant.id);
+            await hifzStore.fetchProgress(props.groupId, participant.id, keepResponseFor(() => participant.id, `student:${participant.id}`));
         } catch (error) {
             // That student's row falls back to "—".
         }
@@ -370,10 +384,16 @@ const loadProgress = async () => {
 
 const pageChange = async (data: PageChangeData) => {
     if (data.toPage === (paginationOptions.value?.currentPage ?? 1)) return;
+    const keepResponse = keepResponseFor(() => props.groupId, 'list');
+    if (props.classSubjectsEnabled) loading.value = true;
     try {
-        await hifzStore.fetchEntries(props.groupId, data.toPage);
+        await hifzStore.fetchEntries(props.groupId, data.toPage, keepResponse);
+        if (!keepResponse()) return;
     } catch (error) {
+        if (!keepResponse()) return;
         loadError.value = apiErrorText(error, 'Failed to load the memorization records.');
+    } finally {
+        if (props.classSubjectsEnabled && keepResponse()) loading.value = false;
     }
 };
 
@@ -385,14 +405,19 @@ const openRecordModal = () => {
 const submitEntry = async () => {
     if (!canRecord.value) return;
     recording.value = true;
+    const keepResponse = keepResponseFor(() => entryForm.value.membership_id, 'submitEntry');
     try {
         await hifzStore.recordEntry(props.groupId, entryForm.value);
+        if (!keepResponse()) return;
         showRecordModal.value = false;
         await loadAll();
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'success', title: 'Recorded', timer: 1600, showConfirmButton: false });
     } catch (error) {
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to record the recitation.') });
     } finally {
+        if (!keepResponse()) return;
         recording.value = false;
     }
 };
@@ -404,6 +429,7 @@ const submitEntry = async () => {
  * the student back — which the confirmation says out loud.
  */
 const confirmStrike = async (entry: HifzEntry) => {
+    const keepResponse = keepResponseFor(() => props.groupId, 'confirmStrike');
     const result = await Swal.fire({
         title: 'Strike this entry?',
         text: entry.kind === 'sabak'
@@ -415,14 +441,18 @@ const confirmStrike = async (entry: HifzEntry) => {
         cancelButtonColor: '#3085d6',
         confirmButtonText: 'Yes, strike'
     });
+    if (!keepResponse()) return;
 
     if (!result.isConfirmed) return;
 
     try {
         await hifzStore.strikeEntry(props.groupId, entry.id);
+        if (!keepResponse()) return;
         await loadAll();
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'success', title: 'Struck', timer: 1600, showConfirmButton: false });
     } catch (error) {
+        if (!keepResponse()) return;
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to strike the entry.') });
     }
 };

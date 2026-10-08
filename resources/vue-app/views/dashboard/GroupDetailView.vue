@@ -1,5 +1,5 @@
 <template>
-    <div>
+    <div :class="{ 'class-subjects-enabled': classSubjects.enabled.value }">
         <PageDataContainer :title="pageTitle" :hideButton="true">
             <template #headerButtons>
                 <router-link class="btn btn-outline-secondary" :to="{ name: 'masjid.groups' }">
@@ -73,8 +73,6 @@
                         :currentKey="classSubjects.currentKey.value" :title="classSubjects.title.value"
                         :notice="classSubjects.notice.value" :busy="classSubjects.busy.value"
                         :href="classSubjects.href" @choose="classSubjects.choose">
-                    <ClassSubjectManager v-if="classSubjects.enabled.value && activeTab === 'roster'"
-                        :base="subjectBase" @changed="subjectsChanged" />
                     <GroupRosterTab
                         v-if="activeTab === 'roster'"
                         :groupId="groupId"
@@ -83,11 +81,17 @@
                         :loadError="rosterError"
                         @changed="loadRoster"
                         @reload="loadRoster"
-                    />
+                    >
+                        <template #afterMembers>
+                            <ClassSubjectManager v-if="classSubjects.enabled.value" :base="subjectBase" @changed="subjectsChanged" />
+                        </template>
+                    </GroupRosterTab>
 
                     <GroupStoryTab v-else-if="activeTab === 'story'" :groupId="groupId" />
 
                     <GroupPointsTab
+                        :masjidId="masjidStore.masjid?.id ?? 0"
+                        :classSubjectsEnabled="classSubjects.enabled.value"
                         v-else-if="activeTab === 'points'"
                         :groupId="groupId"
                         :memberships="groupsStore.memberships"
@@ -124,6 +128,9 @@
                     />
 
                     <GroupHifzTab
+                        :masjidId="masjidStore.masjid?.id ?? 0"
+                        :classSubjectsEnabled="classSubjects.enabled.value"
+                        :subjectId="classSubjects.subject.value?.id"
                         v-else-if="activeTab === 'hifz'"
                         :groupId="groupId"
                         :memberships="groupsStore.memberships"
@@ -312,6 +319,9 @@ const subjectsChanged = (subjects: ClassSubject[]) => {
 </script>
 
 <style scoped>
+@media (min-width: 1280px) {
+    .class-subjects-enabled .container { max-width: none; }
+}
 .nav-tabs .nav-link {
     color: #6c757d;
 }

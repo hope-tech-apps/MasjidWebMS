@@ -1,4 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
+import { useToolResponseGuard } from './useToolResponseGuard';
 import { useRoute, useRouter } from 'vue-router';
 import type { AxiosInstance, AxiosResponse } from 'axios';
 import { apiErrorText } from '@/core/services/ApiErrors';
@@ -59,7 +60,7 @@ export function useClassSubjects<T extends string>(options: {
         const group = options.group.value;
         const mine = group?.my_class_subject_ids;
         return (group?.class_subjects ?? []).filter(s => !s.hidden_at &&
-            (options.realm === 'office' || !mine?.length || mine.includes(s.id)))
+            (options.realm === 'office' || mine == null || mine.includes(s.id)))
             .slice().sort((a, b) => a.position - b.position || a.id - b.id);
     });
     const sections = computed<ClassSection[]>(() => [
@@ -160,6 +161,11 @@ export function useClassSubjects<T extends string>(options: {
         if (JSON.stringify(query) === JSON.stringify(route.query)) return;
         router.push({ query });
     };
+    const setWeek = (week: string | null) => {
+        const query = { ...route.query };
+        if (week) query.week = week; else delete query.week;
+        return router.push({ query });
+    };
     const href = (choice: ClassChoice) => {
         const query = { ...route.query }; delete query.tab; delete query.subject;
         if (choice.query.tab !== 'points') delete query.week;
@@ -172,14 +178,8 @@ export function useClassSubjects<T extends string>(options: {
             else subject.value = current;
         }
     });
-    // Legacy requests keep their OFF behavior; ON reads cannot cross a navigation lifetime.
-    const keepRead = (identity: () => unknown = () => null) => {
-        const token = generation;
-        const wasEnabled = enabled.value;
-        const expected = identity();
-        return () => alive && (!wasEnabled && !enabled.value ||
-            wasEnabled === enabled.value && token === generation && identity() === expected);
-    };
+    const keepRead = useToolResponseGuard(() => enabled.value,
+        () => JSON.stringify([options.base.value, route.query.subject, route.query.tab, route.query.week, options.activeTab.value]));
     onBeforeUnmount(() => { alive = false; ++generation; });
-    return { enabled, sections, subject, notice, busy, currentKey, title, fixedAlphabet, choose, href, keepRead };
+    return { enabled, sections, subject, notice, busy, currentKey, title, fixedAlphabet, choose, href, setWeek, keepRead };
 }
