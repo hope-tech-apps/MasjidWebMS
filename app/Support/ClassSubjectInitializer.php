@@ -176,7 +176,7 @@ final class ClassSubjectInitializer
         foreach ($data['work'] as $table => $classes) {
             $work[$table] = $classes->get($group->id, collect())->map(function ($row) use ($subjects) {
                 $row->general = $row->table === 'lesson_plans' && SubjectKey::clean($row->subject) === null;
-                $row->matched = ClassSubjectSavedWork::matchingSubject($row->subject_key, $subjects);
+                $row->matched = ClassSubjectSavedWork::matchingSubject($row->subject, $subjects);
                 $row->linked = $row->class_subject_id ?? ($row->unexamined ? $row->matched?->id : null);
                 return $row;
             });

@@ -263,16 +263,19 @@ it('clears mode after exceptions and rechecks a reused HTTP controller after swi
     });
 });
 
-it('keeps exact stored preview keys when SQL collation ignores trailing spaces', function () {
+it('matches saved text while keeping exact orphan counts when SQL collation ignores trailing spaces', function () {
     ($this->work)('Arabic');
     $padded = ($this->work)('Arabic');
     DB::table('class_assignments')->where('id', $padded->id)->update(['subject_key' => 'arabic ']);
+    ($this->work)('History');
+    $orphan = ($this->work)('History');
+    DB::table('class_assignments')->where('id', $orphan->id)->update(['subject_key' => 'history ']);
     // Simulate MySQL PAD SPACE equality, while retaining real SQLite SELECTs.
     DB::statement('ALTER TABLE class_assignments RENAME TO review6_assignment_rows');
     DB::statement('CREATE VIEW class_assignments AS SELECT masjid_id, group_id, subject, subject_key COLLATE RTRIM AS subject_key, class_subject_id, class_subject_link_checked_at FROM review6_assignment_rows');
     $preview = ClassSubjectInitializer::run($this->org, true)[0];
-    expect($preview['saved_work_links']['Arabic'])->toBe(1);
-    expect($preview['orphaned_work'])->toBe(['arabic ' => 1]);
+    expect($preview['saved_work_links']['Arabic'])->toBe(2);
+    expect($preview['orphaned_work'])->toBe(['history' => 1, 'history ' => 1]);
 });
 
 it('restores unchanged provenance even when ON curriculum differs from OFF', function () {
