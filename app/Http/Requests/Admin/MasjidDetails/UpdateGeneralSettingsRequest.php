@@ -16,6 +16,9 @@ class UpdateGeneralSettingsRequest extends BaseFormRequest
             // told to rename it.
             'header_logo' => 'bail|nullable|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
             'footer_logo' => 'bail|nullable|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
+            // The photo behind the app's screen headers (Masjid::app_header_image()): the same
+            // kinds and limit as the logos beside it.
+            'app_header_image' => 'bail|nullable|image|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:25600',
             'copyright_text' => 'nullable|string',
             'app_store_link' => 'nullable|url',
             'google_play_link' => 'nullable|url',
@@ -28,6 +31,7 @@ class UpdateGeneralSettingsRequest extends BaseFormRequest
         return [
             'header_logo.extensions' => 'The header logo\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
             'footer_logo.extensions' => 'The footer logo\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
+            'app_header_image.extensions' => 'The app header photo\'s file name must end in .jpg, .jpeg, .png, .gif or .webp. Rename the file and upload it again.',
         ];
     }
 }

@@ -107,7 +107,7 @@ class MasjidsController extends Controller
             function () use ($masjid_id) {
                 $masjid = Masjid::with(
                     'logo',
-                    'header_logo',
+                    'app_header_image',
                     'donationLink.image',
                     'masjidAbout.aboutImage',
                     'masjidAbout.missionIcon',
@@ -128,14 +128,16 @@ class MasjidsController extends Controller
 
                 // Masjid building/cover photo for the app brand header. Apps render
                 // this remote image UNDER the primary-color tint when present, else
-                // fall back to their bundled header. Uses the existing `header_logos`
-                // media collection (managed from admin General Settings); null when
-                // no image exists. String|null — backward-compatible additive field.
-                $masjid->setAttribute('header_image_url', $masjid->header_logo->original_url ?? null);
+                // fall back to their bundled header. Its own `app_header_images`
+                // collection (admin General Settings, "App header photo"), NOT the
+                // website's header logo, which it was read from until 2026-10-08:
+                // see Masjid::app_header_image(). Null when no photo exists.
+                // String|null — the key and its shape are unchanged for the apps.
+                $masjid->setAttribute('header_image_url', $masjid->app_header_image->original_url ?? null);
 
                 // Expose only the canonical keys, not the raw snake_case relations,
                 // to keep the payload tidy.
-                $masjid->makeHidden(['themeSettings', 'header_logo']);
+                $masjid->makeHidden(['themeSettings', 'app_header_image']);
 
                 return $masjid;
             }

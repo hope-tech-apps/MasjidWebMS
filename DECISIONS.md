@@ -9375,3 +9375,17 @@ device, browser layout or production cache verification was performed.
   question's answer key. Each has a test that fails on the reviewed commit.
 - **Not built**: a per-child price worked out from the children listed (the form still asks the family to pick its
   line); the native apps were not checked against this pricing.
+
+## 2026-10-08 — The app's header photo is its own setting, not the website's header logo
+
+- **Asked**: before the MEC apps' store screenshots the owner wanted MEC's own imagery in place of the defaults, and
+  chose MEC's building photo for the header of every app screen. The apps already draw a remote photo under the brand
+  tint when the mobile payload's `header_image_url` is set.
+- **Found**: `header_image_url` was read from the `header_logos` collection, which `/api/v1/settings` also serves as
+  the WEBSITE's header logo (`header_logo_url`). One upload, two meanings: a building photo set for the app would have
+  replaced the logo in the website header; a logo set for the website would have been stretched behind every app header.
+- **Decided**: a collection of its own, `app_header_images` (`Masjid::app_header_image()`), uploaded on General
+  settings as "App header photo". The mobile payload's key and shape are unchanged (`header_image_url`, string or
+  null), so no app release is needed for it. There is deliberately NO fallback to `header_logos`: a logo is not a
+  cover photo. No organisation had a `header_logos` row on production when this shipped, so no app changed.
+- Not built: removing a photo once set (upload another to replace it), and cropping guidance beyond the help text.

@@ -659,6 +659,27 @@ class Masjid extends Model implements HasMedia
     }
 
     /**
+     * The photo the organisation's app paints behind every screen header, under
+     * its brand colour (the mobile payload's `header_image_url`).
+     *
+     * Its own collection since 2026-10-08. Until then the app read the website's
+     * header LOGO (`header_logos`): one upload, two meanings, so a building photo
+     * set for the app would have become the logo in the website's header, and a
+     * logo set for the website would have been stretched behind the app's
+     * headers. No organisation had a `header_logos` row when the two were
+     * separated, so no app changed.
+     *
+     * `model_type` is part of the key, for the reason logo() gives.
+     */
+    public function app_header_image() {
+        return $this->hasOne(Media::class, 'model_id')
+            ->where('model_type', self::class)
+            ->where('collection_name', 'app_header_images')
+            ->orderBy('created_at', 'desc')
+            ->latest();
+    }
+
+    /**
      * The brand derivatives Studio makes from the logo at Step 3
      * (docs/manara-studio-w1.md S8): a 48x48 favicon, a 180x180 touch icon and
      * a 1200x630 share image, each in its own collection.

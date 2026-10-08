@@ -35,6 +35,24 @@
                 </div>
             </div>
 
+            <!-- The app's own header photo: not the website's header logo above. -->
+            <div class="d-flex flex-column gap-3">
+                <span class="d-block fs-5 fw-semibold">App</span>
+                <div class="d-flex flex-column w-100">
+                    <ImageDraggableInput label="App header photo"
+                        @imageChange="(data: UploadedImageInfo) => onAppHeaderImageInputChange(data)"
+                        :current-image-src="currentAppHeaderImage" type="photo" />
+                    <Field type="file" v-model="settingsModel.appHeaderImageSrc" name="app_header_image_file" class="d-none"></Field>
+                    <div class="form-text">
+                        Shown behind the header of every screen in your app, under your brand colour. A wide photo of
+                        your building works best. It does not change your website or its logo.
+                    </div>
+                    <div class="error-message">
+                        <ErrorMessage name="app_header_image_file" class="error-message" />
+                    </div>
+                </div>
+            </div>
+
             <!-- Copyright & Links Group -->
             <div class="d-flex flex-column gap-3">
                 <span class="d-block fs-5 fw-semibold">Copyright & App Links</span>
@@ -108,10 +126,14 @@ const settingsModel = ref({
     google_play_link: '',
     google_maps_key: '',
     headerLogoSrc: undefined as string | undefined,
-    footerLogoSrc: undefined as string | undefined
+    footerLogoSrc: undefined as string | undefined,
+    appHeaderImageSrc: undefined as string | undefined
 });
 const headerLogoFile = ref<File | undefined>();
 const footerLogoFile = ref<File | undefined>();
+const appHeaderImageFile = ref<File | undefined>();
+/** The app header photo on record, read from general-settings (the store's organisation does not carry it). */
+const currentAppHeaderImage = ref<string | undefined>();
 const updateSettingsLoading = ref<boolean>(false);
 
 // Validation Schema
@@ -137,6 +159,7 @@ async function fetchGeneralSettings() {
                     settingsModel.value.app_store_link = data.app_store_link || '';
                     settingsModel.value.google_play_link = data.google_play_link || '';
                     settingsModel.value.google_maps_key = data.google_maps_key || '';
+                    currentAppHeaderImage.value = data.app_header_image?.original_url ?? undefined;
                 }
             })
             .catch((e: AxiosError) => {
@@ -155,6 +178,11 @@ function onFooterLogoInputChange(data: UploadedImageInfo) {
     settingsModel.value.footerLogoSrc = data.src;
 }
 
+function onAppHeaderImageInputChange(data: UploadedImageInfo) {
+    appHeaderImageFile.value = data.file;
+    settingsModel.value.appHeaderImageSrc = data.src;
+}
+
 async function updateGeneralSettings() {
     updateSettingsLoading.value = true;
     QSwal.fire("Question", 'Update general settings?', 'question')
@@ -168,6 +196,9 @@ async function updateGeneralSettings() {
                 if (footerLogoFile.value) {
                     formData.append('footer_logo', footerLogoFile.value);
                 }
+                if (appHeaderImageFile.value) {
+                    formData.append('app_header_image', appHeaderImageFile.value);
+                }
 
                 formData.append('copyright_text', settingsModel.value.copyright_text);
                 formData.append('app_store_link', settingsModel.value.app_store_link);
@@ -178,6 +209,8 @@ async function updateGeneralSettings() {
                     .then(res => {
                         if (res.data?.status === 'success') {
                             MSwal.fire("Success", "General settings updated successfully.", "success");
+                            currentAppHeaderImage.value = res.data?.data?.app_header_image?.original_url ?? currentAppHeaderImage.value;
+                            appHeaderImageFile.value = undefined;
                             // Refresh masjid data
                             masjidStore.fetchMasjid();
                         } else {

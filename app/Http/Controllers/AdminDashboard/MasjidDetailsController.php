@@ -111,7 +111,7 @@ class MasjidDetailsController extends Controller
 
     public function getGeneralSettings($masjid_id)
     {
-        $masjid = Masjid::with('header_logo', 'footer_logo')->findOrFail($masjid_id);
+        $masjid = Masjid::with('header_logo', 'footer_logo', 'app_header_image')->findOrFail($masjid_id);
 
         return response()->json([
             'status' => 'success',
@@ -140,7 +140,12 @@ class MasjidDetailsController extends Controller
                 $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
             }
 
-            $masjid = Masjid::with('header_logo', 'footer_logo')->findOrFail($masjid->id);
+            // The app's own header photo, never the website's header logo (Masjid::app_header_image()).
+            if ($request->hasFile('app_header_image')) {
+                $masjid->addMediaFromRequest('app_header_image')->toMediaCollection('app_header_images');
+            }
+
+            $masjid = Masjid::with('header_logo', 'footer_logo', 'app_header_image')->findOrFail($masjid->id);
 
             DB::commit();
 

@@ -108,6 +108,7 @@ class PublicUploadFileNameDoorsTest extends TestCase
         'the organisation logo on Details' => self::PHOTOS,
         'the header logo on General settings' => self::PHOTOS,
         'the footer logo on General settings' => self::PHOTOS,
+        'the app header photo on General settings' => self::PHOTOS,
         'a new organisation: logo' => self::PHOTOS,
         'a new organisation: footer logo' => self::PHOTOS,
         'an edited organisation: logo' => self::PHOTOS,
@@ -609,6 +610,14 @@ class PublicUploadFileNameDoorsTest extends TestCase
                 'collections' => [str_contains($key, 'header') ? 'header_logos' : 'footer_logos'],
                 'tables' => ['masjids'],
                 'sentence' => $photo(str_contains($key, 'header') ? 'header logo' : 'footer logo'),
+            ],
+            'the app header photo on General settings' => [
+                'url' => $org . '/general-settings',
+                'payload' => ['copyright_text' => 'Changed on General settings'],
+                'field' => 'app_header_image',
+                'collections' => ['app_header_images'],
+                'tables' => ['masjids'],
+                'sentence' => $photo('app header photo'),
             ],
             'a new organisation: logo', 'a new organisation: footer logo',
             'an edited organisation: logo', 'an edited organisation: footer logo' => [
