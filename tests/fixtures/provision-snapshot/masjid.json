@@ -366,7 +366,8 @@
                 "forms_card_via_set_by": null,
                 "stripe_deauthorized_at": null,
                 "slug": null,
-                "description": null
+                "description": null,
+                "privacy_policy_url": null
             }
         ],
         "model_has_roles": [

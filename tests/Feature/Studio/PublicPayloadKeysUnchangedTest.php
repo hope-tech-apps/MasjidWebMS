@@ -33,14 +33,14 @@ class PublicPayloadKeysUnchangedTest extends TestCase
     private const SHOW = [
         'address', 'app_store_link', 'city_id', 'copyright_text', 'country_id', 'created_at', 'donation_link',
         'email', 'google_play_link', 'header_image_url', 'id', 'latitude', 'listed_at', 'logo', 'longitude',
-        'masjid_about', 'name', 'org_type', 'parent_id', 'phone', 'social_media_links', 'theme', 'timezone',
-        'updated_at', 'website_link',
+        'masjid_about', 'name', 'org_type', 'parent_id', 'phone', 'privacy_policy_url', 'social_media_links',
+        'theme', 'timezone', 'updated_at', 'website_link',
     ];
 
     private const DIRECTORY = [
         'address', 'app_store_link', 'city_id', 'copyright_text', 'country_id', 'created_at', 'email',
         'google_play_link', 'id', 'latitude', 'listed_at', 'logo', 'longitude', 'name', 'org_type', 'parent_id',
-        'phone', 'timezone', 'updated_at', 'website_link',
+        'phone', 'privacy_policy_url', 'timezone', 'updated_at', 'website_link',
     ];
 
     private function fixtureOrg(): Masjid
