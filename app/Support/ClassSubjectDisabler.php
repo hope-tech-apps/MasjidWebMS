@@ -81,6 +81,9 @@ final class ClassSubjectDisabler
         $ids = $row->class_subject_ids;
         if (! SubjectFence::validStoredIds($ids) || $ids === [] || ($ids !== null && array_diff($ids, $subjects->pluck('id')->all()) !== [])) return [false, null];
         $selected = $ids === null ? $subjects : $subjects->whereIn('id', $ids);
+        // A hidden subject cannot take new work when ON but its legacy key could when OFF:
+        // a restriction that names one is never equivalent to a legacy value.
+        if ($ids !== null && $selected->contains(fn ($s) => $s->hidden_at !== null)) return [false, null];
         $onKeys = $selected->flatMap(fn ($s) => $s->matchingKeys())->unique()->sort()->values()->all();
         $onGuide = $selected->flatMap(fn ($s) => $s->curriculumKeys())->unique()->all();
         $onTools = [];

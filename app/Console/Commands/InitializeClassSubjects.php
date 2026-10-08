@@ -40,6 +40,9 @@ class InitializeClassSubjects extends Command
                     foreach ($row['creates'] as $subject) {
                         $this->line("  CREATE {$subject['name']} | holds=".($subject['tool'] ?? 'none')." | guide=".($subject['guide_subject'] ?? 'none'));
                         foreach ($subject['attaches_saved_work'] ?? [] as $key => $count) $this->line("    ATTACH saved work: {$key}, {$count} items");
+                        // Two saved names becoming one subject changes what a family's summary shows
+                        // (two blocks become one): the owner decides per school before switch-on.
+                        if (count($subject['attaches_saved_work'] ?? []) > 1) $this->warn('    NOTE: work saved under '.count($subject['attaches_saved_work']).' different names ('.implode(', ', array_keys($subject['attaches_saved_work'])).') will show as ONE subject after switch-on.');
                     }
                     foreach ($row['combined_columns'] ?? [] as $column) $this->line("  curriculum columns that combine subjects on this class's list: {$column['name']} | grades=".implode(', ', $column['grades']));
                     foreach ($row['saved_work_links'] ?? [] as $name => $count) $this->line("  LINK {$name}: {$count} items");
