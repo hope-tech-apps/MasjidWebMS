@@ -37,7 +37,19 @@ beforeEach(function () {
     $org->forceFill(['capability_overrides' => array_merge($org->capability_overrides, ['class_subject_work' => true])])->save();
     $this->base = "/api/teacher/masjids/{$org->id}/groups/{$this->group->id}/subjects/{$this->subject->id}";
     $this->plan = fn ($subject = null, $date = '2026-10-09') => LessonPlan::create(['masjid_id' => $org->id, 'group_id' => $this->group->id, 'class_subject_id' => ($subject ?? $this->subject)->id, 'subject' => ($subject ?? $this->subject)->name, 'session_date' => $date, 'objective' => 'Practice objective', 'title' => 'Practice title', 'body' => 'Practice activities']);
-    $this->saveGuide = fn (array $marks, int $week = 4, string $grade = '1st') => $this->putJson($this->base.'/marks', ['source' => 'guide', 'grade_label' => $grade, 'week_no' => $week, 'marks' => $marks]);
+    // Existing ON callers load the mark versions before submitting; explicit versions stay untouched.
+    $this->putMarks = function (string $url, array $payload) {
+        $piece = isset($payload['piece_id']) ? SubjectPiece::find($payload['piece_id']) : SubjectPiece::where('class_subject_id', $this->subject->id)->where('source', $payload['source'])
+            ->when($payload['source'] === 'guide', fn ($q) => $q->where('guide_subject', $payload['guide_subject'] ?? 'Science')->where('week_no', $payload['week_no'] ?? 4))
+            ->when($payload['source'] === 'plan', fn ($q) => $q->where('lesson_plan_id', $payload['lesson_plan_id'] ?? null))->first();
+        $versions = $piece ? SubjectPieceMark::where('subject_piece_id', $piece->id)->get()->keyBy('group_membership_id') : collect();
+        foreach ($payload['marks'] as &$mark) {
+            if (! array_key_exists('updated_at', $mark)) $mark['updated_at'] = $versions->get($mark['group_membership_id'])?->updated_at?->toISOString();
+        }
+        unset($mark);
+        return $this->putJson($url, $payload);
+    };
+    $this->saveGuide = fn (array $marks, int $week = 4, string $grade = '1st') => ($this->putMarks)($this->base.'/marks', ['source' => 'guide', 'grade_label' => $grade, 'week_no' => $week, 'marks' => $marks]);
     $this->mark = fn ($member = null, $level = 3, $comment = null) => ['group_membership_id' => ($member ?? $this->one)->id, 'level' => $level, 'comment' => $comment];
     Sanctum::actingAs($this->teacher, ['staff']);
 });
@@ -104,7 +116,7 @@ it('walk 17 creates edits and deletes own pieces with an exact mark confirmation
     $this->postJson($this->base.'/pieces', ['title' => ''])->assertUnprocessable();
     $piece = $this->postJson($this->base.'/pieces', ['title' => 'Practice piece', 'detail' => 'Practice detail'])->assertCreated()->json('data.id');
     $this->putJson($this->base.'/pieces/'.$piece, ['title' => 'Corrected', 'detail' => null])->assertOk();
-    $this->putJson($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece, 'marks' => [($this->mark)()]])->assertOk();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece, 'marks' => [($this->mark)()]])->assertOk();
     $this->getJson($this->base.'/work')->assertJsonPath('data.own_pieces.0.title', 'Corrected')->assertJsonPath('data.own_pieces.0.mark_count', 1);
     $this->deleteJson($this->base.'/pieces/'.$piece, ['mark_count' => 0])->assertStatus(409)->assertJsonPath('mark_count', 1);
     expect(SubjectPiece::count())->toBe(1);
@@ -140,13 +152,13 @@ it('walk 19 copies guide words on first meaningful save and keeps them after rei
 
 it('copies plan words and retains marked pieces after plan deletion', function () {
     $plan = ($this->plan)();
-    $save = fn () => $this->putJson($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]]);
+    $save = fn () => ($this->putMarks)($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]]);
     $save()->assertOk(); $plan->update(['objective' => 'New objective']);
     $this->getJson($this->base.'/work')->assertJsonPath('data.lesson_plans.0.title', '2026-10-09: Practice objective');
     $plan->delete();
     expect(SubjectPiece::first()->lesson_plan_id)->toBeNull();
     $this->getJson($this->base.'/work')->assertJsonPath('data.lesson_plans.0.title', '2026-10-09: Practice objective');
-    $this->putJson($this->base.'/marks', ['source' => 'plan', 'piece_id' => SubjectPiece::first()->id, 'marks' => [($this->mark)(null, 2)]])->assertOk();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'plan', 'piece_id' => SubjectPiece::first()->id, 'marks' => [($this->mark)(null, 2)]])->assertOk();
 });
 
 it('opens on the most recently marked entry never on a calendar-derived number', function () {
@@ -206,8 +218,8 @@ it('refuses sharing at every new teacher write boundary', function (string $shap
         'piece-create' => $this->postJson($this->base.'/pieces', ['title' => 'Wrong', 'shared_with_family' => true]),
         'piece-edit' => $this->putJson($this->base.'/pieces/'.$piece, ['title' => 'Wrong', 'shared_with_family' => true]),
         'piece-delete' => $this->deleteJson($this->base.'/pieces/'.$piece, ['mark_count' => 0, 'shared_with_family' => true]),
-        'marks' => $this->putJson($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece, 'shared_with_family' => true, 'marks' => [($this->mark)()]]),
-        'mark-row' => $this->putJson($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece, 'marks' => [array_merge(($this->mark)(), ['shared_with_family' => true])]]),
+        'marks' => ($this->putMarks)($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece, 'shared_with_family' => true, 'marks' => [($this->mark)()]]),
+        'mark-row' => ($this->putMarks)($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece, 'marks' => [array_merge(($this->mark)(), ['shared_with_family' => true])]]),
     };
     $response->assertUnprocessable();
     expect(SubjectPieceMark::count())->toBe(0);
@@ -344,14 +356,14 @@ it('SubjectWorkTenantIsolation returns 404 for foreign ids at every route', func
     $this->postJson($url.'/pieces', ['title' => 'Wrong'])->assertNotFound();
     $this->putJson($url.'/pieces/'.$piece->id, ['title' => 'Wrong'])->assertNotFound();
     $this->deleteJson($url.'/pieces/'.$piece->id, ['mark_count' => 0])->assertNotFound();
-    $this->putJson($url.'/marks', ['source' => 'own', 'piece_id' => $piece->id, 'marks' => []])->assertNotFound();
+    ($this->putMarks)($url.'/marks', ['source' => 'own', 'piece_id' => $piece->id, 'marks' => []])->assertNotFound();
     $this->putJson($this->base.'/notes/'.$note->id, ['body' => 'Wrong'])->assertNotFound();
     $this->deleteJson($this->base.'/notes/'.$note->id)->assertNotFound();
     $this->postJson($this->base.'/notes', ['group_membership_id' => $member->id, 'body' => 'Wrong'])->assertNotFound();
     $this->putJson($this->base.'/pieces/'.$piece->id, ['title' => 'Wrong'])->assertNotFound();
     $this->deleteJson($this->base.'/pieces/'.$piece->id, ['mark_count' => 0])->assertNotFound();
-    $this->putJson($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece->id, 'marks' => [($this->mark)()]])->assertNotFound();
-    $this->putJson($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]])->assertNotFound();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece->id, 'marks' => [($this->mark)()]])->assertNotFound();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]])->assertNotFound();
     ($this->saveGuide)([($this->mark)($member)])->assertNotFound();
     Sanctum::actingAs($this->office);
     $admin = str_replace('/teacher/', '/admin/', $url);
@@ -436,15 +448,15 @@ it('uses saved guide and plan identities after source removal and refuses changi
     $piece = SubjectPiece::first();
     $this->entry->delete();
     $this->getJson($this->base.'/work')->assertOk()->assertJsonPath('data.curriculum.0.entries.0.title', 'Practice focus 4');
-    $this->putJson($this->base.'/marks', ['source' => 'guide', 'piece_id' => $piece->id, 'marks' => [($this->mark)(null, 4)]])->assertOk();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'guide', 'piece_id' => $piece->id, 'marks' => [($this->mark)(null, 4)]])->assertOk();
     $this->putJson($this->base.'/pieces/'.$piece->id, ['title' => 'Wrong'])->assertNotFound();
     $this->deleteJson($this->base.'/pieces/'.$piece->id, ['mark_count' => 1])->assertNotFound();
-    $this->putJson($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece->id, 'marks' => [($this->mark)()]])->assertNotFound();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece->id, 'marks' => [($this->mark)()]])->assertNotFound();
 });
 
 it('confirms deletion against withdrawn marks and refuses missing confirmation', function () {
     $piece = $this->postJson($this->base.'/pieces', ['title' => 'Practice'])->assertCreated()->json('data.id');
-    $this->putJson($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece, 'marks' => [($this->mark)()]])->assertOk();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'own', 'piece_id' => $piece, 'marks' => [($this->mark)()]])->assertOk();
     DB::table('group_memberships')->where('id', $this->one->id)->update(['left_on' => '2026-10-09']);
     $this->getJson($this->base.'/work')->assertJsonPath('data.own_pieces.0.mark_count', 1)->assertJsonCount(0, 'data.own_pieces.0.marks');
     $this->deleteJson($this->base.'/pieces/'.$piece)->assertUnprocessable();
@@ -461,7 +473,7 @@ it('recovers a competing first plan insert and retains the winner snapshot', fun
         DB::table('subject_pieces')->insert(['masjid_id' => $this->org->id, 'class_subject_id' => $this->subject->id,
             'source' => 'plan', 'title' => '2026-10-09: Winning plan', 'lesson_plan_id' => $plan->id, 'created_at' => now(), 'updated_at' => now()]);
     });
-    $this->putJson($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]])->assertOk();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]])->assertOk();
     expect($injected)->toBeTrue(); expect(SubjectPiece::count())->toBe(1); expect(SubjectPieceMark::count())->toBe(1);
     expect(SubjectPiece::first()->title)->toBe('2026-10-09: Winning plan');
 });
@@ -471,7 +483,7 @@ it('refuses overlong copied words with validation instead of truncating on SQLit
     ($this->saveGuide)([($this->mark)()])->assertUnprocessable();
     expect(SubjectPiece::count())->toBe(0);
     $plan = ($this->plan)(); $plan->update(['objective' => str_repeat('x', 256)]);
-    $this->putJson($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]])->assertUnprocessable();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]])->assertUnprocessable();
     expect(SubjectPiece::count())->toBe(0);
 });
 
@@ -503,7 +515,7 @@ it('keeps newest plan order for a subject renamed between two plans on the same 
 
 it('review keeps a marked plan on the subject it was marked under after the plan is linked elsewhere', function () {
     $plan = ($this->plan)();
-    $this->putJson($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)($this->one, 4, 'Kept')]])->assertOk();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)($this->one, 4, 'Kept')]])->assertOk();
     $plan->forceFill(['class_subject_id' => $this->other->id, 'subject' => $this->other->name])->save();
 
     $plans = $this->getJson($this->base.'/work')->assertOk()->json('data.lesson_plans');
@@ -594,7 +606,7 @@ it('Build C marks each guide identity and retains unfollowed saved work with no 
     ($this->guide)(4, 'Grade 1', 'Joint studies');
     ($this->guide)(5, 'Grade 1', 'Joint studies');
     $this->subject->update(['guide_subjects' => ['Science', 'Joint studies']]);
-    $save = fn ($guide, $week = 4) => $this->putJson($this->base.'/marks', ['source' => 'guide', 'guide_subject' => $guide, 'grade_label' => '1', 'week_no' => $week, 'marks' => [($this->mark)()]]);
+    $save = fn ($guide, $week = 4) => ($this->putMarks)($this->base.'/marks', ['source' => 'guide', 'guide_subject' => $guide, 'grade_label' => '1', 'week_no' => $week, 'marks' => [($this->mark)()]]);
     ($this->saveGuide)([($this->mark)()])->assertUnprocessable();
     $save('Science')->assertOk(); $this->travel(1)->seconds(); $save('Joint studies')->assertOk();
     expect(SubjectPiece::count())->toBe(2);
@@ -607,7 +619,7 @@ it('Build C marks each guide identity and retains unfollowed saved work with no 
     $save('Joint studies', 5)->assertUnprocessable();
     $save('Joint studies')->assertOk();
     $piece = SubjectPiece::where('guide_subject', 'Science')->firstOrFail();
-    $this->putJson($this->base.'/marks', ['source' => 'guide', 'piece_id' => $piece->id, 'marks' => [($this->mark)(null, 4)]])->assertOk();
+    ($this->putMarks)($this->base.'/marks', ['source' => 'guide', 'piece_id' => $piece->id, 'marks' => [($this->mark)(null, 4)]])->assertOk();
     expect(SubjectPiece::count())->toBe(2);
 });
 
@@ -637,7 +649,7 @@ it('Build C includes grades served only by the joint guide and preserves first-m
     expect($blocks[2]['grade_label'])->toBe('Grade 3');
     expect(array_column($blocks[2]['entries'], 'guide_subject'))->toBe(['Joint studies']);
     $fields = ['source' => 'guide', 'guide_subject' => 'Joint studies', 'grade_label' => '3rd', 'week_no' => 9, 'marks' => [($this->mark)($third, 4, 'Kept words')]];
-    $this->putJson($this->base.'/marks', $fields)->assertOk();
+    ($this->putMarks)($this->base.'/marks', $fields)->assertOk();
     $piece = SubjectPiece::where('guide_subject', 'Joint studies')->firstOrFail();
     CurriculumWeek::where('subject', 'Joint studies')->delete();
     $this->subject->update(['guide_subjects' => ['Science']]);
@@ -646,7 +658,7 @@ it('Build C includes grades served only by the joint guide and preserves first-m
     expect($after['entries'][0]['title'])->toBe('Practice focus 9');
     expect($after['entries'][0]['marks'][0]['comment'])->toBe('Kept words');
     expect($after['opening_guide_subject'])->toBe('Joint studies');
-    $this->putJson($this->base.'/marks', $fields)->assertOk();
+    ($this->putMarks)($this->base.'/marks', $fields)->assertOk();
     expect(SubjectPiece::where('guide_subject', 'Joint studies')->count())->toBe(1);
     expect($piece->fresh()->title)->toBe('Practice focus 9');
 });
@@ -665,4 +677,75 @@ it('Build C emits only an instant nullable JSON addition on MySQL and restores f
     $migration->up();
     expect($this->subject->fresh()->guide_subjects)->toBeNull();
     expect($this->subject->fresh()->followedGuideSubjects())->toBe(['Science']);
+});
+
+
+it('Build D preserves two editors saves for different students of the same piece and returns mark versions', function () {
+    $second = ($this->student)();
+    $first = ($this->mark)($this->one, 3, 'First teacher') + ['updated_at' => null];
+    $other = ($this->mark)($second, 4, 'Second teacher') + ['updated_at' => null];
+    $saved = ($this->saveGuide)([$first])->assertOk()->assertJsonStructure(['data' => ['piece_id', 'marks' => [['group_membership_id', 'updated_at']]]]);
+    ($this->saveGuide)([$other])->assertOk()->assertJsonPath('data.piece_id', $saved->json('data.piece_id'));
+    $marks = $this->getJson($this->base.'/work')->assertOk()->json('data.curriculum.0.entries.0.marks');
+    expect(array_column($marks, 'comment', 'group_membership_id'))->toBe([$this->one->id => 'First teacher', $second->id => 'Second teacher']);
+    expect($marks[0]['updated_at'])->toBe($saved->json('data.marks.0.updated_at'));
+});
+
+it('Build D rejects stale same student updates atomically including same second edits and null first saves', function () {
+    $this->freezeTime();
+    $second = ($this->student)();
+    $first = ($this->mark)($this->one, 3, 'First') + ['updated_at' => null];
+    $version = ($this->saveGuide)([$first])->assertOk()->json('data.marks.0.updated_at');
+    expect($version)->not->toBeNull();
+    $fresh = array_replace($first, ['comment' => 'Newer', 'updated_at' => $version]);
+    $newVersion = ($this->saveGuide)([$fresh])->assertOk()->json('data.marks.0.updated_at');
+    expect($newVersion)->not->toBe($version);
+    foreach ([$version, null] as $stale) {
+        ($this->saveGuide)([($this->mark)($second, 4, 'Must roll back') + ['updated_at' => null], array_replace($first, ['comment' => 'Stale', 'updated_at' => $stale])])
+            ->assertStatus(409)->assertJsonPath('students.0.group_membership_id', $this->one->id)->assertJsonPath('students.0.name', 'Practice Student')->assertJsonCount(1, 'students');
+        expect(SubjectPieceMark::count())->toBe(1); expect(SubjectPieceMark::first()->comment)->toBe('Newer');
+    }
+    ($this->saveGuide)([array_replace($first, ['level' => null, 'comment' => null, 'updated_at' => $newVersion])])->assertOk()->assertJsonPath('data.marks.0.updated_at', null);
+    ($this->saveGuide)([array_replace($fresh, ['updated_at' => $newVersion])])->assertStatus(409);
+    expect(SubjectPieceMark::count())->toBe(0);
+});
+
+it('Build D requires the loaded mark timestamp and reports every stale student without writing', function () {
+    $this->putJson($this->base.'/marks', ['source' => 'guide', 'grade_label' => '1st', 'week_no' => 4, 'marks' => [($this->mark)()]])->assertUnprocessable()->assertJsonStructure(['data' => ['marks.0.updated_at']]);
+    $second = ($this->student)();
+    ($this->saveGuide)([($this->mark)() + ['updated_at' => null], ($this->mark)($second) + ['updated_at' => null]])->assertOk();
+    ($this->saveGuide)([($this->mark)(null, 4) + ['updated_at' => null], ($this->mark)($second, null, null) + ['updated_at' => null]])->assertStatus(409)->assertJsonCount(2, 'students');
+    expect(SubjectPieceMark::count())->toBe(2); expect(SubjectPieceMark::where('group_membership_id', $this->one->id)->first()->level)->toBe(3);
+});
+
+it('Build D compares trimmed wording with null and empty strings equivalent for every field', function () {
+    $this->entry->update(['assessment_note' => null, 'standard_code' => null]);
+    ($this->saveGuide)([($this->mark)() + ['updated_at' => null]])->assertOk();
+    $piece = SubjectPiece::firstOrFail();
+    $piece->update(['title' => '  Practice focus 4  ', 'detail' => '', 'standard_code' => '  ']);
+    $entry = fn () => $this->getJson($this->base.'/work')->assertOk()->json('data.curriculum.0.entries.0');
+    expect($entry()['wording_changed'])->toBeFalse();
+    foreach (['title', 'detail', 'standard_code'] as $field) {
+        $original = $piece->$field; $piece->update([$field => 'Real changed wording']);
+        expect($entry()['wording_changed'])->toBeTrue(); $piece->update([$field => $original]);
+    }
+    $this->entry->update(['assessment_note' => '  ', 'standard_code' => '']);
+    $piece->update(['detail' => null, 'standard_code' => null]);
+    expect($entry()['wording_changed'])->toBeFalse();
+});
+
+
+it('Build D never reuses a cleared mark version when it is recreated after an own piece correction', function () {
+    $this->freezeTime();
+    $piece = $this->postJson($this->base.'/pieces', ['title' => 'Practice task'])->assertCreated()->json('data.id');
+    $body = ['source' => 'own', 'piece_id' => $piece, 'marks' => [($this->mark)() + ['updated_at' => null]]];
+    $old = $this->putJson($this->base.'/marks', $body)->assertOk()->json('data.marks.0.updated_at');
+    $clear = $body; $clear['marks'][0] = array_replace($clear['marks'][0], ['level' => null, 'comment' => null, 'updated_at' => $old]);
+    $this->putJson($this->base.'/marks', $clear)->assertOk();
+    $this->putJson($this->base.'/pieces/'.$piece, ['title' => 'Corrected task'])->assertOk();
+    $new = $this->putJson($this->base.'/marks', $body)->assertOk()->json('data.marks.0.updated_at');
+    expect($new)->not->toBe($old);
+    $stale = $body; $stale['marks'][0] = array_replace($stale['marks'][0], ['level' => 1, 'updated_at' => $old]);
+    $this->putJson($this->base.'/marks', $stale)->assertStatus(409);
+    expect(SubjectPieceMark::first()->level)->toBe(3);
 });

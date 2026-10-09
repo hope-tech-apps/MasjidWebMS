@@ -252,6 +252,7 @@ test('first ON year starts with no meeting days and Save asks for at least one',
 });
 
 test('no screen the calendar touches wraps content in a bare <template>, which a browser never displays', () => {
+    // Build D: includes every subject child and shared help; their scoped phone controls must render in the browser.
     // A mounted test still finds nodes inside a <template> with no directive; a browser renders an inert element.
     for (const file of ['views/dashboard/SchoolCalendarView.vue', 'views/dashboard/GroupDetailView.vue', 'components/classes/PerformanceLevelHelp.vue', 'components/classes/ClassSubjectManager.vue', 'views/teacher/subject/SubjectWorkPage.vue', 'views/teacher/subject/SubjectMarkEditor.vue', 'views/teacher/subject/SubjectCurriculumBlock.vue', 'views/teacher/subject/SubjectOwnPieces.vue', 'views/teacher/subject/SubjectNotes.vue', 'views/teacher/TeacherClass.vue', 'views/teacher/TeacherCalendar.vue', 'views/family/FamilyCalendar.vue', 'components/common/SchoolCalendarList.vue', 'components/forms/FormFieldEditor.vue', 'components/forms/FormBuilder.vue']) {
         const source = readFileSync(new URL('../' + file, import.meta.url), 'utf8');

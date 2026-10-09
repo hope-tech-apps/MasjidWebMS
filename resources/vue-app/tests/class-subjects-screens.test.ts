@@ -1498,8 +1498,15 @@ async function workSetup(realm: 'teacher' | 'office' = 'teacher', opts: any = {}
                 const pieces = [...work.curriculum.flatMap((b: any) => b.entries), ...work.lesson_plans, ...work.own_pieces];
                 const piece = body.piece_id ? pieces.find((p: any) => p.piece_id === body.piece_id) : body.source === 'guide'
                     ? pieces.find((p: any) => p.guide_subject === body.guide_subject && p.week_no === body.week_no && p.grade_label === body.grade_label) : pieces.find((p: any) => p.lesson_plan_id === body.lesson_plan_id);
-                piece.piece_id ??= 70; piece.marks = body.marks.filter((m: any) => m.level != null || m.comment?.trim()); piece.mark_count = piece.marks.length;
-                return ok({ piece_id: piece.piece_id });
+                piece.piece_id ??= 70;
+                const merged = new Map(piece.marks.map((m: any) => [m.group_membership_id, m]));
+                const versions = body.marks.map((m: any) => ({ group_membership_id: m.group_membership_id, updated_at: m.level != null || m.comment?.trim() ? '2026-10-09T16:00:00.000000Z' : null }));
+                for (const m of body.marks) {
+                    if (m.level != null || m.comment?.trim()) merged.set(m.group_membership_id, { ...m, updated_at: versions.find((v: any) => v.group_membership_id === m.group_membership_id).updated_at });
+                    else merged.delete(m.group_membership_id);
+                }
+                piece.marks = [...merged.values()]; piece.mark_count = piece.marks.length;
+                return ok({ piece_id: piece.piece_id, marks: versions });
             }
             if (/\/notes(?:\/\d+)?$/.test(url)) {
                 const id = Number(url.split('/').pop());
@@ -1579,7 +1586,18 @@ test('walk 15: server-selected numbered entries, combined-grade rows and no cale
 });
 test('walk 16: linked plans in server order open marking rows, including retained deleted plans', async () => {
     const r = await workSetup(); const s = r.screen;
-    try { const a = area(s, 'plans'); assert.ok(a.textContent.indexOf('2026-10-09') < a.textContent.indexOf('2026-10-08')); click(s.button('2026-10-09: Practice objective')); await flush(); assert.match(a.textContent, /Practice student.*Practice learner/); click(areaButton(s, 'plans', 'Save')); await flush(10); assert.equal(r.calls.find(c => c.url.endsWith('/marks')).body.lesson_plan_id, 31); } finally { s.unmount(); }
+    try {
+        const a = area(s, 'plans'); assert.ok(a.textContent.indexOf('2026-10-09') < a.textContent.indexOf('2026-10-08'));
+        click(s.button('2026-10-09: Practice objective')); await flush(); assert.match(a.textContent, /Practice student.*Practice learner/);
+        assert.equal(areaButton(s, 'plans', 'Save').props.disabled, true); assert.equal(r.calls.filter(c => c.url.endsWith('/marks')).length, 0);
+        type(within(a, n => n.props['aria-label'] === 'Comment for Practice student')[0], 'Plan comment'); await flush(); click(areaButton(s, 'plans', 'Save')); await flush(10);
+        const saved = r.calls.find(c => c.url.endsWith('/marks')).body;
+        assert.equal(saved.lesson_plan_id, 31); assert.deepEqual(saved.marks, [{ group_membership_id: 9, level: null, comment: 'Plan comment', updated_at: null }]);
+        click(s.button('2026-10-09: Practice objective')); await flush(); click(s.button('2026-10-08: Retained objective')); await flush();
+        type(within(a, n => n.props['aria-label'] === 'Comment for Practice learner')[0], 'Retained correction'); await flush(); click(areaButton(s, 'plans', 'Save')); await flush(10);
+        const retained = r.calls.filter(c => c.url.endsWith('/marks'))[1].body;
+        assert.equal(retained.piece_id, 32); assert.deepEqual(retained.marks, [{ group_membership_id: 10, level: null, comment: 'Retained correction', updated_at: null }]);
+    } finally { s.unmount(); }
 });
 test('walk 17: own piece create/edit/delete count conflict requires another explicit confirmation', async () => {
     let conflict = true;
@@ -1598,8 +1616,8 @@ test('walk 18: levels toggle/clear, comment save and reopening retains marks; un
     try {
         const block = workField(s, 'Curriculum grade 1'); const buttons = () => within(block, n => n.props['aria-pressed'] !== undefined);
         for (const button of buttons()) { click(button); await flush(); assert.equal(button.props['aria-pressed'], 'true'); click(button); await flush(); assert.equal(button.props['aria-pressed'], 'false'); }
-        click(buttons()[1]); type(within(block, n => n.tag === 'textarea')[0], 'Typed comment'); click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
-        const saved = r.calls.find(c => c.url.endsWith('/marks')).body; assert.deepEqual(saved.marks, [{ group_membership_id: 9, level: 3, comment: 'Typed comment' }]); assert.equal(saved.week_no, 12);
+        click(buttons()[1]); type(within(block, n => n.tag === 'textarea')[0], 'Typed comment'); await flush(); click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
+        const saved = r.calls.find(c => c.url.endsWith('/marks')).body; assert.deepEqual(saved.marks, [{ group_membership_id: 9, level: 3, comment: 'Typed comment', updated_at: null }]); assert.equal(saved.week_no, 12);
         await pick(s, 'Roster'); await pick(s, 'Healthful Living'); assert.equal(workField(s, 'Comment for Practice student').value, 'Typed comment');
         const row = s.all(n => n.props['aria-label'] === 'Marks for Practice student')[0]; assert.ok(row); assert.equal(within(row, n => n.props['aria-pressed'] === 'true').length, 1);
     } finally { s.unmount(); }
@@ -1616,7 +1634,7 @@ test('work drafts: changing entry or menu line asks before discarding, staying k
 test('work failed saves: 422 field words, 403/404 and network errors keep typed comments next to the entry', async () => {
     for (const failure of [httpError(422, { errors: { 'marks.0.comment': ['Practice field refusal.'] }, message: 'Validation failed.' }), httpError(403, { message: 'Forbidden.' }), httpError(404, { message: 'Not found.' }), new Error('Network Error')]) {
         const r = await workSetup('teacher', { write: (_m: string, u: string) => { if (u.endsWith('/marks')) throw failure; } }); const s = r.screen;
-        try { type(workField(s, 'Comment for Practice student'), 'Still typed'); const b = workField(s, 'Curriculum grade 1'); click(within(b, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10); assert.equal(workField(s, 'Comment for Practice student').value, 'Still typed'); assert.match(b.textContent, /Practice field refusal\.|Forbidden\.|Not found\.|Network Error/); } finally { s.unmount(); }
+        try { type(workField(s, 'Comment for Practice student'), 'Still typed'); const b = workField(s, 'Curriculum grade 1'); await flush(); click(within(b, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10); assert.equal(workField(s, 'Comment for Practice student').value, 'Still typed'); assert.match(b.textContent, /Practice field refusal\.|Forbidden\.|Not found\.|Network Error/); } finally { s.unmount(); }
     }
 });
 test('walk 19: copied guide wording stays visible with changed-wording date supplied by server', async () => {
@@ -1658,7 +1676,7 @@ test('work saves: another grade draft survives a note or own-piece change and a 
         assert.equal(workField(s, 'Comment for Practice learner').value, 'Other grade draft');
         click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'New task'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10);
         assert.equal(workField(s, 'Comment for Practice learner').value, 'Other grade draft');
-        type(workField(s, 'Comment for Practice student'), 'Saved grade one'); const block = workField(s, 'Curriculum grade 1'); click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
+        type(workField(s, 'Comment for Practice student'), 'Saved grade one'); const block = workField(s, 'Curriculum grade 1'); await flush(); click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
         assert.equal(workField(s, 'Comment for Practice learner').value, 'Other grade draft');
     } finally { s.unmount(); }
 });
@@ -1701,8 +1719,8 @@ test('work clears: saving empty marks removes a row; an own piece without marks 
     const r = await workSetup('teacher', { work }); const s = r.screen;
     try {
         const block = workField(s, 'Curriculum grade 1'); click(within(block, n => n.props['aria-pressed'] === 'true')[0]); type(workField(s, 'Comment for Practice student'), '');
-        click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
-        assert.deepEqual(r.calls.find(c => c.url.endsWith('/marks')).body.marks, [{ group_membership_id: 9, level: null, comment: null }]); assert.equal(work.curriculum[0].entries[1].marks.length, 0);
+        await flush(); click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
+        assert.deepEqual(r.calls.find(c => c.url.endsWith('/marks')).body.marks, [{ group_membership_id: 9, level: null, comment: null, updated_at: null }]); assert.equal(work.curriculum[0].entries[1].marks.length, 0);
         click(workField(s, 'Delete piece 41')); await flush(); assert.match(s.text(), /Delete this piece\?/); assert.doesNotMatch(s.text(), /and its 0 marks/);
         click(s.button('Delete piece')); await flush(10); assert.deepEqual(r.calls.find(c => c.method === 'delete').body, { mark_count: 0 });
     } finally { s.unmount(); }
@@ -1762,7 +1780,7 @@ test('Build C overlapping guide numbers select and save their own subject and sh
         const select = workField(s, 'Entry for Grade 1');
         assert.deepEqual(select.children.filter(n => n.tag === 'option').map(n => n.textContent), ['12 · Focus 12 — Science', '12 · Focus 12 — Joint studies']);
         assert.match(workField(s, 'Curriculum grade 1').textContent, /Grade 1/);
-        type(workField(s, 'Comment for Practice student'), 'Joint comment'); click(areaButton(s, 'curriculum', 'Save')); await flush(10);
+        type(workField(s, 'Comment for Practice student'), 'Joint comment'); await flush(); click(areaButton(s, 'curriculum', 'Save')); await flush(10);
         assert.equal(r.calls.find(c => c.url.endsWith('/marks')).body.guide_subject, 'Joint studies');
         chooseOption(select, select.children.filter(n => n.tag === 'option')[0].props.value); await flush();
         assert.match(workField(s, 'Curriculum grade 1').textContent, /12 · Focus 12 — Science/);
@@ -1790,4 +1808,128 @@ test('Build C a grade with one guide keeps focus-only heading and chooser words'
         assert.equal(heading.textContent, 'Focus 12');
         assert.equal(r.screen.all(n => n.tag === 'h4' && n.textContent === 'Grade 1').length, 1);
     } finally { r.screen.unmount(); }
+});
+
+
+test('Build D saved marks reach the parent before a pending wording read for guide plan and own piece', async () => {
+    for (const kind of ['guide', 'plan', 'own']) {
+        const pending = deferred<any>(); let reads = 0;
+        const r = await workSetup('teacher', { read: (u: string) => { if (u.endsWith('/work') && ++reads === 2) return pending.promise; } });
+        const s = r.screen;
+        try {
+            if (kind === 'plan') { click(s.button('2026-10-09: Practice objective')); await flush(); }
+            if (kind === 'own') { click(s.button('Practice piece')); await flush(); }
+            const container = () => kind === 'guide' ? workField(s, 'Curriculum grade 1') : area(s, kind === 'plan' ? 'plans' : 'own');
+            type(within(container(), n => n.props['aria-label'] === 'Comment for Practice student')[0], 'Saved before reload');
+            await flush(); click(within(container(), n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
+            if (kind === 'guide') { chooseOption(workField(s, 'Entry for 1st'), 2); await flush(); chooseOption(workField(s, 'Entry for 1st'), 12); }
+            else { click(s.button(kind === 'plan' ? '2026-10-09: Practice objective' : 'Practice piece')); await flush(); click(s.button(kind === 'plan' ? '2026-10-09: Practice objective' : 'Practice piece')); }
+            await flush(10);
+            assert.equal(within(container(), n => n.props['aria-label'] === 'Comment for Practice student')[0].value, 'Saved before reload');
+            assert.equal(within(container(), n => n.tag === 'button' && n.textContent === 'Save')[0].props.disabled, true);
+            type(within(container(), n => n.props['aria-label'] === 'Comment for Practice student')[0], 'Second save');
+            await flush(); click(within(container(), n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
+            assert.equal(r.calls.filter(c => c.url.endsWith('/marks'))[1].body.piece_id, kind === 'own' ? 41 : 70);
+            assert.equal(r.calls.filter(c => c.url.endsWith('/marks'))[1].body.marks[0].updated_at, '2026-10-09T16:00:00.000000Z');
+            pending.resolve(ok(workFixture())); await flush(10);
+            assert.equal(within(container(), n => n.props['aria-label'] === 'Comment for Practice student')[0].value, 'Second save');
+        } finally { s.unmount(); pending.resolve(ok(workFixture())); }
+    }
+});
+
+test('Build D Save is disabled until a row differs and sends only changed students with their loaded timestamp', async () => {
+    const work: any = workFixture(); work.curriculum = [];
+    work.own_pieces[0].marks = [{ group_membership_id: 9, level: 3, comment: 'Existing', updated_at: '2026-10-09T14:00:00.000000Z' }]; work.own_pieces[0].mark_count = 1;
+    const r = await workSetup('teacher', { work }); const s = r.screen;
+    try {
+        click(s.button('Practice piece')); await flush();
+        assert.equal(areaButton(s, 'own', 'Save').props.disabled, true);
+        type(workField(s, 'Comment for Practice student'), 'Temporary'); type(workField(s, 'Comment for Practice student'), 'Existing'); await flush();
+        assert.equal(areaButton(s, 'own', 'Save').props.disabled, true);
+        type(workField(s, 'Comment for Practice learner'), 'Only changed row'); await flush(); click(areaButton(s, 'own', 'Save')); await flush(10);
+        assert.deepEqual(r.calls.find(c => c.url.endsWith('/marks')).body.marks, [{ group_membership_id: 10, level: null, comment: 'Only changed row', updated_at: null }]);
+        assert.equal(workField(s, 'Comment for Practice student').value, 'Existing');
+        type(workField(s, 'Comment for Practice student'), 'Updated existing'); await flush(); click(areaButton(s, 'own', 'Save')); await flush(10);
+        assert.equal(r.calls.filter(c => c.url.endsWith('/marks'))[1].body.marks[0].updated_at, '2026-10-09T14:00:00.000000Z');
+    } finally { s.unmount(); }
+});
+
+test('Build D stale mark conflicts name only affected rows and preserve typing until Reload is chosen', async () => {
+    let reload = false; const pending = deferred<any>();
+    const work: any = workFixture(); work.curriculum = [];
+    const r = await workSetup('teacher', { work, read: (u: string) => reload && u.endsWith('/work') ? pending.promise : undefined,
+        write: (_m: string, u: string) => { if (u.endsWith('/marks')) throw httpError(409, { message: 'Marks changed.', students: [{ group_membership_id: 10, name: 'Practice learner' }] }); } });
+    const s = r.screen;
+    try {
+        click(s.button('Practice piece')); await flush(); type(workField(s, 'Comment for Practice learner'), 'My correction'); await flush(); click(areaButton(s, 'own', 'Save')); await flush(10);
+        const rows = within(area(s, 'own'), n => n.props.role === 'group');
+        assert.doesNotMatch(rows[0].textContent, /Someone else changed/);
+        assert.match(rows[1].textContent, /Someone else changed this mark\. Reload to see it\./);
+        assert.equal(workField(s, 'Comment for Practice learner').value, 'My correction');
+        reload = true; click(within(rows[1], n => n.tag === 'button' && n.textContent === 'Reload')[0]); await flush();
+        assert.equal(workField(s, 'Comment for Practice learner').value, 'My correction');
+        work.own_pieces[0].marks = [{ group_membership_id: 10, level: 4, comment: 'Other teacher', updated_at: '2026-10-09T15:00:00.000000Z' }];
+        pending.resolve(ok(work)); await flush(10);
+        assert.equal(workField(s, 'Comment for Practice learner').value, 'Other teacher'); assert.doesNotMatch(area(s, 'own').textContent, /Someone else changed/);
+    } finally { s.unmount(); pending.resolve(ok(work)); }
+});
+
+test('Build D deleting an edited note or own piece keeps the correction through cancellation and drops it on successful delete', async () => {
+    for (const kind of ['note', 'piece']) {
+        const r = await workSetup(); const s = r.screen;
+        try {
+            click(workField(s, kind === 'note' ? 'Edit note 51' : 'Edit piece 41')); await flush();
+            type(workField(s, kind === 'note' ? 'Note text' : 'Piece title'), 'Unsaved correction');
+            click(workField(s, kind === 'note' ? 'Delete note 51' : 'Delete piece 41')); await flush();
+            assert.match(s.text(), kind === 'note' ? /Delete this note and the correction you were typing\?/ : /correction you were typing/);
+            const confirm = workField(s, kind === 'note' ? 'Confirm note deletion' : 'Confirm piece deletion');
+            click(within(confirm, n => n.tag === 'button' && n.textContent === 'Cancel')[0]); await flush();
+            assert.equal(workField(s, kind === 'note' ? 'Note text' : 'Piece title').value, 'Unsaved correction');
+            click(workField(s, kind === 'note' ? 'Delete note 51' : 'Delete piece 41')); await flush(); click(s.button(kind === 'note' ? 'Delete note' : 'Delete piece')); await flush(10);
+            assert.equal(s.all(n => n.props['aria-label'] === (kind === 'note' ? 'Note text' : 'Piece title')).length, 0);
+            await pick(s, 'Roster'); assert.doesNotMatch(s.text(), /Discard unsaved/);
+        } finally { s.unmount(); }
+    }
+});
+
+test('Build D field validation maps sent indices to students and ties each field message to its control', async () => {
+    const work: any = workFixture(); work.curriculum = [];
+    const r = await workSetup('teacher', { work, write: (_m: string, u: string) => {
+        if (u.endsWith('/marks')) throw httpError(422, { errors: { 'marks.0.comment': ['Comment refusal'], 'marks.0.level': ['Level refusal'], marks: ['General refusal'] } });
+        if (u.endsWith('/notes')) throw httpError(422, { data: { body: ['Note refusal'] } });
+        if (u.endsWith('/pieces')) throw httpError(422, { data: { title: ['Title refusal'], detail: ['Detail refusal'] } });
+    } }); const s = r.screen;
+    const linked = (control: Node, words: string) => {
+        assert.equal(control.props['aria-invalid'], 'true');
+        const id = control.props['aria-describedby']; assert.ok(id);
+        const message = s.all(n => n.props.id === id); assert.equal(message.length, 1); assert.equal(message[0].textContent, words);
+    };
+    try {
+        click(s.button('Practice piece')); await flush(); type(workField(s, 'Comment for Practice learner'), 'Mine'); await flush(); click(areaButton(s, 'own', 'Save')); await flush(10);
+        linked(workField(s, 'Comment for Practice learner'), 'Comment refusal');
+        linked(workField(s, '4 Exceeds for Practice learner'), 'Level refusal');
+        assert.equal(workField(s, 'Comment for Practice student').props['aria-invalid'], undefined);
+        const rows = within(area(s, 'own'), n => n.props.role === 'group'); assert.match(rows[1].textContent, /Comment refusal/); assert.doesNotMatch(rows[0].textContent, /refusal/);
+        assert.ok(s.all(n => n.props.role === 'alert' && n.textContent === 'General refusal').length);
+        click(s.button('New note')); await flush(); type(workField(s, 'Note text'), 'Mine'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10); linked(workField(s, 'Note text'), 'Note refusal');
+        click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'Mine'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10);
+        linked(workField(s, 'Piece title'), 'Title refusal'); linked(workField(s, 'Piece detail'), 'Detail refusal');
+    } finally { s.unmount(); }
+});
+
+test('Build D phone targets are scoped locally including help used in Grades and Reports with work OFF', () => {
+    for (const file of ['SubjectMarkEditor', 'SubjectNotes', 'SubjectOwnPieces', 'SubjectWorkPage', 'SubjectCurriculumBlock']) {
+        const source = readFileSync(new URL(`../views/teacher/subject/${file}.vue`, import.meta.url), 'utf8');
+        const css = source.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] ?? '';
+        assert.match(css, /@media\s*\(max-width:\s*767px\)/, file);
+        assert.match(css, /button, input, select, textarea\s*\{[^}]*min-height:\s*44px;[^}]*min-width:\s*44px;/, file);
+    }
+    const help = readFileSync(new URL('../components/classes/PerformanceLevelHelp.vue', import.meta.url), 'utf8');
+    assert.match(help, /<style scoped>[\s\S]*summary\s*\{[^}]*min-height:\s*44px/);
+    const teacher = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+    const grades = teacher.slice(teacher.indexOf("activeTab === 'grades'"), teacher.indexOf("activeTab === 'reports'"));
+    const reports = teacher.slice(teacher.indexOf("activeTab === 'reports'"), teacher.indexOf('<script'));
+    assert.match(grades, /<PerformanceLevelHelp v-if="openAssignment.scale === 'levels'" :levels="levelKey" \/>/);
+    assert.match(reports, /<PerformanceLevelHelp :levels="levelKey" \/>/);
+    assert.doesNotMatch(help, /class_subject_work|workEnabled/, 'summary target does not depend on the work switch');
 });

@@ -379,3 +379,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Raw nullable list serialization is office-manager-only; teacher step 1 readers continue using the first guide subject as requested. Saved work blocks always remain accessible for current grade keys even after following nothing.
 - Local mounted tests exercise a 390px viewport flag, not CSS geometry. Both Chrome and Firefox headless probes exited134 before producing output; real-browser overflow remains unchecked.
 - MySQL INSTANT syntax and piece schema are checked offline; no database server, migration deployment or contention run is authorized/performed.
+
+## Build D (2026-10-09)
+- The explicit named worktree/branch at HEAD authorizes edits in this isolated tree. Initial tracked status was clean; preserve all inherited untracked artifacts. STATE.md's Build C HEAD was stale; actual HEAD is ddf341f3.
+- Mounted tests exercise events and aria associations; source pins prove scoped CSS rules, not actual phone geometry or assistive technology behavior. Actual MySQL concurrent-session behavior remains to be checked outside this local SQLite run.
+- updated_at is an opaque saved version; whole-second storage requires monotonic advancement for same-second edits. No deletion history is introduced, consistent with prior decisions.

@@ -13,3 +13,8 @@
 // The report-card authority supplies every label and description.
 defineProps<{ levels: { level: number; short_label: string; description: string }[] }>();
 </script>
+<style scoped>
+@media (max-width: 767px) {
+    summary { min-height: 44px; min-width: 44px; display: list-item; padding: .75rem 0; }
+}
+</style>

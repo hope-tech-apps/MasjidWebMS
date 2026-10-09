@@ -107,3 +107,18 @@ Guide pieces record `guide_subject`. Same-number entries in separate guide subje
 `class-subjects:initialize --dry-run` and `class-subjects:audit` report curriculum coverage per class: visible subjects following nothing where the guide serves the class's current grades, and guide subjects serving those grades with no visible follower. The initializer diagnoses its proposed list before initialization and the actual list afterwards. Hidden subjects do not count as followers. Both sections contain counts and subject names only and make no writes.
 
 Local Build C evidence and unverified browser/MySQL checks: `artifacts/build-c-report.md`.
+
+
+## Review fixes (Build D)
+
+Marks saves submit only students whose level or comment changed from the loaded/last-saved values. An unchanged editor disables Save. Every submitted row carries `updated_at`: the exact UTC ISO timestamp served on its mark, or NULL if no mark existed. A missing version is 422. The server compares every submitted version under the existing organisation/class write mutex before writing marks. Any mismatch returns 409 with `students: [{group_membership_id, name}]` and rejects the entire request, including otherwise valid rows. Successful PUT responses include `data.piece_id` and `data.marks: [{group_membership_id, updated_at}]` for submitted rows; cleared rows return NULL. These versions reach the parent immediately with the accepted values, before the optional wording read. Mark counts include untouched and departed marks. The wording read updates wording only, and stale read responses cannot replace a later save or draft.
+
+Mark timestamps currently store whole seconds. A saved row receives the later of the current whole second, its previous version plus one second, and the piece's retained watermark plus one whole second, so rapid saves still produce distinct versions without a schema change. The timestamp serves as a version and can briefly lead wall-clock time during rapid edits. The piece timestamp retains the latest version across mark clearing/recreation and its own wording corrections. No historical rows or deletion tombstones are retained.
+
+409 marks show “Someone else changed this mark. Reload to see it.” beside each affected student. Save stays disabled until Reload resolves the conflict. Reload explicitly replaces this piece editor's draft with the latest saved marks; typing remains visible until that read succeeds, and failed reads retain it. Other entry/grade/note/piece drafts remain untouched.
+
+Deleting the note or own piece currently being corrected names that correction in the deletion confirmation. Cancellation and failed deletion retain the correction; successful deletion closes that form and drops its draft. The existing mark-count re-confirmation remains in place.
+
+Validation messages for mark levels/comments, note body/student and own-piece title/detail sit beside their controls, with `aria-invalid` and message IDs referenced by `aria-describedby`. Mark request indices map through the submitted rows to membership IDs. Both this application's `data` validation envelope and Laravel's `errors` envelope are supported. Errors with no matching field retain a general alert. Subject controls have component-scoped 44px minimum phone targets; shared performance help owns its summary target, including Grades and Reports while work is off. Copied wording comparisons trim title, detail and standard code and treat NULL as empty text.
+
+Evidence, rewritten ON tests and verification limits: `artifacts/build-d-report.md`.

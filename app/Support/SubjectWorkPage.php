@@ -53,6 +53,7 @@ final class SubjectWorkPage
                 'standard_code' => $piece->standard_code, 'lesson_plan_id' => $piece->lesson_plan_id,
                 'mark_count' => $all->count(), 'marks' => $editable->map(fn ($mark) => [
                     'group_membership_id' => (int) $mark->group_membership_id, 'level' => $mark->level, 'comment' => $mark->comment,
+                    'updated_at' => $mark->updated_at?->toISOString(),
                 ])->values()->all(),
             ];
         };
@@ -73,7 +74,7 @@ final class SubjectWorkPage
                     $piece = $gradePieces->where('guide_subject', $name)->firstWhere('week_no', $entry->week_no);
                     // A marked entry keeps the words it was marked against.
                     $entries[$entryKey] = $piece ? $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
-                        'wording_changed' => $piece->title !== $entry->focus || $piece->detail !== $entry->assessment_note || $piece->standard_code !== $entry->standard_code,
+                        'wording_changed' => trim((string) $piece->title) !== trim((string) $entry->focus) || trim((string) $piece->detail) !== trim((string) $entry->assessment_note) || trim((string) $piece->standard_code) !== trim((string) $entry->standard_code),
                         'marked_against_date' => $piece->created_at?->format('M j, Y'),
                     ] : [
                         'piece_id' => null, 'source' => 'guide', 'guide_subject' => $name, 'title' => $entry->focus, 'detail' => $entry->assessment_note,

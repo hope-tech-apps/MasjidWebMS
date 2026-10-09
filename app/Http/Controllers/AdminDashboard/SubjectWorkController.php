@@ -107,7 +107,11 @@ class SubjectWorkController extends Controller
             [, $subject] = $this->context($request, (int) $group_id, (int) $subject_id, true);
             $piece = SubjectPiece::where('class_subject_id', $subject->id)->where('source', 'own')->lockForUpdate()->findOrFail($piece_id);
             $this->refuseSharing($request);
-            $piece->update($request->validate(['title' => 'required|string|max:255', 'detail' => 'nullable|string']));
+            $fields = $request->validate(['title' => 'required|string|max:255', 'detail' => 'nullable|string']);
+            // Corrections must not move the retained mark-version watermark backwards.
+            $updated = now();
+            if ($piece->updated_at && $updated->lessThanOrEqualTo($piece->updated_at)) $updated = $piece->updated_at->copy()->addMicrosecond();
+            $piece->fill($fields)->forceFill(['updated_at' => $updated])->save();
             return $piece;
         });
         return response()->json(['status' => 'success', 'data' => $piece->fresh()]);
@@ -138,9 +142,10 @@ class SubjectWorkController extends Controller
         return $students;
     }
 
+    /** Saves only submitted rows; stale loaded versions reject the entire request with named students. */
     public function saveMarks(Request $request, $masjid_id, $group_id, $subject_id)
     {
-        $piece = DB::transaction(function () use ($request, $group_id, $subject_id) {
+        $saved = DB::transaction(function () use ($request, $group_id, $subject_id) {
             [$group, $subject] = $this->context($request, (int) $group_id, (int) $subject_id, true);
             $this->refuseSharing($request);
             $fields = $request->validate([
@@ -149,6 +154,7 @@ class SubjectWorkController extends Controller
                 'lesson_plan_id' => 'nullable|integer|min:1', 'marks' => 'present|array',
                 'marks.*.group_membership_id' => 'required|integer|min:1|distinct',
                 'marks.*.level' => 'nullable|integer|min:1|max:4', 'marks.*.comment' => 'nullable|string',
+                'marks.*.updated_at' => 'present|nullable|date_format:Y-m-d\\TH:i:s.u\\Z',
             ]);
             $students = $this->students($group, array_column($fields['marks'], 'group_membership_id'));
             [$piece, $snapshot, $identity] = $this->resolvePiece($subject, $fields);
@@ -157,8 +163,10 @@ class SubjectWorkController extends Controller
                 throw ValidationException::withMessages(['marks' => ['A curriculum entry can only be marked for students of its grade.']]);
             }
             $meaningful = collect($fields['marks'])->contains(fn ($m) => ($m['level'] ?? null) !== null || filled($m['comment'] ?? null));
-            if ($piece === null && ! $meaningful) return null;
-            if ($piece === null) {
+            if ($piece === null && ! $meaningful && ! collect($fields['marks'])->contains(fn ($m) => $m['updated_at'] !== null)) {
+                return ['piece_id' => null, 'marks' => array_map(fn ($m) => ['group_membership_id' => (int) $m['group_membership_id'], 'updated_at' => null], $fields['marks'])];
+            }
+            if ($piece === null && $meaningful) {
                 // createOrFirst catches the unique violation inside a savepoint, then reads the winner
                 // from the WRITE connection. Never lock a missing guide/plan range in InnoDB.
                 try {
@@ -171,21 +179,45 @@ class SubjectWorkController extends Controller
                     $piece = SubjectPiece::where($identity)->lockForUpdate()->firstOrFail();
                 }
             }
-            // Two statements however many students: one upsert on the (piece, student) key, one delete.
-            $keep = []; $clear = [];
+            // The organisation/class mutex precedes every read; compare all rows before any mark writes.
+            $stored = $piece ? SubjectPieceMark::where('subject_piece_id', $piece->id)
+                ->whereIn('group_membership_id', $students->pluck('id'))->get()->keyBy('group_membership_id') : collect();
+            $conflictIds = collect($fields['marks'])->filter(fn ($mark) =>
+                ($stored->get($mark['group_membership_id'])?->updated_at?->toISOString()) !== $mark['updated_at'])->pluck('group_membership_id');
+            if ($conflictIds->isNotEmpty()) {
+                $students->load('contact:id,first_name,last_name');
+                $conflicts = $conflictIds->map(function ($id) use ($students) {
+                    $student = $students->firstWhere('id', $id);
+                    return ['group_membership_id' => (int) $student->id, 'name' => trim($student->contact?->first_name.' '.$student->contact?->last_name)];
+                })->values()->all();
+                throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
+                    'status' => 'error', 'message' => 'Someone else changed marks for '.implode(', ', array_column($conflicts, 'name')).'. Reload to see them.', 'students' => $conflicts,
+                ], 409));
+            }
+            // Bulk writes and reads stay constant in number however many students are submitted.
+            $keep = []; $clear = []; $versions = []; $latest = $piece->updated_at ?? now();
+
             foreach ($fields['marks'] as $mark) {
                 $level = $mark['level'] ?? null; $comment = filled($mark['comment'] ?? null) ? $mark['comment'] : null;
+                $previous = $stored->get($mark['group_membership_id'])?->updated_at;
+                // Whole-second mark storage needs a distinct version even after clear/recreate.
+                // The piece retains the watermark without retaining deleted mark rows.
+                $updated = now()->startOfSecond();
+                if ($piece->updated_at && $updated->lessThanOrEqualTo($piece->updated_at)) $updated = $piece->updated_at->copy()->startOfSecond()->addSecond();
+                if ($previous && $updated->lessThanOrEqualTo($previous)) $updated = $previous->copy()->addSecond();
+                if ($updated->greaterThan($latest)) $latest = $updated;
+                $versions[] = ['group_membership_id' => (int) $mark['group_membership_id'], 'updated_at' => $level === null && $comment === null ? null : $updated->toISOString()];
                 if ($level === null && $comment === null) $clear[] = (int) $mark['group_membership_id'];
                 else $keep[(int) $mark['group_membership_id']] = ['masjid_id' => $group->masjid_id, 'subject_piece_id' => $piece->id,
                     'group_membership_id' => (int) $mark['group_membership_id'], 'level' => $level, 'comment' => $comment,
-                    'marked_by_user_id' => $request->user()->id];
+                    'marked_by_user_id' => $request->user()->id, 'updated_at' => $updated->format('Y-m-d H:i:s')];
             }
-            if ($keep !== []) SubjectPieceMark::upsert(array_values($keep), ['subject_piece_id', 'group_membership_id'], ['level', 'comment', 'marked_by_user_id']);
+            if ($keep !== []) SubjectPieceMark::upsert(array_values($keep), ['subject_piece_id', 'group_membership_id'], ['level', 'comment', 'marked_by_user_id', 'updated_at']);
             if ($clear !== []) SubjectPieceMark::where('subject_piece_id', $piece->id)->whereIn('group_membership_id', $clear)->delete();
-            if ($meaningful) $piece->touch();
-            return $piece;
+            if ($fields['marks'] !== []) $piece->forceFill(['updated_at' => $latest])->save();
+            return ['piece_id' => $piece?->id, 'marks' => $versions];
         });
-        return response()->json(['status' => 'success', 'data' => ['piece_id' => $piece?->id]]);
+        return response()->json(['status' => 'success', 'data' => $saved]);
     }
 
     /** Live words are consulted only for the very first meaningful save. */

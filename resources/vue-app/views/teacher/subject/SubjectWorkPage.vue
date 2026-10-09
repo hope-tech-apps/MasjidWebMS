@@ -103,4 +103,7 @@ defineExpose({ canLeave });
 button { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
 .discard-backdrop { position: fixed; inset: 0; z-index: 1090; background: #0006; }
 [role="alertdialog"] { position: fixed; z-index: 1091; top: 30%; left: 1rem; right: 1rem; max-width: 28rem; margin: auto; }
+@media (max-width: 767px) {
+    button, input, select, textarea { min-height: 44px; min-width: 44px; }
+}
 </style>

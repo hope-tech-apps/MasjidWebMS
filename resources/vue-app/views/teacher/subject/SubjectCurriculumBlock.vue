@@ -35,3 +35,9 @@ const choose = async (event: Event) => {
 };
 const saved = (value: WorkPiece) => { if (piece.value) Object.assign(piece.value, value); };
 </script>
+
+<style scoped>
+@media (max-width: 767px) {
+    button, input, select, textarea { min-height: 44px; min-width: 44px; }
+}
+</style>
