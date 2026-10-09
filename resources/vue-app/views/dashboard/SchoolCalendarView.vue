@@ -224,11 +224,10 @@
                                     <section class="mt-4" aria-labelledby="schoolTermsTitle">
                                         <h6 id="schoolTermsTitle">Terms</h6>
                                         <p class="form-text">Terms can have gaps. Term numbers stay the same when a term is removed.</p>
-                                        <template>
                                             <div v-if="termBanner" class="alert alert-danger small" role="alert">{{ termBanner }}</div>
                                             <div v-for="term in removedTerms" :key="`removed-${term.id}`" class="border rounded p-2 mb-2">
                                                 <div class="fw-semibold">{{ term.name }} (removed)</div>
-                                                <p v-if="term.report_card_count" class="small mb-0">{{ term.report_card_count }} report cards are filed under this term. They stay, and will no longer be filed under a term.</p>
+                                                <p v-if="term.report_card_count" class="small mb-0">{{ term.report_card_count === 1 ? '1 report card is' : `${term.report_card_count} report cards are` }} filed under this term. {{ term.report_card_count === 1 ? 'It stays' : 'They stay' }}, and will no longer be filed under a term.</p>
                                             </div>
                                             <div v-for="term in configuredTerms" :key="term.id" class="border rounded p-2 mb-2">
                                                 <div class="fw-semibold text-break">{{ term.position }}. {{ term.name }}</div>
@@ -264,7 +263,6 @@
                                                 <button type="button" class="btn btn-sm btn-primary" :disabled="savingTerm || savingYear" @click="saveTerm">{{ editingTermId ? 'Save term' : 'Add term' }}</button>
                                                 <button v-if="editingTermId" type="button" class="btn btn-sm btn-light" :disabled="savingTerm" @click="clearTerm">Cancel term edit</button>
                                             </div>
-                                        </template>
                                     </section>
                                 </template>
 

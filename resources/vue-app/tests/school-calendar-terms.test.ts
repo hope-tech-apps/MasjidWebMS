@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as dates from '../core/types/data/masjid-related/SchoolCalendar.ts';
@@ -248,4 +249,13 @@ test('first ON year starts with no meeting days and Save asks for at least one',
         await flush(); submit(s.all(n => n.tag === 'form')[0]); await flush();
         assert.match(s.text(), /Choose at least one meeting day./); assert.equal(s.writes.length, 0);
     } finally { s.unmount(); }
+});
+
+test('no screen the calendar touches wraps content in a bare <template>, which a browser never displays', () => {
+    // A mounted test still finds nodes inside a <template> with no directive; a browser renders an inert element.
+    for (const file of ['views/dashboard/SchoolCalendarView.vue', 'views/teacher/TeacherClass.vue', 'views/teacher/TeacherCalendar.vue', 'views/family/FamilyCalendar.vue']) {
+        const source = readFileSync(new URL('../' + file, import.meta.url), 'utf8');
+        const body = source.slice(source.indexOf('<template>') + '<template>'.length, source.lastIndexOf('</template>'));
+        assert.equal((body.match(/<template\s*>/g) ?? []).length, 0, file);
+    }
 });
