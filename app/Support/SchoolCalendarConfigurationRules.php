@@ -23,11 +23,24 @@ final class SchoolCalendarConfigurationRules
             'meeting_weekdays' => ['required', 'array', 'min:1', 'max:7'],
             'meeting_weekdays.*' => ['required', 'integer', 'between:0,6', 'distinct'],
             'term_system' => ['sometimes', 'nullable', 'in:quarters,semesters,trimesters'],
+            'terms' => ['sometimes', 'array', 'max:255'],
+            'terms.*.id' => ['sometimes', 'integer', 'min:1', 'distinct'],
+            'terms.*.name' => ['required', 'string', 'max:80'],
+            'terms.*.starts_on' => ['required', 'date_format:Y-m-d'],
+            'terms.*.ends_on' => ['required', 'date_format:Y-m-d'],
+            'terms.*.position' => ['required', 'integer', 'between:1,255'],
         ];
     }
 
     public static function yearValidator(Request $request, Validator $validator, ?int $ignore): void
     {
+        $validator->setCustomMessages(['meeting_weekdays.required' => 'Choose at least one meeting day.', 'meeting_weekdays.min' => 'Choose at least one meeting day.']);
+        $attributes = [];
+        foreach ((array) $request->input('terms', []) as $i => $term) {
+            $name = is_array($term) && is_string($term['name'] ?? null) ? $term['name'] : 'Term '.($i + 1);
+            foreach (['id'=>'reference', 'name'=>'name', 'starts_on'=>'starts on', 'ends_on'=>'ends on', 'position'=>'term number'] as $field=>$label) $attributes["terms.$i.$field"] = "$name: $label";
+        }
+        $validator->setAttributeNames($attributes);
         $validator->after(function (Validator $v) use ($request, $ignore) {
             if ($v->errors()->hasAny(['first_day','last_day','meeting_weekdays']) || $v->errors()->isNotEmpty()) return;
             $first = SchoolCalendar::day($request->input('first_day')); $last = SchoolCalendar::day($request->input('last_day'));

@@ -1418,3 +1418,42 @@ for (const flag of [true, false]) test(`review8: mounted week copy separates cur
         assert.equal(copy.body.body, flag ? 'Source activities' : 'Historical activities');
     } finally { screen.unmount(); }
 });
+
+for (const flag of [false, true]) for (const width of [1280, 390]) test(`calendar browser: lesson notices, saved closed dates and empty weeks subjects=${flag} width=${width}`, async () => {
+    let empty = false;
+    const { screen } = await setup('teacher', { flag, width, read: (url: string) => {
+        if (!url.includes('/lesson-plans?')) return undefined;
+        const start = url.match(/from=([^&]+)/)![1];
+        const date = new Date(start + 'T00:00:00'); date.setDate(date.getDate()+1);
+        const iso = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+        return ok({ plans: empty ? [] : [{ id: 77, session_date: iso, subject: '', subject_key: '', body: 'Saved on a closed day', attachments: [] }], hidden_fields: [], meeting_weekdays: [], week_dates: empty ? [] : [iso], day_notices: { [iso]: 'No school on Monday, October 12, 2026 — Teacher planning day.', [start]: "This isn't one of the school's meeting days on the calendar." } });
+    } });
+    try {
+        if (flag) { if (width < 768) { click(exactButton(screen, 'Class menu')); await flush(); } await pick(screen, 'Lesson Plans'); }
+        else { click(exactButton(screen, 'More')); await flush(); click(exactButton(screen, 'Lesson Plans')); await flush(10); }
+        click(screen.all((n: Node) => n.tag === 'button' && /: 1 plan$/.test(String(n.props['aria-label'])))[0]); await flush();
+        assert.match(screen.text(), /No school on Monday, October 12, 2026 — Teacher planning day./);
+        assert.ok(screen.button('Save plan'));
+        click(exactButton(screen, 'Week')); await flush();
+        assert.match(screen.text(), /Saved on a closed day/);
+        empty = true; click(screen.all((n: Node) => n.tag === 'button' && n.children.some((c: Node) => String(c.props.class).includes('bi-chevron-right')))[0]); await flush(10);
+        assert.match(screen.text(), /No school this week./);
+    } finally { screen.unmount(); }
+});
+
+for (const flag of [false,true]) for (const calendar of [false,true]) test(`calendar browser: Reports school years and dated card label subjects=${flag} calendar=${calendar}`, async () => {
+    const { screen } = await setup('teacher', { flag, read: (url: string) => {
+        if (url.includes('/report-cards?')) return ok({ period: { type: 'report_card', school_year: '2026-2027', term: 2 }, students: [student], ...(calendar ? { school_years: ['2028-2029','2026-2027'] } : {}) });
+        if (url.includes('/report-card?')) return ok({ id: 7, student, type: 'report_card', type_label: 'Report Card', school_year: '2024-2025', term: 2, period_label: calendar ? 'Autumn (Oct 20, 2024 – Jan 16, 2025), 2024-2025' : 'Quarter 2, 2024-2025', subjects: [], learning_behaviours: [], attendance: {} });
+        return undefined;
+    } });
+    try {
+        if (flag) await pick(screen, 'Reports'); else { click(exactButton(screen, 'More')); await flush(); click(exactButton(screen, 'Reports')); await flush(10); }
+        const yearOptions = () => screen.all((n: Node) => n.tag === 'select' && n.children.some((c: Node) => c.textContent === '2026-2027'))[0].children.filter((n: Node) => n.tag === 'option').map((n: Node) => n.textContent);
+        assert.deepEqual(yearOptions(), calendar ? ['2028-2029','2026-2027'] : ['2025-2026','2026-2027','2027-2028']);
+        click(screen.button('Practice student')); await flush(10);
+        assert.match(screen.text(), calendar ? /Autumn \(Oct 20, 2024 – Jan 16, 2025\), 2024-2025/ : /Quarter 2, 2024-2025/);
+        click(screen.button('All students')); await flush(10);
+        if (calendar) assert.deepEqual(yearOptions(), ['2028-2029','2026-2027','2024-2025']);
+    } finally { screen.unmount(); }
+});

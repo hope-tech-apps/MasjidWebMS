@@ -1377,6 +1377,7 @@
                 </div>
 
                 <!-- ------------------------------------------------ DAY VIEW -->
+                <p v-if="planView === 'day' && planDayNotices[planDate]" class="small text-muted" role="status">{{ planDayNotices[planDate] }}</p>
                 <template v-if="planView === 'day'">
                     <!-- The card holds exactly what is touched daily. Everything
                          else is one tap away, never zero taps in the way. -->
@@ -1722,6 +1723,7 @@
                      copy of these same fields and would drift the first time a
                      teacher edited Tuesday and not the grid. -->
                 <template v-else>
+                    <p v-if="planWeekDates !== null && !weekdaysOnly.length" class="text-muted" role="status">No school this week.</p>
                     <div class="table-responsive d-none d-md-block">
                         <table class="table table-sm align-middle">
                             <thead>
@@ -3091,6 +3093,8 @@ const visiblePlanSections = computed(() => planSections
 // The weekdays the school meets on (0 = Sunday), from its school calendar; null
 // without one, and then the week grid is Monday to Friday as it always was.
 const planWeekdays = ref<number[] | null>(null);
+const planWeekDates = ref<string[] | null>(null);
+const planDayNotices = ref<Record<string, string>>({});
 
 const planOpen = ref<Record<string, boolean>>({});
 const togglePlanSection = (key: string) => { planOpen.value[key] = !planOpen.value[key]; };
@@ -3116,7 +3120,9 @@ const weekDays = computed(() => {
 });
 
 /** The school week. The template's grid is Monday to Friday, or the calendar's meeting days. */
-const weekdaysOnly = computed(() => planWeekdays.value
+const weekdaysOnly = computed(() => planWeekDates.value !== null
+    ? weekDays.value.filter(d => planWeekDates.value!.includes(d.iso))
+    : planWeekdays.value
     ? weekDays.value.filter((_, i) => planWeekdays.value!.includes(i))
     : weekDays.value.slice(1, 6));
 
@@ -3716,6 +3722,8 @@ const loadLessonPlans = async (resync: boolean | (() => boolean) = true): Promis
         plans.value = res.data?.data?.plans ?? [];
         planHidden.value = new Set(res.data?.data?.hidden_fields ?? []);
         planWeekdays.value = Array.isArray(res.data?.data?.meeting_weekdays) ? res.data.data.meeting_weekdays : null;
+        planWeekDates.value = Array.isArray(res.data?.data?.week_dates) ? res.data.data.week_dates : null;
+        planDayNotices.value = res.data?.data?.day_notices ?? {};
         // An owed re-sync opens the week's plan in an UNTOUCHED form only: a
         // draft the teacher started since (a new plan on the blank form) stays.
         const again = (resyncOwed && !planDirty()) || (typeof resync === 'function' ? resync() : resync);
@@ -6513,7 +6521,11 @@ const cardAssessed = computed(() => Object.values(draft.value).filter((c) => c.l
 
 // Three years around whatever the server said the current one is — derived, so
 // nobody has to remember to add next year to a hardcoded list.
+const reportSchoolYears = ref<string[] | null>(null);
+const openedReportYear = ref('');
+watch(base, () => { openedReportYear.value = ''; reportSchoolYears.value = null; });
 const schoolYearOptions = computed<string[]>(() => {
+    if (reportSchoolYears.value !== null) return [...new Set([...reportSchoolYears.value, ...(openedReportYear.value ? [openedReportYear.value] : [])])].sort((a,b) => b.localeCompare(a));
     const current = reportPeriod.value?.school_year ?? reportYear.value;
     const start = parseInt(String(current).slice(0, 4), 10);
     if (!Number.isFinite(start)) return current ? [current] : [];
@@ -6546,6 +6558,7 @@ const loadReportCards = async () => {
         if (mine !== reportReq) return;   // a newer request has already answered
 
         reportRows.value = res.data?.data?.students ?? [];
+        reportSchoolYears.value = Array.isArray(res.data?.data?.school_years) ? res.data.data.school_years : null;
         reportPeriod.value = res.data?.data?.period ?? null;
         levelKey.value = res.data?.performance_levels ?? levelKey.value;
         // Adopt what the server actually used. It clamps a bad term or year
@@ -6604,6 +6617,7 @@ const openReportCard = async (row: any) => {
             `${base.value}/members/${row.membership_id}/report-card?${reportQuery()}`
         );
         openCard.value = res.data?.data ?? null;
+        if (reportSchoolYears.value !== null && openCard.value?.school_year) openedReportYear.value = openCard.value.school_year;
         levelKey.value = res.data?.performance_levels ?? levelKey.value;
         hydrateCardDraft(openCard.value);
     } catch {

@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Admin\SchoolCalendar\{StoreSchoolYearRequest, UpdateSchoolYearRequest, StoreSchoolClosureRequest, StoreSchoolTermRequest};
-use App\Models\{Masjid, SchoolYear, SchoolClosure, SchoolTerm, AttendanceRecord};
+use App\Http\Requests\Admin\SchoolCalendar\{StoreSchoolYearRequest, UpdateSchoolYearRequest, StoreSchoolClosureRequest};
+use App\Models\{Masjid, SchoolYear, SchoolClosure, SchoolTerm, AttendanceRecord, ReportCard};
 use App\Support\{SchoolCalendar, SchoolDateAuthority, SchoolSettings, TenantContext, FormOptionSources};
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -41,19 +41,20 @@ class SchoolCalendarConfigurationController extends Controller
 
     public function storeYear(StoreSchoolYearRequest $request, $masjid_id): JsonResponse
     {
-        $org = $this->org($masjid_id); $data = $this->data($request);
-        DB::transaction(function () use ($org, $data) {
+        $org = $this->org($masjid_id); $data = $this->data($request); $terms = $request->validated('terms');
+        DB::transaction(function () use ($org, $data, $terms) {
             $this->lockOrganisation($org);
             $this->refuseOverlap($org, $data, null);
-            SchoolYear::create($data);
+            $year = SchoolYear::create($data);
+            if ($terms !== null) $this->saveTerms($year, $data, $terms);
         });
         return $this->calendar($masjid_id, 201);
     }
 
     public function updateYear(UpdateSchoolYearRequest $request, $masjid_id, $year_id): JsonResponse
     {
-        $year = SchoolYear::findOrFail($year_id); $org = $this->org($masjid_id); $data = $this->data($request);
-        DB::transaction(function () use ($org, $year, $data) {
+        $year = SchoolYear::findOrFail($year_id); $org = $this->org($masjid_id); $data = $this->data($request); $terms = $request->validated('terms');
+        DB::transaction(function () use ($org, $year, $data, $terms) {
             $this->lockOrganisation($org);
             $locked = SchoolYear::query()->whereKey($year->id)->lockForUpdate()->firstOrFail();
             $this->refuseOverlap($org, $data, $year->id);
@@ -72,7 +73,7 @@ class SchoolCalendarConfigurationController extends Controller
             if ($marks->contains(fn ($m) => in_array(SchoolCalendar::day(substr((string) $m->session_date, 0, 10))->dayOfWeek, $removed, true))) {
                 throw ValidationException::withMessages(['meeting_weekdays' => 'Attendance exists on a removed weekday. Keep that weekday or clear those marks first.']);
             }
-            if ($locked->terms()->get()->contains(fn ($t) => $t->starts_on->toDateString() < $data['first_day'] || $t->ends_on->toDateString() > $data['last_day'])) {
+            if ($terms === null && $locked->terms()->get()->contains(fn ($t) => $t->starts_on->toDateString() < $data['first_day'] || $t->ends_on->toDateString() > $data['last_day'])) {
                 throw ValidationException::withMessages(['first_day' => 'These dates would leave a term outside the school year. Change or remove that term first.']);
             }
             // Include closures: stored answers may name any former meeting day.
@@ -90,6 +91,7 @@ class SchoolCalendarConfigurationController extends Controller
                 $field = $removed ? 'meeting_weekdays' : 'first_day';
                 throw ValidationException::withMessages([$field => 'This change would remove a school day named by '.$answers.' form answer'.($answers === 1 ? '' : 's').'. Keep those days or change those answers first.']);
             }
+            if ($terms !== null) $this->saveTerms($locked, $data, $terms);
             $locked->update($data);
         });
         return $this->calendar($masjid_id);
@@ -139,61 +141,49 @@ class SchoolCalendarConfigurationController extends Controller
         SchoolClosure::create(['school_year_id' => $year->id, 'closed_on' => $day, 'reason' => $data['reason']]);
     }
 
-    /** POST/PUT nested terms; resolve tenant and parent before the transaction. */
-    public function storeTerm(StoreSchoolTermRequest $request, $masjid_id, $year_id): JsonResponse
+    /** Replace the submitted draft under the organisation/year mutex, retaining filed-card links by ID. */
+    private function saveTerms(SchoolYear $year, array $data, array $terms): void
     {
-        return $this->writeTerm($request, $masjid_id, $year_id, null);
-    }
-
-    public function updateTerm(StoreSchoolTermRequest $request, $masjid_id, $year_id, $term_id): JsonResponse
-    {
-        return $this->writeTerm($request, $masjid_id, $year_id, $term_id);
-    }
-
-    private function writeTerm(StoreSchoolTermRequest $request, $route, $yearId, $termId): JsonResponse
-    {
-        $this->requireEnabled($route);
-        $year = SchoolYear::findOrFail($yearId);
-        $term = $termId === null ? null : $year->terms()->findOrFail($termId);
-        $org = $this->org($route); $data = $request->safe()->only(['name','starts_on','ends_on','position']);
-        DB::transaction(function () use ($org, $year, $term, $data) {
-            $this->lockOrganisation($org);
-            $locked = SchoolYear::query()->whereKey($year->id)->lockForUpdate()->firstOrFail();
-            if ($data['starts_on'] < $locked->first_day->toDateString() || $data['ends_on'] > $locked->last_day->toDateString()) {
-                throw ValidationException::withMessages(['starts_on' => 'A term must be inside its school year.']);
+        $existing = $year->terms()->get()->keyBy('id');
+        $errors = [];
+        foreach ($terms as $i => $term) {
+            $fail = function (string $field, string $message) use (&$errors, $i, $term): void {
+                $errors["terms.$i.$field"][] = $term['name'].': '.$message;
+            };
+            if (isset($term['id']) && ! $existing->has((int) $term['id'])) $fail('id', 'That term does not belong to this school year.');
+            if ($term['starts_on'] < $data['first_day']) $fail('starts_on', 'A term must be inside its school year.');
+            if ($term['ends_on'] > $data['last_day']) $fail('ends_on', 'A term must be inside its school year.');
+            if ($term['ends_on'] < $term['starts_on']) $fail('ends_on', 'A term cannot end before it starts.');
+            foreach (array_slice($terms, 0, $i) as $other) {
+                if ((int) $other['position'] === (int) $term['position']) $fail('position', 'That term number is already in use.');
+                if ($term['starts_on'] <= $other['ends_on'] && $term['ends_on'] >= $other['starts_on']) $fail('starts_on', 'Term dates must not overlap.');
+                elseif (((int) $other['position'] < (int) $term['position'] && $other['ends_on'] >= $term['starts_on']) || ((int) $other['position'] > (int) $term['position'] && $other['starts_on'] <= $term['ends_on'])) $fail('position', 'Term numbers must follow date order.');
             }
-            foreach ($locked->terms()->get() as $other) {
-                if ($other->id === $term?->id) continue;
-                if ($other->position === (int) $data['position']) throw ValidationException::withMessages(['position' => 'That term position is already in use.']);
-                if ($data['starts_on'] <= $other->ends_on->toDateString() && $data['ends_on'] >= $other->starts_on->toDateString()) throw ValidationException::withMessages(['starts_on' => 'Term dates must not overlap.']);
-                if (($other->position < (int) $data['position'] && $other->ends_on->toDateString() >= $data['starts_on']) || ($other->position > (int) $data['position'] && $other->starts_on->toDateString() <= $data['ends_on'])) throw ValidationException::withMessages(['position' => 'Term positions must follow date order.']);
-            }
-            if ($term) {
-                // Lock the existing child by PK after its parent, never a range.
-                $child = SchoolTerm::query()->whereKey($term->id)->lockForUpdate()->firstOrFail();
-                $child->update($data);
-            } else {
-                $locked->terms()->create($data);
-            }
-        });
-        return $this->calendar($route, $term ? 200 : 201);
-    }
+        }
+        if ($errors) throw ValidationException::withMessages($errors);
 
-    public function destroyTerm($masjid_id, $year_id, $term_id): JsonResponse
-    {
-        $this->requireEnabled($masjid_id);
-        $year = SchoolYear::findOrFail($year_id); $term = $year->terms()->findOrFail($term_id); $org = $this->org($masjid_id);
-        DB::transaction(function () use ($org, $year, $term) {
-            $this->lockOrganisation($org);
-            SchoolYear::query()->whereKey($year->id)->lockForUpdate()->firstOrFail();
-            SchoolTerm::query()->whereKey($term->id)->lockForUpdate()->firstOrFail()->delete();
-        });
-        return $this->calendar($masjid_id);
-    }
-
-    private function requireEnabled($route): void
-    {
-        if (! \App\Support\SchoolCalendarRequestMode::enabled($this->org($route))) abort(404);
+        $retained = array_column($terms, 'id');
+        foreach ($existing as $id => $term) if (! in_array($id, array_map('intval', $retained), true)) $term->delete();
+        // 0 is outside submitted term numbers and fits MySQL's unsigned TINYINT.
+        // Move changed numbers through that spare slot so swaps never hit the unique index.
+        $pending = collect($terms)->filter(fn ($t) => isset($t['id']))->keyBy('id');
+        $occupied = $existing->filter(fn ($t) => in_array($t->id, array_map('intval', $retained), true))->mapWithKeys(fn ($t) => [$t->position => $t->id])->all();
+        while ($pending->isNotEmpty()) {
+            $ready = $pending->first(fn ($t) => ! isset($occupied[(int) $t['position']]) || $occupied[(int) $t['position']] === (int) $t['id']);
+            if (! $ready) {
+                $t = $existing->get((int) $pending->first()['id']);
+                unset($occupied[$t->position]);
+                $t->update(['position' => 0]);
+                $occupied[0] = $t->id;
+                continue;
+            }
+            $t = $existing->get((int) $ready['id']);
+            unset($occupied[$t->position]);
+            $t->update(array_intersect_key($ready, array_flip(['name','starts_on','ends_on','position'])));
+            $occupied[$t->position] = $t->id;
+            $pending->forget($t->id);
+        }
+        foreach ($terms as $term) if (! isset($term['id'])) $year->terms()->create($term);
     }
 
     /** Office-only expanded payload; no change to the existing reader serializer. */
@@ -201,12 +191,13 @@ class SchoolCalendarConfigurationController extends Controller
     {
         $authority ??= SchoolDateAuthority::for($this->org($masjid_id));
         $authority->years()->load('terms');
+        $counts = ReportCard::query()->where('masjid_id', $this->org($masjid_id))->whereNotNull('school_term_id')->select('school_term_id')->selectRaw('COUNT(*) AS filed_count')->groupBy('school_term_id')->pluck('filed_count', 'school_term_id');
         $years = $authority->years()->map(fn ($year) => [
             'id' => $year->id, 'label' => $year->label,
             'first_day' => $year->first_day->toDateString(), 'last_day' => $year->last_day->toDateString(),
             'meeting_weekday' => $year->meetingWeekday(), 'meeting_weekdays' => SchoolDateAuthority::weekdays($year),
             'meeting_days' => $authority->meetingDays($year), 'term_system' => $year->term_system,
-            'terms' => $year->terms->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'starts_on' => $t->starts_on->toDateString(), 'ends_on' => $t->ends_on->toDateString(), 'position' => $t->position])->all(),
+            'terms' => $year->terms->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'starts_on' => $t->starts_on->toDateString(), 'ends_on' => $t->ends_on->toDateString(), 'position' => $t->position, 'report_card_count' => (int) ($counts[$t->id] ?? 0)])->all(),
             'closures' => $year->closures->map(fn ($c) => ['id' => $c->id, 'closed_on' => $c->closed_on->toDateString(), 'reason' => $c->reason])->all(),
         ])->all();
         return response()->json(['status' => 'success', 'data' => ['timezone' => $authority->timezone(), 'today' => $authority->today(), 'years' => $years]], $status);

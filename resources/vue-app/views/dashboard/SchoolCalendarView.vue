@@ -111,7 +111,7 @@
                             This year has no school days. Check its first and last day.
                         </div>
 
-                        <div v-for="month in months" :key="month.key" class="mb-4">
+                        <template v-if="!calendarTermsOn"><div v-for="month in months" :key="month.key" class="mb-4">
                             <h3 class="h6 fw-semibold text-muted mb-2">
                                 {{ formatSchoolDay(month.firstDate, LOCALE, { month: 'long', year: 'numeric' }) }}
                             </h3>
@@ -136,6 +136,19 @@
                                         <i :class="`bi ${day.closed ? 'bi-pencil' : 'bi-calendar-x'} me-1`"></i>
                                         {{ day.closed ? 'Change' : 'Mark as no school' }}
                                     </span>
+                                </button>
+                            </div>
+                        </div></template>
+                        <div v-for="month in (calendarTermsOn ? months : [])" :key="month.key" class="mb-3">
+                            <button type="button" class="btn btn-light w-100 text-start" :aria-expanded="expandedMonths[month.key] || false" @click="expandedMonths[month.key] = !expandedMonths[month.key]">
+                                {{ formatSchoolDay(month.firstDate, LOCALE, { month: 'long', year: 'numeric' }) }} · {{ month.days.filter(d => !d.closed).length }} school day{{ month.days.filter(d => !d.closed).length === 1 ? '' : 's' }}, {{ month.days.filter(d => d.closed).length }} with no school
+                            </button>
+                            <div v-if="expandedMonths[month.key]" class="list-group mt-2">
+                                <button v-for="day in month.days" :key="day.date" type="button" class="list-group-item list-group-item-action d-flex flex-wrap gap-2" :data-calendar-day="day.date" @click="openDay(day)">
+                                    <span class="fw-semibold small">{{ formatDay(day.date, 'short') }}</span>
+                                    <span v-if="day.closed" class="badge bg-danger-subtle text-danger-emphasis">No school</span>
+                                    <span class="small text-break">{{ day.closed ? day.reason : 'School day' }}</span>
+                                    <span class="ms-auto small text-primary">{{ day.closed ? 'Change' : 'Mark as no school' }}</span>
                                 </button>
                             </div>
                         </div>
@@ -210,10 +223,13 @@
                                     </div>
                                     <section class="mt-4" aria-labelledby="schoolTermsTitle">
                                         <h6 id="schoolTermsTitle">Terms</h6>
-                                        <p class="form-text">Terms can have gaps. Positions stay the same when a term is removed.</p>
-                                        <p v-if="!editingYear" class="form-text">Save the school year to add terms.</p>
-                                        <template v-else>
+                                        <p class="form-text">Terms can have gaps. Term numbers stay the same when a term is removed.</p>
+                                        <template>
                                             <div v-if="termBanner" class="alert alert-danger small" role="alert">{{ termBanner }}</div>
+                                            <div v-for="term in removedTerms" :key="`removed-${term.id}`" class="border rounded p-2 mb-2">
+                                                <div class="fw-semibold">{{ term.name }} (removed)</div>
+                                                <p v-if="term.report_card_count" class="small mb-0">{{ term.report_card_count }} report cards are filed under this term. They stay, and will no longer be filed under a term.</p>
+                                            </div>
                                             <div v-for="term in configuredTerms" :key="term.id" class="border rounded p-2 mb-2">
                                                 <div class="fw-semibold text-break">{{ term.position }}. {{ term.name }}</div>
                                                 <div class="small text-break">{{ formatDay(term.starts_on, 'short') }} to {{ formatDay(term.ends_on, 'short') }}</div>
@@ -240,7 +256,7 @@
                                                 </div>
                                             </div>
                                             <div class="mt-2">
-                                                <label for="schoolTermPosition" class="form-label">Position</label>
+                                                <label for="schoolTermPosition" class="form-label">Term number</label>
                                                 <input id="schoolTermPosition" v-model="termForm.position" type="number" min="1" max="255" class="form-control">
                                                 <div v-if="termErrors.position" class="text-danger small">{{ termErrors.position }}</div>
                                             </div>
@@ -574,6 +590,7 @@ const savingYear = ref(false);
 const configuredWeekdays = ref<number[]>([]);
 const termSystem = ref<TermSystem | null>(null);
 const weekdays = [0, 1, 2, 3, 4, 5, 6];
+const expandedMonths = ref<Record<string, boolean>>({});
 
 const firstWeekday = computed(() => weekdayOfIso(yearForm.value.first_day));
 const lastWeekday = computed(() => weekdayOfIso(yearForm.value.last_day));
@@ -618,9 +635,11 @@ const openConfiguredYearModal = (year: SchoolYear | null) => {
     yearForm.value = year
         ? { label: year.label, first_day: year.first_day, last_day: year.last_day }
         : { label: '', first_day: '', last_day: '' };
-    const configured = year as ConfiguredSchoolYear | null;
-    configuredWeekdays.value = configured ? [...configuredMeetingWeekdays(configured)] : [1, 2, 3, 4, 5];
-    termSystem.value = configured?.term_system ?? null;
+    const configured = (year ?? [...years.value].sort((a,b) => b.first_day.localeCompare(a.first_day))[0]) as ConfiguredSchoolYear | undefined;
+    configuredTerms.value = ((year as ConfiguredSchoolYear | null)?.terms ?? []).map(t => ({ ...t }));
+    removedTerms.value = [];
+    configuredWeekdays.value = configured ? [...configuredMeetingWeekdays(configured)] : [];
+    termSystem.value = (year as ConfiguredSchoolYear | null)?.term_system ?? null;
     termForm.value = { name: '', starts_on: '', ends_on: '', position: 1 };
     editingTermId.value = null;
     termErrors.value = {};
@@ -681,6 +700,11 @@ const saveYear = async () => {
 const saveConfiguredYear = async () => {
     if (savingTerm.value) return;
     if (!canSaveYear.value) return;
+    if (!configuredWeekdays.value.length) {
+        yearFieldErrors.value = { meeting_weekdays: 'Choose at least one meeting day.' };
+        return;
+    }
+    if ((termForm.value.name || termForm.value.starts_on || termForm.value.ends_on) && !saveTerm()) return;
 
     const editing = editingYear.value;
     const payload: ConfiguredYearPayload = {
@@ -689,6 +713,7 @@ const saveConfiguredYear = async () => {
         last_day: yearForm.value.last_day,
         meeting_weekdays: [...configuredWeekdays.value].sort((a, b) => a - b),
         term_system: termSystem.value,
+        terms: configuredTerms.value.map(({ id, name, starts_on, ends_on, position }) => ({ ...(id > 0 ? { id } : {}), name, starts_on, ends_on, position })),
     };
 
     savingYear.value = true;
@@ -761,13 +786,15 @@ const confirmDeleteYear = async () => {
     }
 };
 
-// Term writes happen immediately and return the office calendar. Unsaved year fields stay in the modal.
+// Terms belong to this modal draft until the year save succeeds.
 const termForm = ref({ name: '', starts_on: '', ends_on: '', position: 1 as number | string });
 const editingTermId = ref<number | null>(null);
 const termErrors = ref<Record<string, string>>({});
 const termBanner = ref('');
 const savingTerm = ref(false);
-const configuredTerms = computed(() => (years.value.find(y => y.id === editingYear.value?.id) as ConfiguredSchoolYear | undefined)?.terms ?? []);
+const configuredTerms = ref<SchoolTerm[]>([]);
+const removedTerms = ref<SchoolTerm[]>([]);
+let nextDraftTermId = -1;
 const clearTerm = () => {
     termForm.value = { name: '', starts_on: '', ends_on: '', position: Math.max(0, ...configuredTerms.value.map(t => t.position)) + 1 };
     editingTermId.value = null;
@@ -779,35 +806,24 @@ const editTerm = (term: SchoolTerm) => {
     termErrors.value = {};
     termBanner.value = '';
 };
-const saveTerm = async () => {
-    if (!editingYear.value || savingTerm.value) return;
-    savingTerm.value = true;
+const saveTerm = (): boolean => {
     termErrors.value = {};
-    termBanner.value = '';
-    const base = `/years/${editingYear.value.id}/terms`;
     const payload = { ...termForm.value, name: termForm.value.name.trim(), position: Number(termForm.value.position) };
-    try {
-        const res = editingTermId.value
-            ? await ApiService.put(endpoint(`${base}/${editingTermId.value}`), payload)
-            : await ApiService.post(endpoint(base), payload);
-        await afterWrite(res);
-        clearTerm();
-    } catch (error) {
-        const split = splitErrors(error, ['name', 'starts_on', 'ends_on', 'position'], 'Could not save the term.');
-        termErrors.value = split.fields;
-        termBanner.value = split.banner;
-    } finally { savingTerm.value = false; }
+    if (!payload.name) termErrors.value.name = 'Choose a term name.';
+    if (!payload.starts_on) termErrors.value.starts_on = 'Choose the first day of the term.';
+    if (!payload.ends_on) termErrors.value.ends_on = 'Choose the last day of the term.';
+    if (Object.keys(termErrors.value).length) return false;
+    const id = editingTermId.value ?? nextDraftTermId--;
+    const existing = configuredTerms.value.find(t => t.id === id);
+    const term = { ...existing, id, ...payload };
+    configuredTerms.value = [...configuredTerms.value.filter(t => t.id !== id), term].sort((a,b) => a.position - b.position);
+    clearTerm();
+    return true;
 };
-const removeTerm = async (term: SchoolTerm) => {
-    if (!editingYear.value || savingTerm.value) return;
-    savingTerm.value = true;
-    termBanner.value = '';
-    try {
-        const res = await ApiService.delete(endpoint(`/years/${editingYear.value.id}/terms/${term.id}`));
-        await afterWrite(res);
-        if (editingTermId.value === term.id) clearTerm();
-    } catch (error) { termBanner.value = apiErrorText(error, 'Could not remove the term.'); }
-    finally { savingTerm.value = false; }
+const removeTerm = (term: SchoolTerm) => {
+    configuredTerms.value = configuredTerms.value.filter(t => t.id !== term.id);
+    if (term.id > 0) removedTerms.value.push({ ...term });
+    if (editingTermId.value === term.id) clearTerm();
 };
 
 // ------------------------------------------------------------------ closures

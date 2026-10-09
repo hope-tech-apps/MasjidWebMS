@@ -31,6 +31,23 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class ReportCardController extends TeacherController
 {
+    private function datedTermsEnabled(int $org): bool
+    {
+        return \App\Support\SchoolCalendarRequestMode::enabled($org);
+    }
+
+    private function datedSchoolYears(int $org): array
+    {
+        return \App\Support\SchoolCalendarReaders::for($org)->years()->sortByDesc(fn ($year) => $year->first_day->toDateString())
+            ->map(fn ($year) => $year->first_day->format('Y').'-'.$year->last_day->format('Y'))->unique()->values()->all();
+    }
+
+    private function datedPeriodLabel(ReportCard $card): string
+    {
+        $term = $card->school_term_id ? \App\Models\SchoolTerm::query()->where('masjid_id', $card->masjid_id)->find($card->school_term_id) : null;
+        return $term ? $term->name.' ('.$term->starts_on->format('M j, Y').' – '.$term->ends_on->format('M j, Y').'), '.$card->school_year : $card->periodLabel();
+    }
+
     public function __construct(private ReportCardService $cards)
     {
     }
@@ -79,6 +96,7 @@ class ReportCardController extends TeacherController
             'status' => 'success',
             'data' => [
                 'period' => ['type' => $type, 'school_year' => $year, 'term' => $term],
+                ...($this->datedTermsEnabled((int) $masjid_id) ? ['school_years' => $this->datedSchoolYears((int) $masjid_id)] : []),
                 'students' => $students->map(function (GroupMembership $m) use ($cards): array {
                     $card = $cards->get($m->id);
 
@@ -264,7 +282,7 @@ class ReportCardController extends TeacherController
             'type_label' => $card->typeLabel(),
             'school_year' => $card->school_year,
             'term' => (int) $card->term,
-            'period_label' => $card->periodLabel(),
+            'period_label' => $this->datedTermsEnabled((int) $card->masjid_id) ? $this->datedPeriodLabel($card) : $card->periodLabel(),
             'grade_label' => $card->grade_label,
             'teacher_comment' => $card->teacher_comment,
             'published' => $card->isPublished(),

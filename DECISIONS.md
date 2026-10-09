@@ -9453,3 +9453,8 @@ device, browser layout or production cache verification was performed.
   the three `GET /api/mobile/masjids/{id}` recordings and nothing else moved.
 - Not built: a privacy page hosted by the platform (the address is the organisation's own page), the link on the
   website's footer, and a per-organisation policy inside a child organisation (the apps show HOME's).
+
+
+## 2026-10-08 — School calendar browser fixes at 4f0fd677 (uncommitted)
+
+Caller authorized rewriting replaced ON assertions and retaining OFF assertions. ON year requests carry the complete terms draft; omitted terms preserve cached-client data, an empty array removes it. Existing term IDs are retained; swaps use the unused unsigned-tinyint value 0 inside the same transaction. New years inherit the most recent first-day year's weekdays. Month counts distinguish open school days from closures and start collapsed. Teacher payloads include exact week_dates plus day_notices computed from loaded authority; saved authorized plans add dates even when closed/nonmeeting. Teacher Reports keep the most recently opened card's year until the class changes, to preserve selection after returning to the list. Matching is exact name first, then first/last calendar years of dates, and command output records either matched year rule. No migration, commit, production data/configuration change or deploy. Evidence is artifacts/calendar-look-build-report.md.

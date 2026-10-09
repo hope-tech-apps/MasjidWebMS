@@ -7,14 +7,14 @@ const require = createRequire(import.meta.url);
 const vue = require('vue');
 const baseYear = { id: 7, label: 'Test year', first_day: '2026-10-12', last_day: '2026-10-23', meeting_weekday: 1, meeting_days: ['2026-10-12', '2026-10-13'], closures: [] };
 
-async function screen(on: boolean, configurationOverride: Record<string, unknown> = {}, loadRefusal?: unknown) {
+async function screen(on: boolean, configurationOverride: Record<string, unknown> = {}, loadRefusal?: unknown, noYears = false) {
     (globalThis as any).document.body = { style: {} };
     withDocumentKeys();
     const configuration = await loadTs('core/types/data/masjid-related/SchoolCalendarConfiguration.ts', { '@/core/types/data/masjid-related/SchoolCalendar': dates });
     const pagination = await compileSfc('components/partials/Pagination.vue', { '@/core/types/elements/Pagination': {}, 'vue': vue });
     const container = await compileSfc('components/PageDataContainer.vue', { '@/components/partials/Pagination.vue': { default: pagination }, '@/core/types/elements/Buttons': {}, '@/core/types/elements/Pagination': {}, 'vue': vue });
     const year: any = { ...baseYear, ...(on ? { meeting_weekdays: [1,2,3,4,5], term_system: null, terms: [] } : {}), ...configurationOverride };
-    const payload = () => ({ data: { data: { timezone: 'America/New_York', today: '2026-10-08', years: [year] } } });
+    const payload = () => ({ data: { data: { timezone: 'America/New_York', today: '2026-10-08', years: noYears ? [] : [year] } } });
     const errors = await loadTs('core/services/ApiErrors.ts', { axios: require('axios') });
     const writes: any[] = []; let refusal: unknown = null;
     const api = {
@@ -60,23 +60,55 @@ test('ON office modal sends weekdays, nullable term choice and shows server refu
     } finally { s.unmount(); }
 });
 
-test('dated terms add, edit and remove through nested routes while the year modal stays open', async () => {
-    const s = await screen(true);
+test('dated terms add, edit and remove locally until one year save; Cancel discards the draft', async () => {
+    const s = await screen(true, { terms: [{ id: 9, name: 'Filed term', starts_on: '2026-10-12', ends_on: '2026-10-16', position: 1, report_card_count: 3 }] });
     try {
         click(s.button('Edit year')); await flush();
-        for (const [id,value] of [['schoolTermName','Autumn'],['schoolTermStart','2026-10-12'],['schoolTermEnd','2026-10-16'],['schoolTermPosition','1']]) {
+        assert.match(s.text(), /Term number/); assert.match(s.text(), /Term numbers stay the same when a term is removed/);
+        click(s.button('Remove term')); await flush();
+        assert.match(s.text(), /3 report cards are filed under this term. They stay, and will no longer be filed under a term./);
+        assert.equal(s.writes.length, 0);
+        for (const [id,value] of [['schoolTermName','Autumn'],['schoolTermStart','2026-10-12'],['schoolTermEnd','2026-10-16'],['schoolTermPosition','2']]) {
             type(s.all(n => n.tag === 'input').find(n => n.props.id === id)!, value);
         }
         await flush(); click(s.button('Add term')); await flush();
-        assert.equal(s.writes[0].url, '/api/admin/masjids/1/school-calendar/years/7/terms');
-        assert.deepEqual(s.writes[0].body, { name: 'Autumn', starts_on: '2026-10-12', ends_on: '2026-10-16', position: 1 });
-        assert.match(s.text(), /Autumn/); assert.match(s.text(), /Edit school year/);
+        assert.equal(s.writes.length, 0);
         click(s.button('Edit term')); await flush();
         type(s.all(n => n.tag === 'input').find(n => n.props.id === 'schoolTermName')!, 'Autumn revised'); await flush();
         click(s.button('Save term')); await flush();
-        assert.equal(s.writes[1].url, '/api/admin/masjids/1/school-calendar/years/7/terms/9');
+        assert.equal(s.writes.length, 0);
+        click(s.button('Cancel')); await flush();
+        click(s.button('Edit year')); await flush();
+        assert.match(s.text(), /Filed term/); assert.doesNotMatch(s.text(), /Autumn revised/);
         click(s.button('Remove term')); await flush();
-        assert.equal(s.writes[2].method, 'delete');
+        submit(s.all(n => n.tag === 'form')[0]); await flush();
+        assert.equal(s.writes.length, 1); assert.equal(s.writes[0].url, '/api/admin/masjids/1/school-calendar/years/7');
+        assert.deepEqual(s.writes[0].body.terms, []);
+    } finally { s.unmount(); }
+});
+
+test('new ON years inherit the last year meeting days and can save new terms together', async () => {
+    const s = await screen(true, { meeting_weekdays: [1,3] });
+    try {
+        click(s.button('Add school year')); await flush();
+        for (let day=0;day<7;day++) assert.equal(Boolean((s.all(n => n.props.id === `meetingWeekday${day}`)[0] as any).checked), [1,3].includes(day));
+        for (const [id,value] of [['schoolYearLabel','Next'],['schoolYearFirst','2027-10-11'],['schoolYearLast','2027-10-13'],['schoolTermName','First'],['schoolTermStart','2027-10-11'],['schoolTermEnd','2027-10-13']]) {
+            type(s.all(n => n.props.id === id)[0], value);
+        }
+        click(s.button('Add term')); await flush();
+        submit(s.all(n => n.tag === 'form')[0]); await flush();
+        assert.deepEqual(s.writes[0].body.terms, [{ name: 'First', starts_on: '2027-10-11', ends_on: '2027-10-13', position: 1 }]);
+    } finally { s.unmount(); }
+});
+
+test('ON office groups school days into collapsed month counts and retains closure reasons', async () => {
+    const s = await screen(true, { meeting_days: ['2026-10-12','2026-10-13'], closures: [{ id: 8, closed_on: '2026-10-13', reason: 'Teacher planning day' }] });
+    try {
+        assert.match(s.text(), /October 2026 · 1 school day, 1 with no school/);
+        assert.equal(s.all(n => n.props['data-calendar-day']).length, 0);
+        click(s.button('October 2026')); await flush();
+        assert.equal(s.all(n => n.props['data-calendar-day']).length, 2);
+        assert.match(s.text(), /Teacher planning day/);
     } finally { s.unmount(); }
 });
 
@@ -185,5 +217,16 @@ test('capability toggle shows the busy refusal in plain words and leaves its swi
         assert.equal(alerts[0].text, message);
         assert.equal(entry.enabled, false);
         assert.equal(Boolean(s.all(n => n.tag === 'input')[0].props.disabled), false);
+    } finally { s.unmount(); }
+});
+
+test('first ON year starts with no meeting days and Save asks for at least one', async () => {
+    const s = await screen(true, {}, undefined, true);
+    try {
+        click(s.button('Add school year')); await flush();
+        for (let day=0;day<7;day++) assert.equal(Boolean((s.all(n => n.props.id === `meetingWeekday${day}`)[0] as any).checked), false);
+        for (const [id,value] of [['schoolYearLabel','First'],['schoolYearFirst','2026-10-12'],['schoolYearLast','2026-10-16']]) type(s.all(n => n.props.id === id)[0], value);
+        await flush(); submit(s.all(n => n.tag === 'form')[0]); await flush();
+        assert.match(s.text(), /Choose at least one meeting day./); assert.equal(s.writes.length, 0);
     } finally { s.unmount(); }
 });

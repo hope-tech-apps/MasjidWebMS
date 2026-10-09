@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as dates from '../core/types/data/masjid-related/SchoolCalendar.ts';
-import { compileSfc, mountSfc, loadTs, flush, withDocumentKeys } from './support/mountSfc.ts';
+import { compileSfc, mountSfc, loadTs, flush, withDocumentKeys, click } from './support/mountSfc.ts';
 const require = createRequire(import.meta.url);
 const vue = require('vue');
 
@@ -111,7 +111,7 @@ test('office calendar shows weekdays, terms and closure words on its initial scr
         '@/stores/masjidStore': { useMasjidStore: () => ({ masjid: { id: 1, capabilities: { school_calendar_terms: true } } }) },
     });
     await flush();
-    try { assert.match(s.text(), /Meets every Monday, Tuesday, Wednesday, Thursday, Friday/); assert.match(s.text(), /Terms/); assert.match(s.text(), /Autumn/); assert.match(s.text(), /No school/); } finally { s.unmount(); }
+    try { assert.match(s.text(), /Meets every Monday, Tuesday, Wednesday, Thursday, Friday/); assert.match(s.text(), /Terms/); assert.match(s.text(), /Autumn/); assert.match(s.text(), /October 2026 · 4 school days, 1 with no school/); assert.equal(s.all(n => n.props['data-calendar-day']).length, 0); click(s.button('October 2026')); await flush(); assert.equal(s.all(n => n.props['data-calendar-day']).length, 5); assert.match(s.text(), /No school/); assert.match(s.text(), /Staff day/); } finally { s.unmount(); }
 });
 
 test('office lesson week consumes the open weekday payload including an empty week', async () => {

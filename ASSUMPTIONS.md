@@ -348,3 +348,11 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Chosen, unmeasured: a 60-second margin above the default longest 300-second job budget. It enforces the required ordering; it is not a measured scheduler or kill-latency bound. Unexpected worker loss may now leave a reservation unavailable for up to 360 seconds from reservation time.
 - Verified locally: PHP 8.3.35, Laravel 12.64.0, real SQLite DatabaseQueue reservations and Worker::process. Time is simulated with Carbon; no parallel OS consumers or actual signal timeout kill exercised. MySQL/CI/full-suite and deployed configuration not checked.
 - Explicit overrides remain authoritative. Shipping must verify the effective cached retry_after exceeds every effective job timeout, with PCNTL enabled for worker timeout enforcement. See deploy/README.md's reservation section and HANDOFF.md.
+
+
+## Calendar browser fixes, 2026-10-08
+
+- “Previous year” for a new draft is the school's year with the latest first_day, independent of the office's selected year. Chosen and tested in the mounted screen.
+- Month “school days” counts open dates; closed dates are counted separately as “with no school”, consistent with the existing year summary. All months begin collapsed.
+- Compatibility: older ON year requests that omit terms preserve existing terms; the new screen always sends the complete array.
+- Local MySQL runtime and real browser geometry remain unverified; local Chrome aborted with exit134 before DOM output. Required PHP/SPA gate evidence is recorded separately.

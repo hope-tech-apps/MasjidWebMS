@@ -190,6 +190,7 @@ class LessonPlanController extends TeacherController
                 'meeting_weekdays' => $calendar
                     ? $calendar->meetingWeekdaysBetween($from->toDateString(), $to->toDateString())
                     : $this->meetingWeekdays((int) $masjid_id),
+                ...($calendar ? $this->configuredLessonDays($calendar, $plans, $from, $to) : []),
             ],
         ], Response::HTTP_OK);
     }
@@ -991,6 +992,25 @@ class LessonPlanController extends TeacherController
             return $fallback;
         }
     }
+    /** ON dates and advice reuse the loaded calendar and the already fenced plan list. */
+    private function configuredLessonDays(\App\Support\SchoolDateAuthority $calendar, $plans, Carbon $from, Carbon $to): array
+    {
+        $dates = array_unique([...$calendar->openDaysBetween($from->toDateString(), $to->toDateString()), ...$plans->map(fn ($p) => $p->session_date->toDateString())->all()]);
+        sort($dates);
+        $notices = [];
+        for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+            $date = $day->toDateString();
+            $status = $calendar->schoolDay($date);
+            if ($status['closed']) {
+                $reason = $status['reason'] ?? null;
+                $notices[$date] = 'No school on '.\App\Support\SchoolCalendar::label($date).($reason ? ' — '.rtrim($reason, '.') : '').'.';
+            } elseif (! $status['meeting_day']) {
+                $notices[$date] = "This isn't one of the school's meeting days on the calendar.";
+            }
+        }
+        return ['week_dates' => array_values($dates), 'day_notices' => (object) $notices];
+    }
+
     private function indexConfigured(Request $request, $masjid_id, $group_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
@@ -1037,6 +1057,7 @@ class LessonPlanController extends TeacherController
                 // Open school weekdays inside this requested interval. An empty
                 // calendar or fully closed week supplies [], without inferring days.
                 'meeting_weekdays' => \App\Support\SchoolCalendarReaders::for((int) $masjid_id)->meetingWeekdaysBetween($from->toDateString(), $to->toDateString()),
+                ...$this->configuredLessonDays(\App\Support\SchoolCalendarReaders::for((int) $masjid_id), $plans, $from, $to),
             ],
         ], Response::HTTP_OK);
     }

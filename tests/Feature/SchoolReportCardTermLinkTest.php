@@ -60,7 +60,7 @@ class SchoolReportCardTermLinkTest extends TestCase
     {
         return [
             'missing year'=>['missing','2026-2027','no such year'],
-            'abbreviated label'=>['abbreviated','2026-2027','no such year'],
+            'abbreviated name uses dates'=>['abbreviated','2026-2027','year has no quarter 2'],
             'invalid stored text'=>['invalid','2026–27','no such year'],
             'duplicate label'=>['duplicate','2026-2027','two years match'],
             'missing quarter'=>['quarter','2026-2027','year has no quarter 2'],
@@ -89,7 +89,7 @@ class SchoolReportCardTermLinkTest extends TestCase
         $card=$this->card(); $later=$this->card(term:3);
         $card->forceFill(['published_at'=>now(),'teacher_comment'=>'Stored comment','days_present'=>5,'days_late'=>1])->save();
         $issued=$card->fresh()->getRawOriginal();
-        $this->artisan('school-calendar:link-report-cards',['--dry-run'=>true])->expectsOutputToContain("year=$year->id term=2 school_term=$term->id count=1")->assertSuccessful();
+        $this->artisan('school-calendar:link-report-cards',['--dry-run'=>true])->expectsOutputToContain("year=$year->id term=2 school_term=$term->id count=1 rule=name")->assertSuccessful();
         $this->assertNull($card->fresh()->school_term_id);
         $this->artisan('school-calendar:link-report-cards')->assertSuccessful();
         $this->assertSame($term->id,$card->fresh()->school_term_id);
@@ -171,7 +171,7 @@ class SchoolReportCardTermLinkTest extends TestCase
         $status=\Illuminate\Support\Facades\Artisan::call('school-calendar:link-report-cards',['--masjid'=>$this->school->id,'--dry-run'=>true]);
         $output=\Illuminate\Support\Facades\Artisan::output();
         $this->assertSame(0,$status);
-        $this->assertSame("organisation={$this->school->id} mode=dry-run linked=1 unmatched=1\nyear=$year->id term=2 school_term=$term->id count=1\nschool_year=\"2026-2027\" term=3 count=1 reason=year has no quarter 3\n",$output);
+        $this->assertSame("organisation={$this->school->id} mode=dry-run linked=1 unmatched=1\nyear=$year->id term=2 school_term=$term->id count=1 rule=name\nschool_year=\"2026-2027\" term=3 count=1 reason=year has no quarter 3 rule=name\n",$output);
         $this->assertSame($before,DB::table('report_cards')->orderBy('id')->get()->toJson());
         if (getenv('CALENDAR_CAPTURE_LINK_REPORT')) file_put_contents(base_path('artifacts/report-card-link-dry-run.txt'),$output);
     }
@@ -188,7 +188,7 @@ class SchoolReportCardTermLinkTest extends TestCase
         CapabilityWriter::apply($this->school,['school_calendar'=>true],$admin->id);
         Sanctum::actingAs($admin);
         $base='/api/admin/masjids/'.$this->school->id.'/school-calendar/years/'.$year->id;
-        $this->deleteJson($base.'/terms/'.$term->id)->assertOk();
+        $this->putJson($base, ['label'=>$year->label,'first_day'=>$year->first_day->toDateString(),'last_day'=>$year->last_day->toDateString(),'meeting_weekdays'=>[0],'term_system'=>'quarters','terms'=>[]])->assertOk();
         $this->assertNull($card->fresh()->school_term_id);$this->assertNotNull($card->fresh()->published_at);
         $term=$this->term($year);$card->forceFill(['school_term_id'=>$term->id])->save();
         $before=$card->fresh()->getRawOriginal();
@@ -207,6 +207,7 @@ class SchoolReportCardTermLinkTest extends TestCase
         $query='?term=2&school_year=2026-2027';
         $response=$this->getJson('/api/teacher/masjids/'.$this->school->id.'/groups/'.$this->member->group_id.'/members/'.$this->member->id.'/report-card'.$query)->assertOk();
         $expected=json_decode(file_get_contents(base_path('tests/fixtures/calendar-baseline/report-cards.json')),true)[hash('sha256',$query)];
+        $expected['body']['data']['period_label'] = 'Term 2 (Oct 11, 2026 – Oct 25, 2026), 2026-2027';
         $this->assertSame($expected['body'],$response->json());
         $this->assertSame($term->id,ReportCard::firstOrFail()->school_term_id);
         $this->assertArrayNotHasKey('school_term_id',ReportCard::firstOrFail()->toArray());

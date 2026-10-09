@@ -36,20 +36,20 @@ class SchoolCalendarLinkReportCards extends Command
                         if (! $result) continue;
                         $match = $result['match'];
                         if ($match['term']) {
-                            $key = $match['year']->id.':'.$result['position'].':'.$match['term']->id;
+                            $key = $match['year']->id.':'.$result['position'].':'.$match['term']->id.':'.$match['rule'];
                             $linked[$key] = ($linked[$key] ?? 0) + 1; $total++;
                         } else {
-                            $key = json_encode([$result['text'],$result['position'],$match['reason']],JSON_UNESCAPED_UNICODE);
+                            $key = json_encode([$result['text'],$result['position'],$match['reason'],$match['rule']],JSON_UNESCAPED_UNICODE);
                             $unmatched[$key] = ($unmatched[$key] ?? 0) + 1;
                         }
                     }
                 });
                 $this->line('organisation='.$org->id.' mode='.($this->option('dry-run')?'dry-run':'write').' linked='.$total.' unmatched='.array_sum($unmatched));
                 ksort($linked); ksort($unmatched);
-                foreach ($linked as $key=>$count) { [$year,$position,$term]=explode(':',$key); $this->line("year=$year term=$position school_term=$term count=$count"); }
+                foreach ($linked as $key=>$count) { [$year,$position,$term,$rule]=explode(':',$key); $this->line("year=$year term=$position school_term=$term count=$count rule=$rule"); }
                 foreach ($unmatched as $key=>$count) {
-                    [$text,$position,$reason]=json_decode($key,true);
-                    $this->line('school_year='.json_encode($text,JSON_UNESCAPED_UNICODE).' term='.$position.' count='.$count.' reason='.$reason);
+                    [$text,$position,$reason,$rule]=json_decode($key,true);
+                    $this->line('school_year='.json_encode($text,JSON_UNESCAPED_UNICODE).' term='.$position.' count='.$count.' reason='.$reason.($rule ? ' rule='.$rule : ''));
                 }
             }
             return self::SUCCESS;

@@ -23,7 +23,7 @@ final class SchoolCalendarSwitch
             }
             if (! $enable) {
                 if (SchoolDateAuthority::weekdays($year) !== [$year->meetingWeekday()]) {
-                    throw ValidationException::withMessages(['capability' => 'This calendar cannot be switched off while a school year meets on days the weekly calendar cannot represent. Set each year to the weekday of its first day first.']);
+                    throw ValidationException::withMessages(['capability' => 'This school year meets on more than one day of the week. Change it to one meeting day before switching dated terms off.']);
                 }
                 if ($year->last_day->dayOfWeek !== $year->meetingWeekday()) {
                     throw ValidationException::withMessages(['capability' => 'This calendar cannot be switched off while a last day is off the weekday of its first day. Correct the last day first.']);

@@ -177,7 +177,8 @@ class SchoolCalendarReadersTest extends TestCase
         $this->assertSame(1, $data['years'][0]['meeting_weekday']);
         $this->assertSame(['2026-10-12','2026-10-13','2026-10-14','2026-10-15','2026-10-16'], array_slice($data['years'][0]['meeting_days'], 0, 5));
         $this->assertSame('semesters', $data['years'][0]['term_system']);
-        $this->assertSame(['id','name','starts_on','ends_on','position'], array_keys($data['years'][0]['terms'][0]));
+        $this->assertSame($shape === 'office-calendar' ? ['id','name','starts_on','ends_on','position','report_card_count'] : ['id','name','starts_on','ends_on','position'], array_keys($data['years'][0]['terms'][0]));
+        if ($shape === 'office-calendar') $this->assertSame(0, $data['years'][0]['terms'][0]['report_card_count']);
         $this->assertSame('Autumn', $data['years'][0]['terms'][0]['name']);
         if ($shape !== 'office-calendar') {
             $this->assertCount(12, $data['upcoming']);

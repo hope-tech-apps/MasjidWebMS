@@ -57,8 +57,10 @@ array stays empty. OFF calendars omit the additive fields and use main's seriali
 Coming up remains twelve successive school days, including closures marked
 “No school” with their reason. Attendance supplements actual marks with every open
 school date and keeps its denominators and 40-column fallback. A closed day still
-refuses a register; make-up dates remain permitted. Lesson weeks use only open
-school dates inside their requested interval. Enabled default register dates and
+refuses a register; make-up dates remain permitted. Teacher lesson weeks list open school dates and any other date with a saved,
+authorized plan in the requested interval. The ON payload supplies exact
+`week_dates` and `day_notices`; Day remains writable on closed/nonmeeting dates.
+An empty Week says “No school this week.” Enabled default register dates and
 lesson weeks follow the school's clock, including midnight and DST boundaries.
 
 School-day form choices offer future open dates and label historical/closed answers
@@ -85,3 +87,32 @@ where readers have no cache.
 
 Staging walks remain necessary before enabling a real school. The slice C evidence
 and the desktop, 390/320 px and RTL checklist are in `artifacts/slice-c-report.md`.
+
+
+## Office year drafts and report cards
+
+With dated terms ON, year create/update accepts `terms` as the complete draft
+list (`id` on retained terms, `name`, `starts_on`, `ends_on`, `position`). All
+fields and term additions/edits/removals commit in one transaction under the
+organisation then year mutex. Omitted `terms` leaves existing terms alone for
+cached clients; `terms: []` removes all terms. Separate term routes are removed.
+Validation keys are `terms.<index>.<field>` with the term name in the message.
+Term numbers remain stable after removal. Existing IDs keep their card links,
+including number swaps through a temporary 0 within the same transaction.
+Removing a term clears only the card's FK through ON DELETE SET NULL; cards and
+their historical year text/quarter remain. Office terms add `report_card_count`
+from one tenant-scoped grouped query, used for the draft removal warning.
+
+The year window stages edits and Cancel discards them. New meeting-day choices
+come from the most recent year by first day, or start empty. Office day lists
+are collapsed month groups showing open and closed counts and retaining reasons
+when expanded. These additions apply only with dated terms ON.
+
+Report-card linking uses exact year names first; only when none match does it
+compare the first/last calendar years of the school's stored date bounds with
+`YYYY-YYYY`. Ambiguity still refuses linking. The link command shares that rule
+in write and dry run and prints `rule=name` or `rule=dates` when a year matched.
+The ON teacher report list supplies `school_years` derived from date bounds,
+newest first; the browser also retains the last opened card's year while in this
+class. Linked teacher cards use the term's own name and dates in `period_label`.
+Unlinked labels, PDF/model labels and all OFF payloads retain their existing form.

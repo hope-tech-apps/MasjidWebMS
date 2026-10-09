@@ -42,6 +42,12 @@ class SchoolCalendarTermsTest extends TestCase
     }
     private function weekdays(): array { return ['label' => 'Day school', 'first_day' => '2026-10-12', 'last_day' => '2026-10-23', 'meeting_weekdays' => [5, 3, 1, 2, 4], 'term_system' => 'semesters']; }
 
+    /** Submit the complete modal draft through the year endpoint. */
+    private function saveDraftTerms(SchoolYear $year, array $terms): \Illuminate\Testing\TestResponse
+    {
+        return $this->putJson($this->url('/years/'.$year->id), ['label'=>$year->label, 'first_day'=>$year->first_day->toDateString(), 'last_day'=>$year->last_day->toDateString(), 'meeting_weekdays'=>SchoolDateAuthority::weekdays($year), 'term_system'=>$year->term_system, 'terms'=>$terms]);
+    }
+
     #[Test]
     public function schema_is_nullable_and_switch_on_initializes_legacy_years_atomically(): void
     {
@@ -66,11 +72,12 @@ class SchoolCalendarTermsTest extends TestCase
         $r->assertJsonPath('data.years.0.meeting_weekdays', [1,2,3,4,5])->assertJsonPath('data.years.0.term_system', 'semesters');
         $closed = $this->postJson($this->url('/closures'), ['school_year_id' => $id, 'closed_on' => '2026-10-13', 'reason' => 'Staff day'])->assertCreated();
         $closure = $closed->json('data.years.0.closures.0.id');
-        $term = $this->postJson($this->url("/years/$id/terms"), ['name' => 'First term', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-16', 'position' => 1])->assertCreated();
+        $term = $this->saveDraftTerms(SchoolYear::findOrFail($id), [['name' => 'First term', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-16', 'position' => 1]])->assertOk();
         $tid = $term->json('data.years.0.terms.0.id');
-        $this->putJson($this->url("/years/$id/terms/$tid"), ['name' => 'Autumn', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-15', 'position' => 1])->assertOk()->assertJsonPath('data.years.0.terms.0.name', 'Autumn');
-        $this->postJson($this->url("/years/$id/terms"), ['name' => 'Later', 'starts_on' => '2026-10-19', 'ends_on' => '2026-10-23', 'position' => 3])->assertCreated();
-        $this->deleteJson($this->url("/years/$id/terms/$tid"))->assertOk()->assertJsonPath('data.years.0.terms.0.position', 3);
+        $this->saveDraftTerms(SchoolYear::findOrFail($id), [['id'=>$tid, 'name' => 'Autumn', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-15', 'position' => 1]])->assertOk()->assertJsonPath('data.years.0.terms.0.name', 'Autumn');
+        $later = ['name' => 'Later', 'starts_on' => '2026-10-19', 'ends_on' => '2026-10-23', 'position' => 3];
+        $this->saveDraftTerms(SchoolYear::findOrFail($id), [['id'=>$tid, 'name'=>'Autumn', 'starts_on'=>'2026-10-12', 'ends_on'=>'2026-10-15', 'position'=>1], $later])->assertOk();
+        $this->saveDraftTerms(SchoolYear::findOrFail($id), [['id'=>SchoolTerm::where('position',3)->firstOrFail()->id]+$later])->assertOk()->assertJsonPath('data.years.0.terms.0.position', 3);
         $this->deleteJson($this->url("/closures/$closure"))->assertOk();
         $this->assertContains('2026-10-13', SchoolDateAuthority::for($this->school->id)->openDaysBetween('2026-10-12', '2026-10-16'));
     }
@@ -78,9 +85,9 @@ class SchoolCalendarTermsTest extends TestCase
     public static function badYears(): array
     {
         return [
-            'absent' => [['meeting_weekdays' => '__absent'], 'meeting_weekdays', 'The meeting weekdays field is required.'],
-            'null' => [['meeting_weekdays' => null], 'meeting_weekdays', 'The meeting weekdays field is required.'],
-            'empty' => [['meeting_weekdays' => []], 'meeting_weekdays', 'The meeting weekdays field is required.'],
+            'absent' => [['meeting_weekdays' => '__absent'], 'meeting_weekdays', 'Choose at least one meeting day.'],
+            'null' => [['meeting_weekdays' => null], 'meeting_weekdays', 'Choose at least one meeting day.'],
+            'empty' => [['meeting_weekdays' => []], 'meeting_weekdays', 'Choose at least one meeting day.'],
             'first off' => [['meeting_weekdays' => [2,5]], 'first_day', 'The first day must be on a configured meeting weekday.'],
             'last off' => [['meeting_weekdays' => [1,2]], 'last_day', 'The last day must be on a configured meeting weekday.'],
             'order' => [['last_day' => '2026-10-05'], 'last_day', 'The last day cannot be before the first day.'],
@@ -103,7 +110,7 @@ class SchoolCalendarTermsTest extends TestCase
         $this->postJson($this->url('/closures'), ['school_year_id' => $year->id, 'closed_on' => '2026-10-13', 'reason' => 'Staff day'])->assertCreated();
         $this->putJson($this->url('/years/'.$year->id), ['label' => 'Test year', 'first_day' => '2026-10-12', 'last_day' => '2026-10-19', 'meeting_weekdays' => [1], 'term_system' => null])->assertUnprocessable()->assertJsonPath('data.meeting_weekdays.0', 'Remove the no-school days on removed weekdays first: Tuesday, October 13, 2026.');
         try { CapabilityWriter::apply($this->school->fresh(), ['school_calendar_terms' => false], $this->admin->id); $this->fail('Unsafe switch-off succeeded'); }
-        catch (\Illuminate\Validation\ValidationException $e) { $this->assertSame('This calendar cannot be switched off while a school year meets on days the weekly calendar cannot represent. Set each year to the weekday of its first day first.', $e->errors()['capability'][0]); }
+        catch (\Illuminate\Validation\ValidationException $e) { $this->assertSame('This school year meets on more than one day of the week. Change it to one meeting day before switching dated terms off.', $e->errors()['capability'][0]); }
         $this->assertTrue(SchoolSettings::calendarTerms($this->school->fresh()));
     }
 
@@ -115,7 +122,7 @@ class SchoolCalendarTermsTest extends TestCase
         $base = '/api/admin/masjids/'.$this->school->id.'/capabilities';
         $this->patchJson($base.'/school_calendar_terms', ['enabled' => true])->assertOk();
         $this->assertSame([0], $year->fresh()->meeting_weekdays);
-        $this->postJson($this->url('/years/'.$year->id.'/terms'), ['name' => 'Term', 'starts_on' => '2026-10-11', 'ends_on' => '2026-10-25', 'position' => 1])->assertCreated();
+        $this->saveDraftTerms($year, [['name' => 'Term', 'starts_on' => '2026-10-11', 'ends_on' => '2026-10-25', 'position' => 1]])->assertOk();
         $this->patchJson($base, ['capabilities' => ['school_calendar_terms' => false]])->assertOk();
         $this->assertFalse(SchoolSettings::calendarTerms($this->school->fresh()));
         $this->assertSame(1, SchoolTerm::count());
@@ -134,9 +141,9 @@ class SchoolCalendarTermsTest extends TestCase
         $stamped = SchoolTerm::create(['masjid_id' => $other->id, 'school_year_id' => $mine->id, 'name' => 'Mine', 'starts_on' => '2026-10-11', 'ends_on' => '2026-10-25', 'position' => 1]);
         $this->assertSame($this->school->id, (int) $stamped->masjid_id);
         $body = ['name' => 'Wrong', 'starts_on' => '2026-10-11', 'ends_on' => '2026-10-25', 'position' => 2];
-        $this->postJson($this->url('/years/'.$foreign->id.'/terms'), $body)->assertNotFound();
-        $this->putJson($this->url('/years/'.$mine->id.'/terms/'.$term->id), $body)->assertNotFound();
-        $this->deleteJson($this->url('/years/'.$mine->id.'/terms/'.$term->id))->assertNotFound();
+        $this->putJson($this->url('/years/'.$foreign->id), ['label'=>'Foreign', 'first_day'=>'2027-10-10', 'last_day'=>'2027-10-24', 'meeting_weekdays'=>[0], 'terms'=>[]])->assertNotFound();
+        $this->saveDraftTerms($mine, [['id'=>$term->id]+$body])->assertUnprocessable()->assertJsonPath('data', ['terms.0.id'=>['Wrong: That term does not belong to this school year.']]);
+        $this->assertNotNull(app(TenantContext::class)->runWithout(fn () => SchoolTerm::find($term->id)));
         $this->getJson('/api/admin/masjids/'.$other->id.'/school-calendar')->assertForbidden();
     }
     public static function offRequests(): array
@@ -222,19 +229,21 @@ class SchoolCalendarTermsTest extends TestCase
     {
         return [
             [['starts_on' => '2026-10-10'], 'starts_on', 'A term must be inside its school year.'],
-            [['ends_on' => '2026-10-26'], 'starts_on', 'A term must be inside its school year.'],
+            [['ends_on' => '2026-10-26'], 'ends_on', 'A term must be inside its school year.'],
             [['ends_on' => '2026-10-11'], 'ends_on', 'A term cannot end before it starts.'],
             [['starts_on' => '2026-10-15','ends_on' => '2026-10-20','position' => 2], 'starts_on', 'Term dates must not overlap.'],
-            [['starts_on' => '2026-10-20','ends_on' => '2026-10-21','position' => 1], 'position', 'That term position is already in use.'],
-            [['starts_on' => '2026-10-11','ends_on' => '2026-10-11','position' => 3], 'position', 'Term positions must follow date order.'],
+            [['starts_on' => '2026-10-20','ends_on' => '2026-10-21','position' => 1], 'position', 'That term number is already in use.'],
+            [['starts_on' => '2026-10-11','ends_on' => '2026-10-11','position' => 3], 'position', 'Term numbers must follow date order.'],
         ];
     }
     #[Test, DataProvider('badTerms')]
     public function terms_refuse_bad_ranges_overlap_positions_and_order_in_words(array $change, string $field, string $message): void
     {
         $this->enable(); $year = $this->year();
-        $this->postJson($this->url('/years/'.$year->id.'/terms'), ['name' => 'First', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-16', 'position' => 1])->assertCreated();
-        $this->postJson($this->url('/years/'.$year->id.'/terms'), array_replace(['name' => 'Second', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-13', 'position' => 2], $change))->assertUnprocessable()->assertJsonPath('data.'.$field.'.0',$message);
+        $this->saveDraftTerms($year, [['name' => 'First', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-16', 'position' => 1]])->assertOk();
+        $first = SchoolTerm::firstOrFail();
+        $response = $this->saveDraftTerms($year, [['id'=>$first->id, 'name'=>'First', 'starts_on'=>'2026-10-12', 'ends_on'=>'2026-10-16', 'position'=>1], array_replace(['name' => 'Second', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-13', 'position' => 2], $change)])->assertUnprocessable();
+        $this->assertContains('Second: '.$message, $response->json('data')['terms.1.'.$field]);
         $this->assertSame(1, SchoolTerm::count());
         $this->deleteJson($this->url('/years/'.$year->id))->assertOk()->assertJsonPath('data.years', []);
         $this->assertSame(0, SchoolTerm::count());
@@ -318,7 +327,7 @@ class SchoolCalendarTermsTest extends TestCase
         $this->enable(); $year = $this->year(['first_day'=>'2026-10-12','last_day'=>'2026-10-23','meeting_weekdays'=>[1,2,3,4,5]]);
         $this->postJson($this->url('/closures'),['school_year_id'=>$year->id,'closed_on'=>'2026-10-24','reason'=>'Staff day'])->assertUnprocessable()->assertJsonPath('data.closed_on.0','The no-school day must be inside its school year.');
         $this->postJson($this->url('/closures'),['school_year_id'=>$year->id,'closed_on'=>'2026-10-17','reason'=>'Staff day'])->assertUnprocessable()->assertJsonPath('data.closed_on.0','The no-school day must be on a configured meeting weekday.');
-        $this->postJson($this->url('/years/'.$year->id.'/terms'),['name'=>'Term','starts_on'=>'2026-10-12','ends_on'=>'2026-10-23','position'=>1])->assertCreated();
+        $this->saveDraftTerms($year, [['name'=>'Term','starts_on'=>'2026-10-12','ends_on'=>'2026-10-23','position'=>1]])->assertOk();
         $this->putJson($this->url('/years/'.$year->id),['label'=>'Test year','first_day'=>'2026-10-12','last_day'=>'2026-10-22','meeting_weekdays'=>[1,2,3,4,5]])->assertUnprocessable()->assertJsonPath('data.first_day.0','These dates would leave a term outside the school year. Change or remove that term first.');
         $this->assertSame('2026-10-23',$year->fresh()->last_day->toDateString());
     }
@@ -471,8 +480,10 @@ class SchoolCalendarTermsTest extends TestCase
         $this->assertSame(['date' => '2026-10-18', 'closed' => true, 'reason' => 'Staff day'], $authority->labelledDays()[1]);
         $this->assertSame($authority->labelledDays(), $authority->upcoming());
         $term = ['name' => 'Autumn', 'starts_on' => '2026-10-11', 'ends_on' => '2026-10-25', 'position' => 1];
-        $this->postJson($this->url('/years/'.$year->id.'/terms'), $term)->assertCreated();
-        $this->postJson($this->url('/years/'.$year->id.'/terms'), ['name' => 'Overlap', 'position' => 2] + $term)->assertUnprocessable();
+        // Retained child of a NULL year: saving the whole year would explicitly choose [0].
+        $stored = SchoolTerm::create(['school_year_id'=>$year->id]+$term);
+        $this->assertSame(1, SchoolTerm::count());
+        $this->saveDraftTerms($year, [['id'=>$stored->id]+$term, ['name' => 'Overlap', 'position' => 2] + $term])->assertUnprocessable()->assertJsonPath('data', ['terms.1.starts_on'=>['Overlap: Term dates must not overlap.']]);
         $this->putJson($this->url('/years/'.$year->id), ['label' => 'Concurrent year', 'first_day' => '2026-10-11', 'last_day' => '2026-10-18', 'meeting_weekdays' => [0]])->assertUnprocessable()->assertJsonPath('data.first_day.0', 'These dates would leave a term outside the school year. Change or remove that term first.');
         $this->putJson($this->url('/years/'.$year->id), ['label' => 'Concurrent year', 'first_day' => '2026-10-11', 'last_day' => '2026-10-26', 'meeting_weekdays' => [0]])->assertUnprocessable()->assertJsonValidationErrors('last_day', 'data');
         CapabilityWriter::apply($this->school, ['school_calendar_terms' => false], $this->admin->id);
