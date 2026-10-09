@@ -84,10 +84,14 @@ final class SchoolDateAuthority
         return $status;
     }
 
-    /** Live form choices exclude today, past days and closures. */
+    /** ON forms offer the four calendar weeks after today on the school's clock. */
     public function offerableDays(): array
     {
-        return array_column(array_values(array_filter($this->labelledDays(), fn ($day) => ! $day['closed'] && $day['date'] > $this->today())), 'date');
+        if (! $this->enabled) return $this->legacy->offerableDays();
+        $today = $this->today();
+        // Date arithmetic, not elapsed hours: a DST change still gives 28 dates.
+        // Tomorrow onward, as the older list always was: a day already under way is not one to sign up for.
+        return $this->openDaysBetween(SchoolCalendar::day($today)->addDay()->toDateString(), SchoolCalendar::day($today)->addDays(28)->toDateString());
     }
 
 }

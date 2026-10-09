@@ -96,8 +96,21 @@ class SendWeeklyPointsReports extends Command
 
     protected $description = 'Tell families their child\'s weekly points report is ready, and each class\'s teachers their class summary (grant: points_weekly_report)';
 
+    /** ON skips only; reset for each invocation because Artisan reuses commands. */
+    private int $classesSkippedNoSchool = 0;
+
+    /** Keep the legacy summary body pinned, adding only the ON operator count. */
+    public function line($string, $style = null, $verbosity = null): void
+    {
+        if ($this->classesSkippedNoSchool > 0 && str_starts_with($string, 'points:weekly-report')) {
+            $string = rtrim($string, '.').', '.$this->classesSkippedNoSchool.' class(es) skipped: no school that week.';
+        }
+        parent::line($string, $style, $verbosity);
+    }
+
     public function handle(GroupNotificationRecipientResolver $resolver): int
     {
+        $this->classesSkippedNoSchool = 0;
         $only = $this->option('masjid');
         $explicit = $this->option('week');
 
@@ -456,6 +469,11 @@ class SendWeeklyPointsReports extends Command
 
         if (\App\Support\SchoolDateAuthority::fromLegacy(SchoolCalendar::for((int) $masjid->id), true)->openDaysBetween($week->startDate(), $week->lastDate()) === []) {
             $run['skipped']['closed_week']++;
+            $run['classes_skipped_no_school'] = ($run['classes_skipped_no_school'] ?? 0) + Group::withoutMasjidScope()
+                ->where('masjid_id', $masjid->id)
+                ->where('is_active', true)
+                ->count();
+            $this->classesSkippedNoSchool = $run['classes_skipped_no_school'];
 
             return;
         }

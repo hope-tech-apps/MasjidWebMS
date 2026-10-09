@@ -269,7 +269,7 @@ class SchoolCalendarController extends Controller
             $weekdays = \App\Support\SchoolDateAuthority::weekdays($candidate);
             foreach (['first_day', 'last_day'] as $field) {
                 if (! in_array($candidate->$field->dayOfWeek, $weekdays, true)) {
-                    throw ValidationException::withMessages([$field => 'The '.str_replace('_', ' ', $field).' must be on a configured meeting weekday. Reopen this year and save its meeting weekdays.']);
+                    throw ValidationException::withMessages([$field => 'The '.str_replace('_', ' ', $field).' must be one of the days the school meets. Reopen this year and save the days it meets.']);
                 }
             }
             $removed = array_diff(\App\Support\SchoolDateAuthority::weekdays($year), $weekdays);

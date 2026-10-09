@@ -259,6 +259,7 @@
                         :name-problem="fieldNameProblems[`${sectionIndex}:${fieldIndex}`] ?? null"
                         :conditional-sources="conditionalSourcesFor(section)"
                         :options-sources="formsStore.optionsSources"
+                        :calendar-terms-on="masjidStore.masjid?.capabilities?.school_calendar_terms === true"
                         :in-repeatable="!!section.repeatable"
                         @label-input="onFieldLabelInput(section, field, $event)"
                         @type-change="onFieldTypeChange(field, $event)"

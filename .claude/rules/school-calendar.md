@@ -110,3 +110,10 @@ calendar section type, no two-weekday schools or make-up days, and no
 per-Sunday roster. Form Responses screens and both CSVs carry choice wording.
 Search indexes the wording and stored value; existing rows need
 `forms:rebuild-answers-text --masjid=<id> --all` after wording changes.
+
+## Configured calendar follow-up (`school_calendar_terms` ON only)
+
+- Calendar-sourced form OFFER choices use tomorrow on the school's clock through today + 28 calendar dates, inclusive (today is never offered, as before), with no-school days omitted. The public schema and all submission validators share `SchoolDateAuthority::offerableDays`; LABEL retains historical and future dates. OFF still uses strictly-after-today legacy choices.
+- Office, family and teacher calendars share `monthsOf` and `schoolMonthCounts`; configured lists start closed and expose native month buttons with `aria-expanded`. Reader mode comes from the ON-only `meeting_weekdays` payload field; class subjects does not affect it. OFF lists remain open.
+- Removed terms stay in the office draft and can be put back with their state at removal, including draft edits and their term number. Only the complete year Save persists them.
+- The weekly command counts active groups of each ON school whose due week has no open day, and appends the skipped-class count to its operator summary, including dry runs. It uses one count query per skipped school, and resets per invocation. OFF command output and original method tails stay pinned.

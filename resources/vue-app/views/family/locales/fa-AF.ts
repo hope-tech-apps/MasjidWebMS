@@ -121,6 +121,8 @@ export const FA_AF: Record<string, string> = {
     cal_upcoming: "روزهای پیش رو",
     cal_no_upcoming: "امسال روز درسی دیگری باقی نمانده است.",
     cal_school_day: "روز درسی",
+    cal_school_days: "روزهای درسی",
+    cal_with_no_school: "رخصتی",
     cal_no_school: "رخصتی",
     cal_today: "امروز",
     cal_year: "سال تعلیمی",

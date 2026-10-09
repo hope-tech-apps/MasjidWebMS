@@ -160,10 +160,35 @@ class SchoolCalendarSliceCReviewTest extends TestCase
         $form = Form::create(['masjid_id' => $org->id, 'slug' => 'review-form', 'name' => 'Days', 'schema' => ['sections' => [['id' => 'days', 'fields' => [$field]]]]]);
         $this->http(function () use ($form, $on, $offer, $type, $blank) {
             $data = $blank ? [] : ['days' => $type === 'checkboxGroup' ? ['2026-10-12'] : '2026-10-12'];
+            if ($on) $this->assertCount($offer === 'short' ? 5 : 0, \App\Support\FormOptionSources::resolve($form, ['optionsSource' => 'school_meeting_days'], \App\Support\FormOptionSources::OFFER));
             $validator = FormSchema::for($form)->validator($data);
             $this->assertTrue($validator->fails());
             $expected = ($offer === 'short' ? 'Not enough ' : 'No ').($on ? 'school days' : 'cleaning Sundays').' are open right now.';
             $this->assertContains($expected, $validator->errors()->all());
         });
+    }
+
+    #[Test, DataProvider('emailWeeks')]
+    public function on_weekly_summary_counts_active_classes_skipped_for_no_open_school_day(bool $dry): void
+    {
+        Mail::fake();
+        $org = $this->school();
+        $year = SchoolYear::create(['masjid_id' => $org->id, 'label' => 'Year', 'first_day' => '2026-10-05', 'last_day' => '2026-10-30', 'meeting_weekdays' => [1,2]]);
+        foreach (['2026-10-05', '2026-10-06'] as $day) SchoolClosure::create(['masjid_id' => $org->id, 'school_year_id' => $year->id, 'closed_on' => $day, 'reason' => 'Closed']);
+        foreach ([true, true, false] as $active) \App\Models\Group::factory()->create(['masjid_id' => $org->id, 'is_active' => $active]);
+        $other = Masjid::create(['name' => 'Other School', 'email' => 'other@example.invalid', 'phone' => '+15550007732', 'country_id' => '1', 'city_id' => '1', 'address' => '2 Test St', 'latitude' => 0, 'longitude' => 0, 'org_type' => 'school']);
+        \App\Models\Group::factory()->create(['masjid_id' => $other->id]);
+        $args = ['--masjid' => $org->id, '--week' => '2026-10-04', '--dry-run' => $dry];
+        $this->assertSame(0, Artisan::call('points:weekly-report', $args));
+        $this->assertSame('points:weekly-report'.($dry ? ' (dry run)' : '').': 1 organisation(s), 0 class(es) '.($dry ? 'would be sent' : 'sent').', 0 family notice(s), 0 teacher notice(s), 0 already sent, 0 with nobody to tell, 0 undelivered (retried next run), 0 failure(s), 2 class(es) skipped: no school that week.' . PHP_EOL, Artisan::output());
+        Mail::assertNothingSent();
+        // A week outside the year also has no open school day.
+        $args['--week'] = '2026-09-27';
+        $this->assertSame(0, Artisan::call('points:weekly-report', $args));
+        $this->assertStringContainsString('2 class(es) skipped: no school that week.', Artisan::output());
+        $org->forceFill(['capability_overrides' => ['points_weekly_report' => true]])->save();
+        $args['--week'] = '2026-10-04';
+        $this->assertSame(0, Artisan::call('points:weekly-report', $args));
+        $this->assertSame('points:weekly-report'.($dry ? ' (dry run)' : '').': 1 organisation(s), 0 class(es) '.($dry ? 'would be sent' : 'sent').', 0 family notice(s), 0 teacher notice(s), 0 already sent, 0 with nobody to tell, 0 undelivered (retried next run), 0 failure(s).' . PHP_EOL, Artisan::output());
     }
 }

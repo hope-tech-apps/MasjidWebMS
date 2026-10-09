@@ -27,18 +27,18 @@ function payload(on: boolean, weekend = false) {
     };
 }
 
-async function screen(realm: 'teacher' | 'family', on: boolean, code = 'en', weekend = false) {
+async function screen(realm: 'teacher' | 'family', on: boolean, code = 'en', weekend = false, classSubjects = false, calendarOverride?: any) {
     const list = await compileSfc('components/common/SchoolCalendarList.vue', { vue, '@/core/types/data/masjid-related/SchoolCalendar': dates });
     const i18n = await language(code);
     const picker = await compileSfc('views/family/FamilyLangPicker.vue', { vue, '@/views/family/familyI18n': i18n });
-    const api = { get: async () => ({ data: { data: payload(on, weekend) } }) };
+    const api = { get: async () => ({ data: { data: calendarOverride ?? payload(on, weekend) } }) };
     const deps: any = {
         vue, '@/core/types/data/masjid-related/SchoolCalendar': dates,
         '@/components/common/SchoolCalendarList.vue': { default: list },
         '@/core/services/TeacherApiService': { default: api },
         '@/core/services/FamilyApiService': { default: api },
-        '@/stores/authStore': { useAuthStore: () => ({ dashboardMasjidId: 1 }) },
-        '@/stores/familyStore': { useFamilyStore: () => ({ handleAuthFailure: () => false }) },
+        '@/stores/authStore': { useAuthStore: () => ({ dashboardMasjidId: 1, capabilities: { class_subjects: classSubjects } }) },
+        '@/stores/familyStore': { useFamilyStore: () => ({ handleAuthFailure: () => false, org: { capabilities: { class_subjects: classSubjects } } }) },
         '@/views/family/familyI18n': i18n, '@/views/family/FamilyLangPicker.vue': { default: picker },
         'vue-router': { useRoute: () => ({ params: { masjidId: '1' } }), useRouter: () => ({ replace() {} }) },
     };
@@ -53,7 +53,13 @@ for (const realm of ['teacher','family'] as const) {
             assert.match(s.text(), /Monday.*Tuesday.*Wednesday.*Thursday.*Friday/);
             assert.match(s.text(), /Terms/); assert.match(s.text(), /Autumn/);
             assert.match(s.text(), /No school/); assert.match(s.text(), /Staff day/);
-            assert.equal(s.all(n => n.tag === 'li' && String(n.props.class).includes('list-group-item') && n.children.some((c: any) => String(c.props?.class).includes('day-date'))).length, 5);
+            assert.match(s.text(), /October 2026 · 4 school days, 1 with no school/);
+            assert.equal(s.all(n => n.props['aria-expanded'] !== undefined).length, 1);
+            assert.equal(s.all(n => n.props['aria-expanded'] !== undefined)[0].props['aria-expanded'], 'false');
+            assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
+            click(s.button('October 2026')); await flush();
+            assert.equal(s.all(n => n.props['aria-expanded'] !== undefined)[0].props['aria-expanded'], 'true');
+            assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 5);
             assert.equal(s.all(n => n.tag === 'input' || n.tag === 'textarea').length, 0);
             assert.doesNotMatch(s.text(), /Add term|Edit term|Remove term/);
         } finally { s.unmount(); }
@@ -63,6 +69,11 @@ for (const realm of ['teacher','family'] as const) {
             const s = await screen(realm, on, 'en', true);
             try {
                 assert.match(s.text(), realm === 'teacher' ? /Meets every Sunday/ : /Classes meet every Sunday/);
+                if (on) {
+                    assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
+                    assert.match(s.text(), /October 2026 · 2 school days, 1 with no school/);
+                    click(s.button('October 2026')); await flush();
+                }
                 assert.equal(s.all(n => n.tag === 'li' && String(n.props.class).includes('list-group-item') && n.children.some((c: any) => String(c.props?.class).includes('day-date'))).length, 3);
                 assert.equal(s.text().includes('Autumn'), on);
             } finally { s.unmount(); }
@@ -239,4 +250,45 @@ test('teacher register draws closure refusal and keeps make-up-day advice withou
             }
         } finally { s.unmount(); }
     }
+});
+
+for (const realm of ['teacher', 'family'] as const) for (const classSubjects of [false, true]) {
+    test(`${realm} month toggle preserves upcoming and meeting sentence with class subjects ${classSubjects}`, async () => {
+        const s = await screen(realm, true, 'en', false, classSubjects);
+        try {
+            assert.match(s.text(), /Coming up/);
+            assert.match(s.text(), /Meets every Monday|Classes meet every Monday/);
+            assert.match(s.text(), /Staff day/); // Still present in Coming up while month is closed.
+            const month = s.all(n => n.props['aria-expanded'] !== undefined)[0];
+            assert.ok(month); assert.equal(month.tag, 'button'); assert.equal(month.props.type, 'button');
+            assert.equal(month.props['aria-expanded'], 'false');
+            click(month); await flush();
+            assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 5);
+            assert.match(s.text(), /Staff day/);
+            click(month); await flush();
+            assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
+        } finally { s.unmount(); }
+    });
+}
+
+for (const realm of ['teacher','family'] as const) test(`${realm} months open independently and changing years closes the new list`, async () => {
+    const raw: any = payload(true);
+    Object.assign(raw.years[0], { last_day: '2026-11-02', meeting_days: ['2026-10-12','2026-10-13','2026-11-02'] });
+    raw.years.push({ ...raw.years[0], id: 2, label: 'Next year', first_day: '2027-10-11', last_day: '2027-10-12', meeting_days: ['2027-10-11','2027-10-12'], closures: [], terms: [] });
+    const s = await screen(realm, true, 'en', false, true, raw);
+    try {
+        assert.match(s.text(), /October 2026 · 1 school day, 1 with no school/);
+        assert.match(s.text(), /November 2026 · 1 school day, 0 with no school/);
+        assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
+        click(s.button('November 2026')); await flush();
+        assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 1);
+        click(s.button('October 2026')); await flush();
+        assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 3);
+        click(s.button('November 2026')); await flush();
+        assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 2);
+        click(s.button('Next year')); await flush();
+        assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
+        click(s.button('Test year')); await flush();
+        assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
+    } finally { s.unmount(); }
 });

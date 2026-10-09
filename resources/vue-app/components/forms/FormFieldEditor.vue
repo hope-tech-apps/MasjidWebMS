@@ -155,8 +155,11 @@
                     </div>
                     <div class="alert alert-light border py-2 small mb-0">
                         <i class="bi bi-calendar3 me-1"></i>
+                        <template v-if="calendarTermsOn">Families will see the open school days in the next four weeks, listed by date. Days that pass, or that the office marks as no school, drop off the list by themselves.</template>
+                        <template v-else>
                         Families will see the upcoming school days that aren't marked as no school, listed by date.
                         Days that pass, or that the office later marks as no school, drop off the list by themselves.
+                        </template>
                         <span v-if="!calendarSource" class="d-block mt-1 text-danger">
                             This organisation does not have the school calendar, so right now families would have no days to pick.
                         </span>
@@ -489,6 +492,7 @@ const props = defineProps<{
     conditionalSources: { id: string; title: string; fields: { name: string; label: string }[] }[];
     /** From GET /forms/field-types `options_sources`; empty when the server offers none. */
     optionsSources?: FormOptionsSourceInfo[];
+    calendarTermsOn?: boolean;
     /** True when this question sits in a repeatable section, where a source is refused. */
     inRepeatable?: boolean;
 }>();

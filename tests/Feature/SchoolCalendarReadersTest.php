@@ -216,7 +216,7 @@ class SchoolCalendarReadersTest extends TestCase
     {
         $this->enable();
         $options = $this->read('form-page')->assertOk()->json('data.sections.0.content.form.schema.sections.0.fields.0.options');
-        $this->assertSame(['2026-10-14','2026-10-15','2026-10-16','2026-10-20'], array_slice(array_column($options, 'value'), 0, 4));
+        $this->assertSame(['2026-10-14','2026-10-15','2026-10-16','2026-10-20','2026-10-21','2026-10-22','2026-10-23','2026-10-26','2026-10-27','2026-10-28','2026-10-29','2026-10-30','2026-11-02','2026-11-03','2026-11-04','2026-11-05','2026-11-06','2026-11-09','2026-11-10'], array_column($options, 'value'));
         $this->assertSame('Wednesday, October 14, 2026', $options[0]['label']);
         $this->read('form-count')->assertUnprocessable()->assertJsonPath('data.days', ['Pick exactly 2 days.']);
         $this->read('form-closed')->assertUnprocessable();
@@ -413,4 +413,36 @@ class SchoolCalendarReadersTest extends TestCase
         $this->assertStringContainsString('Pick exactly 2 days.', json_encode($this->read('office-registration')->assertUnprocessable()->json()));
     }
 
+
+    #[Test]
+    public function on_form_window_is_the_four_weeks_after_today_on_the_school_clock_and_all_submission_doors_refuse_later_dates(): void
+    {
+        $this->enable();
+        // UTC November 2 is still Sunday November 1 locally, across the DST change.
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-02 04:30:00', 'UTC'));
+        $this->year->update(['meeting_weekdays' => [0,1,2,3,4,5,6]]);
+        $field = ['name' => 'days', 'label' => 'Day', 'type' => 'radio', 'optionsSource' => 'school_meeting_days'];
+        $this->form->update(['schema' => ['sections' => [['id' => 'days', 'fields' => [$field]]]]]);
+        $options = FormOptionSources::resolve($this->form, $field, FormOptionSources::OFFER);
+        $expected = array_map(fn ($n) => \Carbon\CarbonImmutable::parse('2026-11-01')->addDays($n)->toDateString(), range(1, 28));
+        $this->assertSame($expected, array_column($options, 'value'));
+        $this->assertFalse(FormSchema::for($this->form)->validator(['days' => '2026-11-02'])->fails());
+        $this->assertFalse(FormSchema::for($this->form)->validator(['days' => '2026-11-29'])->fails());
+        // Today is never offered: a day already under way is not one to sign up for.
+        foreach (['2026-10-31', '2026-11-01', '2026-11-30'] as $day) {
+            $this->assertSame(['days' => [FormOptionSources::NO_LONGER_OPEN]], FormSchema::for($this->form)->validator(['days' => $day])->errors()->toArray());
+        }
+        $this->postJson('/api/v1/forms/'.$this->form->id.'/responses', ['data' => ['days' => '2026-11-30']], ['masjid-id' => (string) $this->org->id])
+            ->assertUnprocessable()->assertJsonPath('data.days.0', FormOptionSources::NO_LONGER_OPEN);
+        $this->postJson('/api/v1/offerings/school-program/register', ['fee_plan_id' => $this->feePlan->id, 'payer' => ['name' => 'Test Family', 'email' => 'test@example.invalid'], 'data' => ['days' => '2026-11-30']], ['masjid-id' => (string) $this->org->id])
+            ->assertUnprocessable()->assertJsonPath('data.days.0', FormOptionSources::NO_LONGER_OPEN);
+        $this->authenticate('office-registration');
+        $this->postJson('/api/admin/masjids/'.$this->org->id.'/offerings/'.$this->feePlan->offering_id.'/registrations', ['fee_plan_id' => $this->feePlan->id, 'payer_contact_id' => $this->parent->id, 'data' => ['days' => '2026-11-30']])
+            ->assertUnprocessable()->assertJsonPath('data.days.0', FormOptionSources::NO_LONGER_OPEN);
+        app(TenantContext::class)->forgetTenant();
+        $labels = array_column(FormOptionSources::resolve($this->form, $field, FormOptionSources::LABEL), 'value');
+        $this->assertContains('2026-10-12', $labels); $this->assertContains('2026-12-18', $labels);
+        SchoolClosure::create(['masjid_id' => $this->org->id, 'school_year_id' => $this->year->id, 'closed_on' => '2026-11-28', 'reason' => 'Closed']);
+        $this->assertNotContains('2026-11-28', array_column(FormOptionSources::resolve($this->form, $field, FormOptionSources::OFFER), 'value'));
+    }
 }

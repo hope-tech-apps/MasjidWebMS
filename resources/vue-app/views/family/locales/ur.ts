@@ -121,6 +121,8 @@ export const UR: Record<string, string> = {
     cal_upcoming: "آنے والے دن",
     cal_no_upcoming: "اس سال اسکول کے مزید دن باقی نہیں ہیں۔",
     cal_school_day: "اسکول کا دن",
+    cal_school_days: "اسکول کے دن",
+    cal_with_no_school: "چھٹی کے دن",
     cal_no_school: "چھٹی",
     cal_today: "آج",
     cal_year: "تعلیمی سال",

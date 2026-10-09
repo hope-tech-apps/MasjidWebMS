@@ -73,7 +73,7 @@ const iftar = () => afterschool({
     },
 });
 
-async function builder(stored: any, refusal: Record<string, string[]> | null = null, optionsSources: any[] = []) {
+async function builder(stored: any, refusal: Record<string, string[]> | null = null, optionsSources: any[] = [], capabilities: Record<string, boolean> = {}) {
     const writes: any[] = [];
     const store = reactive({ fieldTypes: formTypes.FORM_FIELD_TYPES, optionsSources,
         fetchForm: async () => stored, fetchFieldTypes: async () => [], fetchFormOptions: async () => [],
@@ -92,7 +92,7 @@ async function builder(stored: any, refusal: Record<string, string[]> | null = n
         '@/components/forms/FormStaffCodesModal.vue': { default: stub },
         '@/stores/masjid/formsStore': { useFormsStore: () => store },
         '@/stores/masjid/connectStore': { useConnectStore: () => ({}) },
-        '@/stores/masjidStore': { useMasjidStore: () => ({ masjid: {}, orgType: 'masjid', term: (key: string) => key }) },
+        '@/stores/masjidStore': { useMasjidStore: () => ({ masjid: { capabilities }, orgType: 'masjid', term: (key: string) => key }) },
         '@/core/access/orgAccess': { connectPlace: () => null, connectPlaceTitle: () => null },
         '@/core/types/data/Capability': { CAPABILITY_LABELS: { crm: 'CRM' } },
         '@/core/types/data/masjid-related/StripeConnect': { formsCardProblemIsLink: () => false, formsCardProblemText: () => '' },
@@ -852,5 +852,18 @@ test('a refusal of a choice\'s stored value goes when that value is retyped', as
 
         assert.doesNotMatch(String(price(0).props.class), /is-invalid/);
         assert.doesNotMatch(screen.all(n => n.props['data-test'] === 'choice-prices')[0].textContent, /was refused/);
+    } finally { screen.unmount(); }
+});
+
+for (const calendarOn of [false, true]) for (const subjectsOn of [false, true]) test(`builder passes calendar help capability to the real editor, calendar ${calendarOn}, subjects ${subjectsOn}`, async () => {
+    const stored = afterschool({ schema: { sections: [{ id: 'days', title: 'Days', fields: [{ name: 'days', label: 'School days', type: 'radio', optionsSource: formTypes.SCHOOL_MEETING_DAYS }] }] }, settings: {} });
+    const { screen, writes } = await builder(stored, null, [{ key: formTypes.SCHOOL_MEETING_DAYS, label: 'School calendar', available: true }], { school_calendar_terms: calendarOn, class_subjects: subjectsOn });
+    try {
+        const expected = calendarOn
+            ? 'Families will see the open school days in the next four weeks, listed by date. Days that pass, or that the office marks as no school, drop off the list by themselves.'
+            : "Families will see the upcoming school days that aren't marked as no school, listed by date. Days that pass, or that the office later marks as no school, drop off the list by themselves.";
+        assert.ok(screen.text().replace(/\s+/g, ' ').includes(expected));
+        assert.equal(screen.text().includes('next four weeks'), calendarOn);
+        assert.equal(writes.length, 0);
     } finally { screen.unmount(); }
 });

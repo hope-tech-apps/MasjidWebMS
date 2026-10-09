@@ -140,8 +140,8 @@
                             </div>
                         </div></template>
                         <div v-for="month in (calendarTermsOn ? months : [])" :key="month.key" class="mb-3">
-                            <button type="button" class="btn btn-light w-100 text-start" :aria-expanded="expandedMonths[month.key] || false" @click="expandedMonths[month.key] = !expandedMonths[month.key]">
-                                {{ formatSchoolDay(month.firstDate, LOCALE, { month: 'long', year: 'numeric' }) }} · {{ month.days.filter(d => !d.closed).length }} school day{{ month.days.filter(d => !d.closed).length === 1 ? '' : 's' }}, {{ month.days.filter(d => d.closed).length }} with no school
+                            <button type="button" class="btn btn-light w-100 text-start" :aria-expanded="expandedMonths[month.key] ? 'true' : 'false'" @click="expandedMonths[month.key] = !expandedMonths[month.key]">
+                                {{ formatSchoolDay(month.firstDate, LOCALE, { month: 'long', year: 'numeric' }) }} · {{ schoolMonthCounts(month).open }} school day{{ schoolMonthCounts(month).open === 1 ? '' : 's' }}, {{ schoolMonthCounts(month).closed }} with no school
                             </button>
                             <div v-if="expandedMonths[month.key]" class="list-group mt-2">
                                 <button v-for="day in month.days" :key="day.date" type="button" class="list-group-item list-group-item-action d-flex flex-wrap gap-2" :data-calendar-day="day.date" @click="openDay(day)">
@@ -226,7 +226,8 @@
                                         <p class="form-text">Terms can have gaps. Term numbers stay the same when a term is removed.</p>
                                             <div v-if="termBanner" class="alert alert-danger small" role="alert">{{ termBanner }}</div>
                                             <div v-for="term in removedTerms" :key="`removed-${term.id}`" class="border rounded p-2 mb-2">
-                                                <div class="fw-semibold">{{ term.name }} (removed)</div>
+                                                <div class="fw-semibold text-break">{{ term.name }} (removed)</div>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mt-2" :disabled="savingTerm || savingYear" @click="putBackTerm(term)">Put back</button>
                                                 <p v-if="term.report_card_count" class="small mb-0">{{ term.report_card_count === 1 ? '1 report card is' : `${term.report_card_count} report cards are` }} filed under this term. {{ term.report_card_count === 1 ? 'It stays' : 'They stay' }}, and will no longer be filed under a term.</p>
                                             </div>
                                             <div v-for="term in configuredTerms" :key="term.id" class="border rounded p-2 mb-2">
@@ -414,6 +415,7 @@ import {
     defaultYear,
     formatSchoolDay,
     monthsOf,
+    schoolMonthCounts,
     readSchoolCalendar,
     weekdayName,
     weekdayOfIso,
@@ -820,8 +822,13 @@ const saveTerm = (): boolean => {
 };
 const removeTerm = (term: SchoolTerm) => {
     configuredTerms.value = configuredTerms.value.filter(t => t.id !== term.id);
-    if (term.id > 0) removedTerms.value.push({ ...term });
+    removedTerms.value.push({ ...term });
     if (editingTermId.value === term.id) clearTerm();
+};
+
+const putBackTerm = (term: SchoolTerm) => {
+    removedTerms.value = removedTerms.value.filter(t => t.id !== term.id);
+    configuredTerms.value = [...configuredTerms.value, { ...term }].sort((a,b) => a.position - b.position);
 };
 
 // ------------------------------------------------------------------ closures

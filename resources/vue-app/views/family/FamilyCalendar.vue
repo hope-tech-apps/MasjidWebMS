@@ -92,9 +92,10 @@
 
                 <SchoolCalendarList
                     :days="selectedDays"
+                    :collapsible="selectedYear.meeting_weekdays !== undefined"
                     :today="calendar.today"
                     :locale="locale"
-                    :labels="{ today: t('cal_today'), noSchool: t('cal_no_school'), schoolDay: t('cal_school_day'), empty: t('cal_no_days') }"
+                    :labels="{ today: t('cal_today'), noSchool: t('cal_no_school'), schoolDay: t('cal_school_day'), schoolDays: t('cal_school_days'), withNoSchool: t('cal_with_no_school'), empty: t('cal_no_days') }"
                 />
             </template>
         </template>

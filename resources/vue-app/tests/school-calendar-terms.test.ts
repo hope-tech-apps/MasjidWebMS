@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 const vue = require('vue');
 const baseYear = { id: 7, label: 'Test year', first_day: '2026-10-12', last_day: '2026-10-23', meeting_weekday: 1, meeting_days: ['2026-10-12', '2026-10-13'], closures: [] };
 
-async function screen(on: boolean, configurationOverride: Record<string, unknown> = {}, loadRefusal?: unknown, noYears = false) {
+async function screen(on: boolean, configurationOverride: Record<string, unknown> = {}, loadRefusal?: unknown, noYears = false, classSubjects = false) {
     (globalThis as any).document.body = { style: {} };
     withDocumentKeys();
     const configuration = await loadTs('core/types/data/masjid-related/SchoolCalendarConfiguration.ts', { '@/core/types/data/masjid-related/SchoolCalendar': dates });
@@ -29,7 +29,7 @@ async function screen(on: boolean, configurationOverride: Record<string, unknown
         '@/core/services/ApiService': { default: api }, '@/core/services/ApiErrors': errors, '@/core/types/config/BackendApiRoutes': {},
         '@/core/types/data/masjid-related/SchoolCalendar': dates, '@/core/types/data/masjid-related/SchoolCalendarConfiguration': configuration,
         '@/stores/authStore': { useAuthStore: () => ({ dashboardMasjidId: 1 }) },
-        '@/stores/masjidStore': { useMasjidStore: () => ({ masjid: { id: 1, capabilities: on ? { school_calendar_terms: true } : {} } }) },
+        '@/stores/masjidStore': { useMasjidStore: () => ({ masjid: { id: 1, capabilities: on ? { school_calendar_terms: true, class_subjects: classSubjects } : { class_subjects: classSubjects } } }) },
     });
     await flush();
     return { ...mounted, writes, refuse: (error = httpError(422, { data: { meeting_weekdays: ['Keep the weekday with attendance.'] } })) => { refusal = error; } };
@@ -121,8 +121,8 @@ test('new ON years inherit the last year meeting days and can save new terms tog
     } finally { s.unmount(); }
 });
 
-test('ON office groups school days into collapsed month counts and retains closure reasons', async () => {
-    const s = await screen(true, { meeting_days: ['2026-10-12','2026-10-13'], closures: [{ id: 8, closed_on: '2026-10-13', reason: 'Teacher planning day' }] });
+for (const classSubjects of [false, true]) test(`ON office groups school days into collapsed month counts and retains closure reasons, subjects ${classSubjects}`, async () => {
+    const s = await screen(true, { meeting_days: ['2026-10-12','2026-10-13'], closures: [{ id: 8, closed_on: '2026-10-13', reason: 'Teacher planning day' }] }, undefined, false, classSubjects);
     try {
         assert.match(s.text(), /October 2026 · 1 school day, 1 with no school/);
         assert.equal(s.all(n => n.props['data-calendar-day']).length, 0);
@@ -253,9 +253,48 @@ test('first ON year starts with no meeting days and Save asks for at least one',
 
 test('no screen the calendar touches wraps content in a bare <template>, which a browser never displays', () => {
     // A mounted test still finds nodes inside a <template> with no directive; a browser renders an inert element.
-    for (const file of ['views/dashboard/SchoolCalendarView.vue', 'views/teacher/TeacherClass.vue', 'views/teacher/TeacherCalendar.vue', 'views/family/FamilyCalendar.vue']) {
+    for (const file of ['views/dashboard/SchoolCalendarView.vue', 'views/teacher/TeacherClass.vue', 'views/teacher/TeacherCalendar.vue', 'views/family/FamilyCalendar.vue', 'components/common/SchoolCalendarList.vue', 'components/forms/FormFieldEditor.vue', 'components/forms/FormBuilder.vue']) {
         const source = readFileSync(new URL('../' + file, import.meta.url), 'utf8');
         const body = source.slice(source.indexOf('<template>') + '<template>'.length, source.lastIndexOf('</template>'));
         assert.equal((body.match(/<template\s*>/g) ?? []).length, 0, file);
     }
+});
+
+for (const classSubjects of [false, true]) test(`Put back restores removed draft state and preserves other staged edits, subjects ${classSubjects}`, async () => {
+    const term = { id: 9, name: 'Filed term', starts_on: '2026-10-12', ends_on: '2026-10-16', position: 1, report_card_count: 3 };
+    const s = await screen(true, { terms: [term] }, undefined, false, classSubjects);
+    try {
+        click(s.button('Edit year')); await flush();
+        type(s.all(n => n.props.id === 'schoolYearLabel')[0], 'Revised year');
+        click(s.button('Edit term')); await flush();
+        type(s.all(n => n.props.id === 'schoolTermName')[0], 'Revised term');
+        click(s.button('Save term')); await flush();
+        click(s.button('Remove term')); await flush();
+        assert.match(s.text(), /Revised term \(removed\)/);
+        for (const [id, value] of [['schoolTermName','New term'],['schoolTermStart','2026-10-19'],['schoolTermEnd','2026-10-23'],['schoolTermPosition','2']]) type(s.all(n => n.props.id === id)[0], value);
+        click(s.button('Add term')); await flush();
+        click(s.button('Put back')); await flush();
+        assert.equal(s.writes.length, 0);
+        assert.doesNotMatch(s.text(), /\(removed\)|will no longer be filed/);
+        assert.match(s.text(), /Revised term/); assert.match(s.text(), /New term/);
+        submit(s.all(n => n.tag === 'form')[0]); await flush();
+        assert.equal(s.writes.length, 1); assert.equal(s.writes[0].body.label, 'Revised year');
+        assert.deepEqual(s.writes[0].body.terms, [
+            { id: 9, name: 'Revised term', starts_on: '2026-10-12', ends_on: '2026-10-16', position: 1 },
+            { name: 'New term', starts_on: '2026-10-19', ends_on: '2026-10-23', position: 2 },
+        ]);
+    } finally { s.unmount(); }
+});
+
+test('a newly added term can also be removed and put back before Save', async () => {
+    const s = await screen(true);
+    try {
+        click(s.button('Edit year')); await flush();
+        for (const [id,value] of [['schoolTermName','New term'],['schoolTermStart','2026-10-12'],['schoolTermEnd','2026-10-16']]) type(s.all(n => n.props.id === id)[0], value);
+        click(s.button('Add term')); await flush(); click(s.button('Remove term')); await flush();
+        click(s.button('Put back')); await flush();
+        assert.equal(s.writes.length, 0);
+        click(s.button('Cancel')); await flush(); click(s.button('Edit year')); await flush();
+        assert.doesNotMatch(s.text(), /New term/); assert.equal(s.writes.length, 0);
+    } finally { s.unmount(); }
 });

@@ -121,6 +121,8 @@ export const ES: Record<string, string> = {
     cal_upcoming: "Próximos días",
     cal_no_upcoming: "No quedan más días de clase este año.",
     cal_school_day: "Día de clase",
+    cal_school_days: "días de clase",
+    cal_with_no_school: "sin clase",
     cal_no_school: "Sin clase",
     cal_today: "Hoy",
     cal_year: "Año escolar",

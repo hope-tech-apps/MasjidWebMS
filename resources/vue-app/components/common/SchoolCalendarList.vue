@@ -1,13 +1,16 @@
 <template>
     <div>
         <div v-for="month in months" :key="month.key" class="mb-4">
-            <h3 class="h6 text-muted fw-semibold mb-2">{{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }}</h3>
-            <ul class="list-group">
+            <button v-if="collapsible" type="button" class="btn btn-light w-100 month-toggle" :aria-expanded="expandedMonths[month.key] ? 'true' : 'false'" @click="expandedMonths[month.key] = !expandedMonths[month.key]">
+                {{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }} · {{ schoolMonthCounts(month).open }} {{ schoolMonthCounts(month).open === 1 ? labels.schoolDay.toLocaleLowerCase(locale) : labels.schoolDays }}, {{ schoolMonthCounts(month).closed }} {{ labels.withNoSchool }}
+            </button>
+            <h3 v-else class="h6 text-muted fw-semibold mb-2">{{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }}</h3>
+            <ul v-if="!collapsible || expandedMonths[month.key]" class="list-group" :class="{ 'mt-2': collapsible }">
                 <li v-for="day in month.days" :key="day.date"
                     class="list-group-item d-flex flex-wrap align-items-center gap-2"
                     :class="{ 'is-past': day.date < today, 'is-today': day.date === today }"
                     :aria-current="day.date === today ? 'date' : undefined">
-                    <span class="fw-semibold small day-date">
+                    <span class="fw-semibold small day-date" :class="{ 'text-break': collapsible }">
                         {{ formatSchoolDay(day.date, locale, { weekday: 'long', month: 'long', day: 'numeric' }) }}
                     </span>
                     <span v-if="day.date === today" class="badge bg-success-subtle text-success-emphasis">{{ labels.today }}</span>
@@ -19,7 +22,7 @@
                         <template v-if="day.closed">
                             <span class="badge bg-danger-subtle text-danger-emphasis">{{ labels.noSchool }}</span>
                             <!-- The school's own words, in whichever language it wrote them. -->
-                            <span v-if="day.reason" dir="auto">{{ day.reason }}</span>
+                            <span v-if="day.reason" dir="auto" :class="{ 'text-break': collapsible }">{{ day.reason }}</span>
                         </template>
                         <span v-else class="text-muted">{{ labels.schoolDay }}</span>
                     </span>
@@ -32,11 +35,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import {
     SchoolCalendarDay,
     formatSchoolDay,
     monthsOf,
+    schoolMonthCounts,
 } from '@/core/types/data/masjid-related/SchoolCalendar';
 
 /**
@@ -44,7 +48,7 @@ import {
  *
  * Shared by the teacher shell and the family portal, which differ only in the
  * words and the locale — so both come in as props and nothing here is worded in
- * one language. The admin screen does not use this: its rows are buttons.
+ * one language. Grouping and counts are shared with the office; its day rows are buttons.
  */
 const props = defineProps<{
     days: SchoolCalendarDay[];
@@ -52,13 +56,18 @@ const props = defineProps<{
     today: string;
     /** Handed to toLocaleDateString — `en-US`, or the family portal's `ar-u-nu-latn`. */
     locale: string;
-    labels: { today: string; noSchool: string; schoolDay: string; empty: string };
+    labels: { today: string; noSchool: string; schoolDay: string; empty: string; schoolDays?: string; withNoSchool?: string };
+    /** Only configured calendars start closed; legacy lists remain fully visible. */
+    collapsible?: boolean;
 }>();
 
 const months = computed(() => monthsOf(props.days));
+const expandedMonths = ref<Record<string, boolean>>({});
+watch(() => props.days, () => { expandedMonths.value = {}; });
 </script>
 
 <style scoped>
+.month-toggle { text-align: start; white-space: normal; overflow-wrap: anywhere; min-height: 44px; }
 .push-end { margin-inline-start: auto; }
 
 /* A day that has passed stays readable — it is dimmed by colour, not opacity,

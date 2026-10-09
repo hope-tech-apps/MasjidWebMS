@@ -245,6 +245,12 @@ export function monthsOf(days: SchoolCalendarDay[]): SchoolCalendarMonth[] {
     return months;
 }
 
+/** Open school dates and no-school dates use the same counts in every calendar. */
+export function schoolMonthCounts(month: SchoolCalendarMonth): { open: number; closed: number } {
+    const closed = month.days.filter(day => day.closed).length;
+    return { open: month.days.length - closed, closed };
+}
+
 /**
  * The year a screen opens on: the one today falls in, else the next one to
  * start, else the most recent. `years` must be sorted by first_day.

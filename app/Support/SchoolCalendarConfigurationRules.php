@@ -46,8 +46,8 @@ final class SchoolCalendarConfigurationRules
             $first = SchoolCalendar::day($request->input('first_day')); $last = SchoolCalendar::day($request->input('last_day'));
             if ($last->lt($first)) { $v->errors()->add('last_day', 'The last day cannot be before the first day.'); return; }
             $weekdays = array_map('intval', $request->input('meeting_weekdays'));
-            if (! in_array($first->dayOfWeek, $weekdays, true)) $v->errors()->add('first_day', 'The first day must be on a configured meeting weekday.');
-            if (! in_array($last->dayOfWeek, $weekdays, true)) $v->errors()->add('last_day', 'The last day must be on a configured meeting weekday.');
+            if (! in_array($first->dayOfWeek, $weekdays, true)) $v->errors()->add('first_day', 'The first day must be one of the days the school meets.');
+            if (! in_array($last->dayOfWeek, $weekdays, true)) $v->errors()->add('last_day', 'The last day must be one of the days the school meets.');
             if ((int) $first->diffInDays($last) > SchoolCalendar::MAX_YEAR_DAYS) { $v->errors()->add('last_day', 'A school year cannot run longer than a year.'); return; }
             $overlap = SchoolCalendar::overlappingYear((int) (app(TenantContext::class)->get() ?? $request->route('masjid_id')), $first->toDateString(), $last->toDateString(), $ignore);
             if ($overlap) $v->errors()->add('first_day', SchoolCalendar::overlapMessage($overlap));
@@ -66,7 +66,7 @@ final class SchoolCalendarConfigurationRules
                 $v->errors()->add('closed_on', 'The no-school day must be inside its school year.'); return;
             }
             if (! in_array(SchoolCalendar::day($day)->dayOfWeek, SchoolDateAuthority::weekdays($year), true)) {
-                $v->errors()->add('closed_on', 'The no-school day must be on a configured meeting weekday.'); return;
+                $v->errors()->add('closed_on', 'The no-school day must be one of the days the school meets.'); return;
             }
             if (SchoolClosure::query()->where('masjid_id', $org)->where('school_year_id', $year->id)->whereDate('closed_on', $day)->exists()) {
                 $v->errors()->add('closed_on', SchoolCalendar::label($day).' is already a no-school day.');

@@ -134,7 +134,7 @@ class SchoolCalendarConfigurationController extends Controller
         $day = $data['closed_on'];
         if ($day < $year->first_day->toDateString() || $day > $year->last_day->toDateString()
             || ! in_array(SchoolCalendar::day($day)?->dayOfWeek, SchoolDateAuthority::weekdays($year), true)) {
-            throw ValidationException::withMessages(['closed_on' => 'This date is no longer inside its school year or on a configured meeting weekday. Reload the calendar and try again.']);
+            throw ValidationException::withMessages(['closed_on' => 'This date is no longer inside its school year or on one of the days the school meets. Reload the calendar and try again.']);
         }
         $marks = AttendanceRecord::query()->where('masjid_id',$org)->whereDate('session_date',$day)->count();
         if ($marks) throw ValidationException::withMessages(['closed_on' => sprintf('A register was already taken on %s (%d attendance mark%s), so it cannot become a no-school day. Clear those marks first if there really was no school.', SchoolCalendar::label($day), $marks, $marks === 1 ? '' : 's')]);
