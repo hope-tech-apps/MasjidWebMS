@@ -9474,3 +9474,15 @@ Owner decisions implemented: inclusive today..today+27 ON form offers, collapsed
 - New models use BelongsToMasjid; sharing is not fillable and not served. Scrub all piece titles conservatively, including source snapshots.
 - Shared class bootstrap exposes class_subject_work_enabled=true only while ON, so a later screen can discover the grant. OFF omits the field and reuses the existing request row; no SQL change. New failing bootstrap test preceded this addition.
 - Write transaction begins with the bound organisation primary-key lock before any ordinary SELECT, so waiting for another subject/plan writer cannot preserve an earlier InnoDB snapshot. Regression pins query order; actual contention remains unverified. Plan date sorting is stable for same-date rows, retaining newest live-plan ID order.
+
+## 2026-10-09 — Class subject work Build B screens
+- Report path (brief did not name one): artifacts/subject-work-screens-report.md. Assigned feature/class-subject-work worktree at 412c3672; no commit or production changes.
+- New components under views/teacher/subject are shared with office via readonly. Bootstrap requires both true-only switches, and no work request is sent until subject detail passes its existing fence.
+- Curriculum selection uses selected_week_no, falling back to opening_week_no; server order and grade-specific membership lists are authoritative. Entry labels use numbers and focus, never calendar labels.
+- Each grade and opened plan/piece owns its marks draft. Save refreshes that piece's copied words only; note/piece CRUD refreshes only its list, preserving other drafts. Refresh failure distinguishes successful mutation from failed reload and offers local reload.
+- Discard prompts have Keep editing/Discard changes, trap Tab and allow Escape; menu/query navigation restores the accepted address on cancel without remounting. Leaving class/reloading also warns. All forms protect typed drafts; closing a clean, empty form needs no prompt.
+- Report-card and gradebook help now use one shared PerformanceLevelHelp component; its words and payload-supplied descriptions are unchanged. No performance labels are duplicated in new code.
+- Own deletion uses the count returned by server including departed marks; 409 changes the sentence and requires a second explicit click. Teacher DELETE accepts an optional JSON body while legacy no-body calls keep their previous request behavior.
+- Dates on notes use the user's locale/timezone; copied-wording dates, if supplied, are displayed as the server's ISO date. Lesson row titles/dates/order are server-owned, including retained deleted-plan snapshots.
+- Scope gap awaiting caller answer: Build A has no snapshot date or indication of changed guide words. UI accepts optional wording_changed/marked_against_date and the mounted test is synthetic; the actual server date notice is NOT verified or complete. No server contract was changed by Build B.
+- Browser geometry/assistive technology/staging are outside this mounted/local build and remain unchecked. Guides are owned by the staging-walk session; this build documents local behavior without publishing guides.

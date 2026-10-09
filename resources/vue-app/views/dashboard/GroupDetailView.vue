@@ -161,7 +161,9 @@
                         :groupId="groupId"
                         :masjidId="masjidStore.masjid?.id ?? 0"
                     />
-                    <p v-else-if="classSubjects.enabled.value && activeTab === 'subject'" class="text-muted">There is nothing here yet.</p>
+                    <p v-else-if="classSubjects.enabled.value && activeTab === 'subject' && !subjectWorkEnabled" class="text-muted">There is nothing here yet.</p>
+                    <SubjectWorkPage v-if="subjectWorkEnabled && classSubjects.subject.value"
+                        :key="`${subjectBase}:${classSubjects.subject.value.id}`" :base="`${subjectBase}/subjects/${classSubjects.subject.value.id}`" :api="ApiService" readonly />
                     </ClassNavigation>
                 </div>
             </div>
@@ -188,6 +190,7 @@ import { Group } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ClassNavigation from '@/components/classes/ClassNavigation.vue';
+import SubjectWorkPage from '@/views/teacher/subject/SubjectWorkPage.vue';
 import ClassSubjectManager from '@/components/classes/ClassSubjectManager.vue';
 import ApiService from '@/core/services/ApiService';
 import { useClassSubjects } from '@/composables/useClassSubjects';
@@ -317,6 +320,7 @@ const loadRoster = async () => {
 };
 
 const subjectBase = computed(() => `/api/admin/masjids/${masjidStore.masjid?.id ?? 0}/groups/${groupId}`);
+const subjectWorkEnabled = computed(() => group.value?.class_subjects_enabled === true && group.value?.class_subject_work_enabled === true);
 const classSubjects = useClassSubjects({
     realm: 'office', group, base: subjectBase, activeTab, api: ApiService,
     activate: tab => { activeTab.value = tab as TabKey; },

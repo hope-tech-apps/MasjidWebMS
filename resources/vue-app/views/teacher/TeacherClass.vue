@@ -2087,15 +2087,7 @@
                          these are the school's own words and a teacher choosing
                          between a 2 and a 3 for a real child can read what each
                          one actually means without leaving the screen. -->
-                    <details v-if="openAssignment.scale === 'levels' && levelKey.length" class="mb-3">
-                        <summary class="small text-primary" style="cursor:pointer">What do 4, 3, 2 and 1 mean?</summary>
-                        <dl class="row small mt-2 mb-0">
-                            <template v-for="l in levelKey" :key="l.level">
-                                <dt class="col-sm-3 fw-semibold">{{ l.level }} — {{ l.short_label }}</dt>
-                                <dd class="col-sm-9 text-muted">{{ l.description }}</dd>
-                            </template>
-                        </dl>
-                    </details>
+                    <PerformanceLevelHelp v-if="openAssignment.scale === 'levels'" :levels="levelKey" />
 
                     <div class="list-group mb-3">
                         <div v-for="s in openAssignment.students" :key="s.membership_id"
@@ -2450,15 +2442,7 @@
 
                     <!-- THE KEY, from the payload and never hardcoded — the school's own words,
                          readable at the moment a teacher is choosing between a 2 and a 3. -->
-                    <details v-if="levelKey.length" class="mb-3">
-                        <summary class="small text-primary" style="cursor:pointer">What do 4, 3, 2 and 1 mean?</summary>
-                        <dl class="row small mt-2 mb-0">
-                            <template v-for="l in levelKey" :key="l.level">
-                                <dt class="col-sm-3 fw-semibold">{{ l.level }} — {{ l.short_label }}</dt>
-                                <dd class="col-sm-9 text-muted">{{ l.description }}</dd>
-                            </template>
-                        </dl>
-                    </details>
+                    <PerformanceLevelHelp :levels="levelKey" />
 
                     <div v-for="sub in openCard.subjects" :key="sub.subject" class="card border-0 shadow-sm mb-2">
                         <div class="card-header bg-white fw-semibold small">{{ sub.subject }}</div>
@@ -2611,7 +2595,9 @@
             <section v-else-if="activeTab === 'store' && group.class_store === true">
                 <TeacherClassStore :base="base" />
             </section>
-            <p v-else-if="classSubjects.enabled.value && activeTab === 'subject'" class="text-muted">There is nothing here yet.</p>
+            <p v-else-if="classSubjects.enabled.value && activeTab === 'subject' && !subjectWorkEnabled" class="text-muted">There is nothing here yet.</p>
+            <SubjectWorkPage v-if="subjectWorkEnabled && classSubjects.subject.value" ref="subjectWorkPage"
+                :key="`${base}:${classSubjects.subject.value.id}`" :base="`${base}/subjects/${classSubjects.subject.value.id}`" :api="TeacherApiService" />
             </ClassNavigation>
         </template>
 
@@ -2629,6 +2615,8 @@ import { apiErrorText, uploadErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
+import SubjectWorkPage from './subject/SubjectWorkPage.vue';
+import PerformanceLevelHelp from '@/components/classes/PerformanceLevelHelp.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import EditableMessageBody from '@/components/common/EditableMessageBody.vue';
 import { messageHasMedia, replaceMessage } from '@/core/helpers/messageEdit';
@@ -6879,7 +6867,10 @@ watch(activeTab, (tab) => {
     if (tab !== 'messages') { openedThread.value = null; }
 });
 
+const subjectWorkPage = ref<{ canLeave: () => Promise<boolean> } | null>(null);
+const subjectWorkEnabled = computed(() => group.value?.class_subjects_enabled === true && group.value?.class_subject_work_enabled === true);
 const classSubjects = useClassSubjects({
+    beforeLeave: () => subjectWorkPage.value?.canLeave() ?? Promise.resolve(true),
     realm: 'teacher', group, base, activeTab, api: TeacherApiService,
     reconcileSaved: (operation) => {
         if (activeTab.value === 'points' && ['giveAward', 'removeAward', 'setPointsPeriod'].includes(operation)) {

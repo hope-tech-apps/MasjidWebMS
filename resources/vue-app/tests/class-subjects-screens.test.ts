@@ -118,7 +118,7 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
         else catalog = catalog.map((s: any) => s.id === id ? { ...s, ...body } : s);
         return ok(catalog.find((s: any) => s.id === id) ?? catalog);
     };
-    const api: any = { get, post: (u: string, b: any) => write('post', u, b), put: (u: string, b: any) => write('put', u, b), delete: (u: string) => write('delete', u, undefined), blobUrl: async () => 'blob:practice' };
+    const api: any = { get, post: (u: string, b: any) => write('post', u, b), put: (u: string, b: any) => write('put', u, b), delete: (u: string, b?: any) => write('delete', u, b), blobUrl: async () => 'blob:practice' };
     api.VueApp = { axios: { get: api.get, post: api.post, put: api.put } };
     const groupsStore = vue.reactive<any>({ memberships: data.memberships, rosterMeta: { teaches_students: true, school_today: '2026-10-08' }, pendingClaims: 0, contestedClaims: 0,
         fetchGroup: async () => (await get('/api/admin/masjids/1/groups/2')).data.data,
@@ -136,7 +136,7 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
         '@/stores/masjidStore': { useMasjidStore: () => masjid },
         '@/stores/masjid/groupsStore': { useGroupsStore: () => groupsStore },
         '@/stores/masjid/hifzStore': { useHifzStore: () => hifzStore },
-        sweetalert2: { default: { fire: async (notice: any) => { alerts.push(notice); return { isConfirmed: false }; }, mixin: () => ({ fire: async () => ({ isConfirmed: false }) }) } },
+        sweetalert2: { default: { fire: async (notice: any) => { alerts.push(notice); return { isConfirmed: options.confirm ?? false }; }, mixin: () => ({ fire: async () => ({ isConfirmed: false }) }) } },
     };
     Object.assign(overrides, options.modules);
     const file = realm === 'teacher' ? 'views/teacher/TeacherClass.vue' : 'views/dashboard/GroupDetailView.vue';
@@ -1468,4 +1468,255 @@ test('calendar browser: the year the Reports list is using is always offered, ev
         const select = screen.all((n: Node) => n.tag === 'select' && n.children.some((c: Node) => c.textContent === '2026-2026'))[0];
         assert.deepEqual(select.children.filter((n: Node) => n.tag === 'option').map((n: Node) => n.textContent), ['2026-2027', '2026-2026']);
     } finally { screen.unmount(); }
+});
+
+// Steps 2/3 use the server's membership IDs and copied wording, never contact IDs or calendar arithmetic.
+const workStudents = [{ id: 9, name: 'Practice student', grade_label: '1st', grade_key: '1' }, { id: 10, name: 'Practice learner', grade_label: '2nd', grade_key: '2' }];
+const workEntry = (week_no: number, grade_label = '1st') => ({ source: 'guide', piece_id: null, title: `Focus ${week_no}`, detail: 'Assessment note', standard_code: 'TEST.1', week_no, grade_label, marks: [], mark_count: 0 });
+function workFixture() {
+    return { subject: subjects[3], students: structuredClone(workStudents), levels: [
+        { level: 4, short_label: 'Exceeds', description: 'Practice exceeds description' }, { level: 3, short_label: 'Meets', description: 'Practice meets description' },
+        { level: 2, short_label: 'Approaching', description: 'Practice approaching description' }, { level: 1, short_label: 'Needs Support', description: 'Practice support description' }],
+        curriculum: [{ grade_key: '1', grade_label: '1st', students: [workStudents[0]], entries: [workEntry(2), workEntry(12)], opening_week_no: 12, selected_week_no: 12 },
+            { grade_key: '2', grade_label: '2nd', students: [workStudents[1]], entries: [workEntry(7, '2nd')], opening_week_no: 7, selected_week_no: 7 }],
+        lesson_plans: [{ source: 'plan', piece_id: null, lesson_plan_id: 31, title: '2026-10-09: Practice objective', detail: null, marks: [], mark_count: 0 },
+            { source: 'plan', piece_id: 32, lesson_plan_id: null, title: '2026-10-08: Retained objective', detail: null, marks: [], mark_count: 0 }],
+        own_pieces: [{ source: 'own', piece_id: 41, title: 'Practice piece', detail: 'Practice detail', marks: [], mark_count: 0 }],
+        notes: [{ id: 51, group_membership_id: 9, student_name: 'Practice student', body: 'Practice note', author_name: 'Practice Teacher', created_at: '2026-10-09T14:00:00Z' },
+            { id: 50, group_membership_id: null, student_name: 'Whole class', body: 'Practice update', author_name: 'Practice Teacher', created_at: '2026-10-08T14:00:00Z' }] };
+}
+async function workSetup(realm: 'teacher' | 'office' = 'teacher', opts: any = {}) {
+    const work: any = opts.work ?? workFixture();
+    const result = await setup(realm, { closed: true, query: { subject: '104' }, ...opts,
+        data: { class_subject_work_enabled: true, ...opts.data },
+        read: (url: string) => { const custom = opts.read?.(url); if (custom !== undefined) return custom; if (url.endsWith('/work')) return ok(structuredClone(work)); if (url.endsWith('/notes')) return ok(structuredClone(work.notes)); },
+        write: (method: string, url: string, body: any) => {
+            const custom = opts.write?.(method, url, body); if (custom !== undefined) return custom;
+            if (url.endsWith('/marks')) {
+                const pieces = [...work.curriculum.flatMap((b: any) => b.entries), ...work.lesson_plans, ...work.own_pieces];
+                const piece = body.piece_id ? pieces.find((p: any) => p.piece_id === body.piece_id) : body.source === 'guide'
+                    ? pieces.find((p: any) => p.week_no === body.week_no && p.grade_label === body.grade_label) : pieces.find((p: any) => p.lesson_plan_id === body.lesson_plan_id);
+                piece.piece_id ??= 70; piece.marks = body.marks.filter((m: any) => m.level != null || m.comment?.trim()); piece.mark_count = piece.marks.length;
+                return ok({ piece_id: piece.piece_id });
+            }
+            if (/\/notes(?:\/\d+)?$/.test(url)) {
+                const id = Number(url.split('/').pop());
+                if (method === 'delete') work.notes = work.notes.filter((n: any) => n.id !== id);
+                else if (method === 'put') work.notes.find((n: any) => n.id === id).body = body.body;
+                else work.notes.unshift({ id: 60, ...body, student_name: workStudents.find(s => s.id === body.group_membership_id)?.name ?? 'Whole class', author_name: 'Practice Teacher', created_at: '2026-10-09T16:00:00Z' });
+                return ok({ id: 60 });
+            }
+            if (/\/pieces(?:\/\d+)?$/.test(url)) {
+                const id = Number(url.split('/').pop());
+                if (method === 'delete') work.own_pieces = work.own_pieces.filter((p: any) => p.piece_id !== id);
+                else if (method === 'put') Object.assign(work.own_pieces.find((p: any) => p.piece_id === id), body);
+                else work.own_pieces.unshift({ piece_id: 61, source: 'own', ...body, marks: [], mark_count: 0 });
+                return ok({ id: 61 });
+            }
+        } });
+    return { ...result, work };
+}
+const workField = (s: any, label: string) => { const found = s.all((n: Node) => n.props['aria-label'] === label); assert.equal(found.length, 1, label); return found[0]; };
+const area = (s: any, label: string) => { const found = s.all((n: Node) => n.props['data-work-area'] === label); assert.equal(found.length, 1, label); return found[0]; };
+const within = (node: Node, predicate: (n: Node) => boolean): Node[] => node.children.flatMap(n => [...(predicate(n) ? [n] : []), ...within(n, predicate)]);
+const areaButton = (s: any, a: string, words: string) => { const found = within(area(s, a), n => n.tag === 'button' && n.textContent === words); assert.equal(found.length, 1, `${a}: ${words}`); return found[0]; };
+
+test('work OFF: class-subjects bootstrap and no-tool words/requests remain pinned in both views', async () => {
+    for (const realm of ['teacher', 'office'] as const) {
+        const r = await setup(realm, { closed: true });
+        try {
+            assert.deepEqual(r.calls.map(c => c.url), realm === 'teacher' ? ['/api/teacher/masjids/1/groups/2'] : ['/api/admin/masjids/1/groups/2', '/api/admin/masjids/1/groups/2/memberships', '/api/admin/masjids/1/groups/2/subjects', '/api/admin/masjids/1/school-subjects']);
+            await pick(r.screen, 'Healthful Living');
+            assert.match(r.screen.text(), /There is nothing here yet\./); assert.doesNotMatch(r.screen.text(), /From the curriculum|From lesson plans|Your own pieces|Notes and updates/);
+            assert.equal(r.calls.filter(c => c.url?.endsWith('/work')).length, 0);
+        } finally { r.screen.unmount(); }
+    }
+});
+test('walk 12: student and whole-class notes create, edit and confirmed delete', async () => {
+    const r = await workSetup(); const s = r.screen;
+    try {
+        assert.match(s.text(), /Practice student.*Practice note.*Practice Teacher/); assert.match(s.text(), /Whole class.*Practice update/);
+        click(s.button('New note')); await flush(); chooseOption(workField(s, 'Note about'), 'student'); await flush();
+        chooseOption(workField(s, 'Student for note'), 9); type(workField(s, 'Note text'), 'New student note'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10);
+        assert.deepEqual(r.calls.find(c => c.method === 'post' && c.url.endsWith('/notes')).body, { group_membership_id: 9, body: 'New student note' });
+        click(s.button('New note')); await flush(); type(workField(s, 'Note text'), 'New class update'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10);
+        assert.match(s.text(), /New class update/);
+        click(workField(s, 'Edit note 51')); await flush(); type(workField(s, 'Note text'), 'Corrected note'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10); assert.match(s.text(), /Corrected note/);
+        click(workField(s, 'Delete note 51')); await flush(); assert.match(s.text(), /Delete this note\?/); click(s.button('Delete note')); await flush(10); assert.doesNotMatch(s.text(), /Corrected note/);
+        assert.doesNotMatch(s.text(), /Share with the family/);
+    } finally { s.unmount(); }
+});
+test('walk 13: direct restricted subject shows the server refusal and never fetches work', async () => {
+    const r = await workSetup('teacher', { mine: [102], detail: async () => { throw httpError(403, { message: 'Forbidden.' }); } });
+    try { assert.match(r.screen.text(), /That subject is not available/); assert.equal(r.calls.filter(c => c.url.endsWith('/work')).length, 0); } finally { r.screen.unmount(); }
+});
+test('walk 14: office reads all four blocks, opens entries/pieces and has no writing controls or requests', async () => {
+    const r = await workSetup('office'); const s = r.screen;
+    try {
+        for (const words of ['From the curriculum', 'From lesson plans', 'Your own pieces', 'Notes and updates', 'Practice note', 'Whole class']) assert.ok(s.text().includes(words), s.text());
+        click(s.button('2026-10-09: Practice objective')); await flush(); click(s.button('Practice piece')); await flush();
+        assert.equal(s.all(n => n.tag === 'textarea' || n.tag === 'input' || n.props['aria-pressed'] !== undefined).length, 0);
+        assert.equal(s.all(n => n.tag === 'button' && /^(Save|Edit|Delete|Add a piece|New note)/.test(n.textContent)).length, 0);
+        assert.equal(r.calls.filter(c => c.method !== 'get').length, 0);
+    } finally { s.unmount(); }
+});
+test('walk 15: server-selected numbered entries, combined-grade rows and no calendar Week wording at 390/320', async () => {
+    for (const width of [390, 320]) {
+        const r = await workSetup('teacher', { width }); const s = r.screen;
+        try {
+            assert.match(s.text(), /1st.*12 · Focus 12/); assert.match(s.text(), /2nd.*7 · Focus 7/); assert.doesNotMatch(area(s, 'curriculum').textContent, /Week|week/);
+            for (const [grade, name, other] of [['1', 'Practice student', 'Practice learner'], ['2', 'Practice learner', 'Practice student']]) {
+                const block = workField(s, `Curriculum grade ${grade}`); assert.ok(block.textContent.includes(name)); assert.ok(!block.textContent.includes(other));
+                const buttons = within(block, n => n.props['aria-pressed'] !== undefined); assert.equal(buttons.length, 4); assert.ok(buttons.every(n => String(n.props['aria-pressed']) === 'false'));
+            }
+            assert.match(s.text(), /What do 4, 3, 2 and 1 mean\?/); assert.match(s.text(), /Practice exceeds description/);
+        } finally { s.unmount(); }
+    }
+    const work = workFixture(); work.curriculum = []; const r = await workSetup('teacher', { work });
+    try { assert.equal(r.screen.all(n => n.props['data-work-area'] === 'curriculum').length, 0); } finally { r.screen.unmount(); }
+});
+test('walk 16: linked plans in server order open marking rows, including retained deleted plans', async () => {
+    const r = await workSetup(); const s = r.screen;
+    try { const a = area(s, 'plans'); assert.ok(a.textContent.indexOf('2026-10-09') < a.textContent.indexOf('2026-10-08')); click(s.button('2026-10-09: Practice objective')); await flush(); assert.match(a.textContent, /Practice student.*Practice learner/); click(areaButton(s, 'plans', 'Save')); await flush(10); assert.equal(r.calls.find(c => c.url.endsWith('/marks')).body.lesson_plan_id, 31); } finally { s.unmount(); }
+});
+test('walk 17: own piece create/edit/delete count conflict requires another explicit confirmation', async () => {
+    let conflict = true;
+    const work = workFixture(); work.own_pieces[0].mark_count = 7;
+    const r = await workSetup('teacher', { work, write: (m: string, u: string) => { if (m === 'delete' && u.endsWith('/pieces/41') && conflict) { conflict = false; throw httpError(409, { mark_count: 8, message: 'The number of marks changed.' }); } } }); const s = r.screen;
+    try {
+        click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'New piece'); type(workField(s, 'Piece detail'), 'New detail'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10); assert.match(s.text(), /New piece.*New detail/);
+        click(workField(s, 'Edit piece 41')); await flush(); type(workField(s, 'Piece title'), 'Changed piece'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10); assert.match(s.text(), /Changed piece/);
+        click(workField(s, 'Delete piece 41')); await flush(); assert.match(s.text(), /Delete this piece and its 7 marks\?/); click(s.button('Delete piece')); await flush(10);
+        assert.match(s.text(), /Delete this piece and its 8 marks\?/); assert.equal(r.calls.filter(c => c.method === 'delete').length, 1);
+        click(s.button('Delete piece')); await flush(10); assert.deepEqual(r.calls.filter(c => c.method === 'delete').map(c => c.body), [{ mark_count: 7 }, { mark_count: 8 }]); assert.doesNotMatch(s.text(), /Changed piece/);
+    } finally { s.unmount(); }
+});
+test('walk 18: levels toggle/clear, comment save and reopening retains marks; unmarked remains empty', async () => {
+    const r = await workSetup(); const s = r.screen;
+    try {
+        const block = workField(s, 'Curriculum grade 1'); const buttons = () => within(block, n => n.props['aria-pressed'] !== undefined);
+        for (const button of buttons()) { click(button); await flush(); assert.equal(button.props['aria-pressed'], 'true'); click(button); await flush(); assert.equal(button.props['aria-pressed'], 'false'); }
+        click(buttons()[1]); type(within(block, n => n.tag === 'textarea')[0], 'Typed comment'); click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
+        const saved = r.calls.find(c => c.url.endsWith('/marks')).body; assert.deepEqual(saved.marks, [{ group_membership_id: 9, level: 3, comment: 'Typed comment' }]); assert.equal(saved.week_no, 12);
+        await pick(s, 'Roster'); await pick(s, 'Healthful Living'); assert.equal(workField(s, 'Comment for Practice student').value, 'Typed comment');
+        const row = s.all(n => n.props['aria-label'] === 'Marks for Practice student')[0]; assert.ok(row); assert.equal(within(row, n => n.props['aria-pressed'] === 'true').length, 1);
+    } finally { s.unmount(); }
+});
+test('work drafts: changing entry or menu line asks before discarding, staying keeps text', async () => {
+    const r = await workSetup(); const s = r.screen;
+    try {
+        type(workField(s, 'Comment for Practice student'), 'Keep this draft'); chooseOption(workField(s, 'Entry for 1st'), 2); await flush();
+        assert.match(s.text(), /Discard unsaved changes\?/); click(s.button('Keep editing')); await flush(); assert.equal(workField(s, 'Comment for Practice student').value, 'Keep this draft');
+        await pick(s, 'Roster'); assert.match(s.text(), /Discard unsaved changes\?/); click(s.button('Keep editing')); await flush(10); assert.equal(r.route.query.subject, '104');
+        chooseOption(workField(s, 'Entry for 1st'), 2); await flush(); click(s.button('Discard changes')); await flush(); assert.match(workField(s, 'Curriculum grade 1').textContent, /Focus 2/); assert.equal(workField(s, 'Comment for Practice student').value, '');
+    } finally { s.unmount(); }
+});
+test('work failed saves: 422 field words, 403/404 and network errors keep typed comments next to the entry', async () => {
+    for (const failure of [httpError(422, { errors: { 'marks.0.comment': ['Practice field refusal.'] }, message: 'Validation failed.' }), httpError(403, { message: 'Forbidden.' }), httpError(404, { message: 'Not found.' }), new Error('Network Error')]) {
+        const r = await workSetup('teacher', { write: (_m: string, u: string) => { if (u.endsWith('/marks')) throw failure; } }); const s = r.screen;
+        try { type(workField(s, 'Comment for Practice student'), 'Still typed'); const b = workField(s, 'Curriculum grade 1'); click(within(b, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10); assert.equal(workField(s, 'Comment for Practice student').value, 'Still typed'); assert.match(b.textContent, /Practice field refusal\.|Forbidden\.|Not found\.|Network Error/); } finally { s.unmount(); }
+    }
+});
+test('walk 19: copied guide wording stays visible with changed-wording date supplied by server', async () => {
+    const work: any = workFixture(); Object.assign(work.curriculum[0].entries[1], { piece_id: 70, title: 'Copied focus', detail: 'Copied assessment', standard_code: 'OLD.1', wording_changed: true, marked_against_date: '2026-10-08', marks: [{ group_membership_id: 9, level: 3, comment: 'Copied comment' }] });
+    const r = await workSetup('teacher', { work });
+    try { assert.match(r.screen.text(), /Copied focus.*OLD.1.*Copied assessment/); assert.match(r.screen.text(), /Marked against the wording of 2026-10-08/); } finally { r.screen.unmount(); }
+});
+
+test('work guards: the dependency, initial read refusal, and a late page response fail closed', async () => {
+    for (const failure of [httpError(403, { message: 'Forbidden subject.' }), httpError(404, { message: 'Subject not found.' }), new Error('Network Error')]) {
+        const r = await workSetup('teacher', { read: (url: string) => { if (url.endsWith('/work')) throw failure; } });
+        try { assert.match(r.screen.text(), /Forbidden subject\.|Subject not found\.|Check your connection/); assert.equal(r.screen.all(n => n.props['data-work-area']).length, 0); } finally { r.screen.unmount(); }
+    }
+    const off = await workSetup('teacher', { flag: false });
+    try { assert.equal(off.calls.filter(c => c.url.endsWith('/work')).length, 0); } finally { off.screen.unmount(); }
+    const pending = deferred<any>(); const r = await workSetup('teacher', { read: (url: string) => url.endsWith('/work') ? pending.promise : undefined });
+    try { await pick(r.screen, 'Roster'); pending.resolve(ok(workFixture())); await flush(10); assert.doesNotMatch(r.screen.text(), /Practice note|From the curriculum/); } finally { r.screen.unmount(); }
+});
+test('work forms: failed note/piece saves keep text and show field errors; cancelling deletion makes no write', async () => {
+    const r = await workSetup('teacher', { write: (_m: string, u: string) => {
+        if (u.endsWith('/notes')) throw httpError(422, { errors: { body: ['Practice note refusal.'] } });
+        if (u.endsWith('/pieces')) throw httpError(422, { errors: { title: ['Practice title refusal.'] } });
+    } }); const s = r.screen;
+    try {
+        click(s.button('New note')); await flush(); type(workField(s, 'Note text'), 'Typed note'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10);
+        assert.equal(workField(s, 'Note text').value, 'Typed note'); assert.match(area(s, 'notes').textContent, /Practice note refusal\./);
+        click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'Typed title'); type(workField(s, 'Piece detail'), 'Typed detail'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10);
+        assert.equal(workField(s, 'Piece title').value, 'Typed title'); assert.equal(workField(s, 'Piece detail').value, 'Typed detail'); assert.match(area(s, 'own').textContent, /Practice title refusal\./);
+        click(workField(s, 'Delete note 51')); await flush(); click(within(s.all(n => n.props['aria-label'] === 'Confirm note deletion')[0], n => n.tag === 'button' && n.textContent === 'Cancel')[0]); await flush();
+        assert.equal(r.calls.filter(c => c.method === 'delete').length, 0);
+        await pick(s, 'Roster'); assert.match(s.text(), /Discard unsaved changes\?/); click(s.button('Keep editing')); await flush(10); assert.equal(workField(s, 'Note text').value, 'Typed note');
+    } finally { s.unmount(); }
+});
+test('work saves: another grade draft survives a note or own-piece change and a mark save', async () => {
+    const r = await workSetup(); const s = r.screen;
+    try {
+        type(workField(s, 'Comment for Practice learner'), 'Other grade draft');
+        click(s.button('New note')); await flush(); type(workField(s, 'Note text'), 'Class update'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10);
+        assert.equal(workField(s, 'Comment for Practice learner').value, 'Other grade draft');
+        click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'New task'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10);
+        assert.equal(workField(s, 'Comment for Practice learner').value, 'Other grade draft');
+        type(workField(s, 'Comment for Practice student'), 'Saved grade one'); const block = workField(s, 'Curriculum grade 1'); click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
+        assert.equal(workField(s, 'Comment for Practice learner').value, 'Other grade draft');
+    } finally { s.unmount(); }
+});
+test('work transport: DELETE confirmation count declares JSON despite inherited form encoding, legacy delete has no body', async () => {
+    (globalThis as any).window.location = { href: 'https://practice.invalid/class' };
+    const { default: axios } = await import('axios');
+    const module = await loadTs('core/services/TeacherApiService.ts', {
+        axios: { default: axios }, '@/core/constants/appConfigConstants': { API_CONFIG: {}, LOCAL_STORAGE_KEYS: {} },
+        '@/core/tenancy/tenantRequests': {}, '@/core/tenancy/teacherSchoolGuard': {}, '@/core/tenancy/teacherSchoolGuardCore': {},
+    });
+    const oldHeader = axios.defaults.headers.common['Content-Type']; const requests: any[] = [];
+    try {
+        axios.defaults.headers.common['Content-Type'] = 'application/x-www-form-urlencoded';
+        module.default.client = axios.create({ adapter: async (config: any) => { requests.push(config); return { status: 200, data: {}, headers: {}, statusText: 'OK', config }; } });
+        await module.default.delete('/api/teacher/practice/pieces/41', { mark_count: 7 });
+        assert.equal(requests[0].headers.get('Content-Type'), 'application/json'); assert.deepEqual(JSON.parse(requests[0].data), { mark_count: 7 });
+        await module.default.delete('/api/teacher/practice/notes/51'); assert.equal(requests[1].data, undefined);
+    } finally { axios.defaults.headers.common['Content-Type'] = oldHeader; }
+});
+
+test('work drafts: back and phone menu preserve drafts on cancel; prompt supports Tab and Escape', async () => {
+    const r = await workSetup('teacher', { width: 390 }); const s = r.screen;
+    try {
+        const comment = workField(s, 'Comment for Practice student'); comment.focus(); type(comment, 'Phone draft');
+        click(s.button('Class menu')); await flush(); await pick(s, 'Roster');
+        const dialog = s.all(n => n.props.role === 'alertdialog')[0]; assert.ok(dialog);
+        assert.equal(doc.activeElement, s.button('Keep editing'));
+        let prevented = 0; dialog.props.onKeydown({ key: 'Tab', preventDefault() { prevented++; } });
+        assert.equal(doc.activeElement, s.button('Discard changes')); assert.equal(prevented, 1);
+        dialog.props.onKeydown({ key: 'Escape', preventDefault() {} }); await flush(10);
+        assert.equal(workField(s, 'Comment for Practice student').value, 'Phone draft'); assert.equal(r.route.query.subject, '104');
+        // An address change from browser history uses the same guard, not only menu clicks.
+        await r.router.push({ query: { subject: '102' } }); await flush(10); assert.match(s.text(), /Discard unsaved changes\?/);
+        click(s.button('Keep editing')); await flush(10); assert.equal(r.route.query.subject, '104'); assert.equal(workField(s, 'Comment for Practice student').value, 'Phone draft');
+    } finally { s.unmount(); }
+});
+test('work clears: saving empty marks removes a row; an own piece without marks confirms in plain words', async () => {
+    const work: any = workFixture(); work.curriculum[0].entries[1].piece_id = 70;
+    work.curriculum[0].entries[1].marks = [{ group_membership_id: 9, level: 3, comment: 'Old comment' }];
+    const r = await workSetup('teacher', { work }); const s = r.screen;
+    try {
+        const block = workField(s, 'Curriculum grade 1'); click(within(block, n => n.props['aria-pressed'] === 'true')[0]); type(workField(s, 'Comment for Practice student'), '');
+        click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
+        assert.deepEqual(r.calls.find(c => c.url.endsWith('/marks')).body.marks, [{ group_membership_id: 9, level: null, comment: null }]); assert.equal(work.curriculum[0].entries[1].marks.length, 0);
+        click(workField(s, 'Delete piece 41')); await flush(); assert.match(s.text(), /Delete this piece\?/); assert.doesNotMatch(s.text(), /and its 0 marks/);
+        click(s.button('Delete piece')); await flush(10); assert.deepEqual(r.calls.find(c => c.method === 'delete').body, { mark_count: 0 });
+    } finally { s.unmount(); }
+});
+test('work refresh failures: a saved note/piece reports list failure locally without discarding another draft', async () => {
+    let failNotes = false; let failPieces = false;
+    const r = await workSetup('teacher', { read: (u: string) => {
+        if (failNotes && u.endsWith('/notes')) throw new Error('Offline notes');
+        if (failPieces && u.endsWith('/work')) throw new Error('Offline pieces');
+    } }); const s = r.screen;
+    try {
+        type(workField(s, 'Comment for Practice learner'), 'Preserved draft');
+        click(s.button('New note')); await flush(); type(workField(s, 'Note text'), 'Saved note'); failNotes = true; submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10);
+        assert.match(area(s, 'notes').textContent, /note was changed.*notes could not be reloaded/); assert.equal(workField(s, 'Comment for Practice learner').value, 'Preserved draft');
+        failNotes = false; click(areaButton(s, 'notes', 'Reload list')); await flush(10); assert.match(area(s, 'notes').textContent, /Saved note/);
+        click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'Saved task'); failPieces = true; submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10);
+        assert.match(area(s, 'own').textContent, /piece was changed.*pieces could not be reloaded/); assert.equal(workField(s, 'Comment for Practice learner').value, 'Preserved draft');
+    } finally { s.unmount(); }
 });

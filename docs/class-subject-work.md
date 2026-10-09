@@ -82,3 +82,13 @@ Each curriculum block corresponds to one current grade key, contains only that g
 Read queries are bulk operations, independent of roster and guide size. The cold teacher HTTP page count is pinned at 18 for 1 and 30 current students, 1 and 40 guide entries, and with a saved piece. The SQL list is recorded in `artifacts/subject-work-query-count.json`. This includes the existing authentication/class/subject fences as well as the page reads; user relation caches can reduce the count on later requests in the same test process.
 
 Local evidence and limitations are in `artifacts/subject-work-server-report.md`. MySQL grammar compilation is checked without connecting; actual MySQL contention and production operation require separate verification.
+
+## Subject screens (Build B)
+
+When bootstrap has both `class_subjects_enabled: true` and `class_subject_work_enabled: true`, teacher and office subject pages render the four work blocks below the existing tool. Work OFF keeps the existing no-tool sentence and sends no new bootstrap/page requests. `resources/vue-app/views/teacher/subject/` contains the shared components; office uses `readonly` and the admin GET routes only.
+
+Teachers choose the server's numbered curriculum entries for each grade, open linked plans or own pieces, and save one entry's levels/comments together. Pressing a selected level clears it. Drafts remain until saved or explicitly discarded when changing entry or class line. Note/piece forms preserve text on failed saves. Piece deletion includes the server count and asks again after a 409 count change. Family sharing is not offered.
+
+The existing work payload preserves copied wording but lacks its copy date and a flag comparing it with current guide words. Build B can render optional `wording_changed` and `marked_against_date` fields if supplied; these are a pending read-contract addition, not fields currently served by Build A. The dated changed-wording notice therefore remains blocked on the contract clarification; no date is guessed.
+
+Local evidence and limitations: `artifacts/subject-work-screens-report.md`. Mounted tests do not measure actual phone overflow or touch-target geometry.

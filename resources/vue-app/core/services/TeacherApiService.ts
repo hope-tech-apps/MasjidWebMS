@@ -130,8 +130,9 @@ class TeacherApiService {
         return TeacherApiService.instance().put(url, data, TeacherApiService.JSON_WRITE);
     }
 
-    public static delete(url: string): Promise<AxiosResponse> {
-        return TeacherApiService.instance().delete(url);
+    public static delete(url: string, data?: unknown): Promise<AxiosResponse> {
+        return data === undefined ? TeacherApiService.instance().delete(url)
+            : TeacherApiService.instance().delete(url, { ...TeacherApiService.JSON_WRITE, data });
     }
 
     /**

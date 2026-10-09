@@ -52,6 +52,7 @@ const line = (tab: string, label: string): ClassChoice => ({ key: `tab:${tab}`, 
 export function useClassSubjects<T extends string>(options: {
     realm: 'teacher' | 'office'; group: Ref<ClassPayload | null>; base: Ref<string>; api: SubjectReader;
     reconcileSaved?: (operation: string) => void;
+    beforeLeave?: () => Promise<boolean>;
     activeTab: Ref<T>; activate: (tab: string, alphabet: string | null) => void;
 }) {
     const route = useRoute();
@@ -94,8 +95,20 @@ export function useClassSubjects<T extends string>(options: {
         await router.replace({ query });
         if (alive && enabled.value && route.query.tab === 'roster' && route.query.subject === undefined) notice.value = message;
     };
+    let acceptedQuery: typeof route.query | null = null;
     const applyQuery = async () => {
+        // A cancelled address change restores this query without remounting its drafts.
+        if (subject.value && acceptedQuery && JSON.stringify(route.query) === JSON.stringify(acceptedQuery)) return;
         const token = ++generation;
+        if (subject.value && acceptedQuery && String(route.query.subject ?? '') !== String(subject.value.id) && options.beforeLeave) {
+            const previous = { ...acceptedQuery };
+            if (!await options.beforeLeave()) {
+                if (alive && token === generation) await router.replace({ query: previous });
+                return;
+            }
+            if (!alive || token !== generation) return;
+        }
+        acceptedQuery = { ...route.query };
         if (!enabled.value || !alive) return;
         busy.value = false;
         notice.value = '';

@@ -369,3 +369,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Partial saves affect submitted students only, following existing gradebook bulk-save behaviour. No client implementation in this build.
 - Existing class subject writers and roster writers use the organisation/class mutex order; work writes use that order before point-locking subject/student rows. MySQL runtime contention remains unchecked locally.
 - The caller commits and separately reviews any deployment/capability change. Output path was unspecified; use artifacts/subject-work-server-report.md.
+
+## Class subject work Build B — 2026-10-09
+- Report path is artifacts/subject-work-screens-report.md because the brief gives no output filename.
+- Pending scope clarification, not assumed approval: adding snapshot date and changed-wording fields to the Build A read contract. Existing payload cannot support the requested dated warning. New UI's optional-field test is synthetic, not a verified current server payload.
+- 390/320 harness variants prove mounting/events and server-driven grade separation, not CSS dimensions. A real-browser walk is still required.
