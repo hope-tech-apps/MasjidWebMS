@@ -144,6 +144,8 @@ class SchoolCalendarConfigurationController extends Controller
     /** Replace the submitted draft under the organisation/year mutex, retaining filed-card links by ID. */
     private function saveTerms(SchoolYear $year, array $data, array $terms): void
     {
+        // The request rule already demands a list; the positions below index into it.
+        $terms = array_values($terms);
         $existing = $year->terms()->get()->keyBy('id');
         $errors = [];
         foreach ($terms as $i => $term) {

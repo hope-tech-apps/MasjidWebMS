@@ -1,0 +1,11 @@
+[
+    "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+    "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+    "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+    "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+    "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+    "select \"report_cards\".*, (select count(*) from \"report_card_marks\" where \"report_cards\".\"id\" = \"report_card_marks\".\"report_card_id\" and \"report_card_marks\".\"masjid_id\" = ?) as \"marks_count\", (select count(*) from \"report_card_marks\" where \"report_cards\".\"id\" = \"report_card_marks\".\"report_card_id\" and \"level\" is not null and \"report_card_marks\".\"masjid_id\" = ?) as \"assessed_count\" from \"report_cards\" where \"group_id\" = ? and \"school_year\" = ? and \"term\" = ? and \"type\" = ? and \"report_cards\".\"masjid_id\" = ?",
+    "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and (\"left_on\" is null or 0 = 1) and \"group_memberships\".\"masjid_id\" = ?",
+    "select * from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+    "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+]

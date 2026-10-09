@@ -154,3 +154,12 @@ it('changes year bounds and swaps term numbers without losing IDs or filed cards
     expect($this->year->fresh()->getRawOriginal())->toBe($beforeYear);
     expect($this->card->fresh()->school_term_id)->toBe($first->id);
 });
+
+it('refuses a term collection that is not a plain list instead of failing', function (array $terms) {
+    $response = $this->putJson($this->office.'/years/'.$this->year->id, $this->yearBody + ['terms' => $terms])->assertStatus(422);
+    expect($response->json('data'))->toHaveKey('terms');
+    expect(SchoolTerm::count())->toBe(0);
+})->with([
+    'named key' => [['autumn' => ['name' => 'Autumn', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-16', 'position' => 1]]],
+    'sparse keys' => [[0 => ['name' => 'Autumn', 'starts_on' => '2026-10-12', 'ends_on' => '2026-10-16', 'position' => 1], 5 => ['name' => 'Winter', 'starts_on' => '2026-10-19', 'ends_on' => '2026-10-23', 'position' => 2]]],
+]);

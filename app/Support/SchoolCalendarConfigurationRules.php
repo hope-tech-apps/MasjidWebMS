@@ -23,7 +23,7 @@ final class SchoolCalendarConfigurationRules
             'meeting_weekdays' => ['required', 'array', 'min:1', 'max:7'],
             'meeting_weekdays.*' => ['required', 'integer', 'between:0,6', 'distinct'],
             'term_system' => ['sometimes', 'nullable', 'in:quarters,semesters,trimesters'],
-            'terms' => ['sometimes', 'array', 'max:255'],
+            'terms' => ['sometimes', 'array', 'list', 'max:255'],
             'terms.*.id' => ['sometimes', 'integer', 'min:1', 'distinct'],
             'terms.*.name' => ['required', 'string', 'max:80'],
             'terms.*.starts_on' => ['required', 'date_format:Y-m-d'],

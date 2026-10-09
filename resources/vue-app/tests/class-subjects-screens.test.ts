@@ -1457,3 +1457,15 @@ for (const flag of [false,true]) for (const calendar of [false,true]) test(`cale
         if (calendar) assert.deepEqual(yearOptions(), ['2028-2029','2026-2027','2024-2025']);
     } finally { screen.unmount(); }
 });
+
+test('calendar browser: the year the Reports list is using is always offered, even outside the school years', async () => {
+    const { screen } = await setup('teacher', { flag: false, read: (url: string) => {
+        if (url.includes('/report-cards?')) return ok({ period: { type: 'report_card', school_year: '2026-2027', term: 2 }, students: [student], school_years: ['2026-2026'] });
+        return undefined;
+    } });
+    try {
+        click(exactButton(screen, 'More')); await flush(); click(exactButton(screen, 'Reports')); await flush(10);
+        const select = screen.all((n: Node) => n.tag === 'select' && n.children.some((c: Node) => c.textContent === '2026-2026'))[0];
+        assert.deepEqual(select.children.filter((n: Node) => n.tag === 'option').map((n: Node) => n.textContent), ['2026-2027', '2026-2026']);
+    } finally { screen.unmount(); }
+});

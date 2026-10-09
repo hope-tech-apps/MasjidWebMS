@@ -6525,7 +6525,8 @@ const reportSchoolYears = ref<string[] | null>(null);
 const openedReportYear = ref('');
 watch(base, () => { openedReportYear.value = ''; reportSchoolYears.value = null; });
 const schoolYearOptions = computed<string[]>(() => {
-    if (reportSchoolYears.value !== null) return [...new Set([...reportSchoolYears.value, ...(openedReportYear.value ? [openedReportYear.value] : [])])].sort((a,b) => b.localeCompare(a));
+    // The period the list is showing is always offered, or the select would sit blank over a year it is in fact using.
+    if (reportSchoolYears.value !== null) return [...new Set([...reportSchoolYears.value, ...(reportPeriod.value?.school_year ? [reportPeriod.value.school_year] : []), ...(openedReportYear.value ? [openedReportYear.value] : [])])].sort((a,b) => b.localeCompare(a));
     const current = reportPeriod.value?.school_year ?? reportYear.value;
     const start = parseInt(String(current).slice(0, 4), 10);
     if (!Number.isFinite(start)) return current ? [current] : [];

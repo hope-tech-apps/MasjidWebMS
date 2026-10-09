@@ -77,6 +77,7 @@ test('dated terms add, edit and remove locally until one year save; Cancel disca
         type(s.all(n => n.tag === 'input').find(n => n.props.id === 'schoolTermName')!, 'Autumn revised'); await flush();
         click(s.button('Save term')); await flush();
         assert.equal(s.writes.length, 0);
+        assert.match(s.text(), /Autumn revised/);
         click(s.button('Cancel')); await flush();
         click(s.button('Edit year')); await flush();
         assert.match(s.text(), /Filed term/); assert.doesNotMatch(s.text(), /Autumn revised/);
@@ -84,6 +85,24 @@ test('dated terms add, edit and remove locally until one year save; Cancel disca
         submit(s.all(n => n.tag === 'form')[0]); await flush();
         assert.equal(s.writes.length, 1); assert.equal(s.writes[0].url, '/api/admin/masjids/1/school-calendar/years/7');
         assert.deepEqual(s.writes[0].body.terms, []);
+    } finally { s.unmount(); }
+});
+
+test('an edited term is kept in the draft and sent with the year save', async () => {
+    const s = await screen(true, { terms: [{ id: 9, name: 'Filed term', starts_on: '2026-10-12', ends_on: '2026-10-16', position: 1, report_card_count: 0 }] });
+    try {
+        click(s.button('Edit year')); await flush();
+        click(s.button('Edit term')); await flush();
+        type(s.all(n => n.tag === 'input').find(n => n.props.id === 'schoolTermName')!, 'Renamed term'); await flush();
+        click(s.button('Save term')); await flush();
+        assert.equal(s.writes.length, 0);
+        assert.match(s.text(), /Renamed term/);
+        submit(s.all(n => n.tag === 'form')[0]); await flush();
+        assert.equal(s.writes.length, 1);
+        const sent = s.writes[0].body.terms;
+        assert.equal(sent.length, 1);
+        assert.equal(sent[0].id, 9); assert.equal(sent[0].name, 'Renamed term');
+        assert.equal(sent[0].starts_on, '2026-10-12'); assert.equal(sent[0].ends_on, '2026-10-16'); assert.equal(Number(sent[0].position), 1);
     } finally { s.unmount(); }
 });
 

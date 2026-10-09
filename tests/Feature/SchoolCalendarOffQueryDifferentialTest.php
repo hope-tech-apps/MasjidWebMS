@@ -17,7 +17,7 @@ class SchoolCalendarOffQueryDifferentialTest extends TestCase
 
     public static function requests(): array
     {
-        $shapes = ['get0', 'get1', 'get3', 'year-create', 'year-update', 'year-delete', 'closure-create', 'closure-delete', 'closure-update', 'card-prepare', 'card-save', 'capabilities'];
+        $shapes = ['get0', 'get1', 'get3', 'year-create', 'year-update', 'year-delete', 'closure-create', 'closure-delete', 'closure-update', 'card-prepare', 'card-save', 'card-list', 'capabilities'];
         return array_combine($shapes, array_map(fn ($shape) => [$shape], $shapes));
     }
 
@@ -64,6 +64,7 @@ class SchoolCalendarOffQueryDifferentialTest extends TestCase
             'closure-delete' => $this->deleteJson($url.'/closures/'.$closure->id),
             'closure-update' => $this->putJson($url.'/closures/'.$closure->id, ['reason' => 'Holiday']),
             'card-prepare' => $this->getJson($url.'?school_year=2026-2027&term=2'),
+            'card-list' => $this->getJson('/api/teacher/masjids/'.$org->id.'/groups/'.$group->id.'/report-cards?school_year=2026-2027&term=2'),
             'card-save' => $this->putJson($url, ['school_year' => '2026-2027', 'term' => 2, 'marks' => [['id' => $mark->id, 'level' => 3, 'comment' => 'Saved mark']], 'teacher_comment' => 'Saved']),
         };
         $sql = array_column(DB::getQueryLog(), 'query');
@@ -79,6 +80,8 @@ class SchoolCalendarOffQueryDifferentialTest extends TestCase
         $lookupAt = match ($shape) {
             'year-create', 'year-update', 'year-delete', 'closure-create' => 0,
             'card-prepare', 'card-save' => 7,
+            // The list asks whether to offer the school's own years; nothing has loaded the school before it.
+            'card-list' => 8,
             // Main's own class-subject dispatch reads the switches before it loads the school here.
             'capabilities' => 0,
             default => null, // Calendar response reuses main's own school read.
