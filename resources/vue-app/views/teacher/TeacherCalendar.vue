@@ -88,7 +88,7 @@
                     :collapsible="selectedYear.meeting_weekdays !== undefined"
                     :today="calendar.today"
                     :locale="LOCALE"
-                    :labels="{ today: 'Today', noSchool: 'No school', schoolDay: 'School day', schoolDays: 'school days', withNoSchool: 'with no school', empty: 'No school days are listed for this year.' }"
+                    :labels="{ today: 'Today', noSchool: 'No school', schoolDay: 'School day', schoolDays: 'School days', withNoSchool: 'No school', empty: 'No school days are listed for this year.' }"
                 />
             </template>
         </template>

@@ -53,7 +53,7 @@ for (const realm of ['teacher','family'] as const) {
             assert.match(s.text(), /Monday.*Tuesday.*Wednesday.*Thursday.*Friday/);
             assert.match(s.text(), /Terms/); assert.match(s.text(), /Autumn/);
             assert.match(s.text(), /No school/); assert.match(s.text(), /Staff day/);
-            assert.match(s.text(), /October 2026 · 4 school days, 1 with no school/);
+            assert.match(s.text(), /October 2026 · School days: 4 · No school: 1/);
             assert.equal(s.all(n => n.props['aria-expanded'] !== undefined).length, 1);
             assert.equal(s.all(n => n.props['aria-expanded'] !== undefined)[0].props['aria-expanded'], 'false');
             assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
@@ -71,7 +71,7 @@ for (const realm of ['teacher','family'] as const) {
                 assert.match(s.text(), realm === 'teacher' ? /Meets every Sunday/ : /Classes meet every Sunday/);
                 if (on) {
                     assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
-                    assert.match(s.text(), /October 2026 · 2 school days, 1 with no school/);
+                    assert.match(s.text(), /October 2026 · School days: 2 · No school: 1/);
                     click(s.button('October 2026')); await flush();
                 }
                 assert.equal(s.all(n => n.tag === 'li' && String(n.props.class).includes('list-group-item') && n.children.some((c: any) => String(c.props?.class).includes('day-date'))).length, 3);
@@ -277,8 +277,8 @@ for (const realm of ['teacher','family'] as const) test(`${realm} months open in
     raw.years.push({ ...raw.years[0], id: 2, label: 'Next year', first_day: '2027-10-11', last_day: '2027-10-12', meeting_days: ['2027-10-11','2027-10-12'], closures: [], terms: [] });
     const s = await screen(realm, true, 'en', false, true, raw);
     try {
-        assert.match(s.text(), /October 2026 · 1 school day, 1 with no school/);
-        assert.match(s.text(), /November 2026 · 1 school day, 0 with no school/);
+        assert.match(s.text(), /October 2026 · School days: 1 · No school: 1/);
+        assert.match(s.text(), /November 2026 · School days: 1 · No school: 0/);
         assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 0);
         click(s.button('November 2026')); await flush();
         assert.equal(s.all(n => String(n.props.class).includes('day-date')).length, 1);

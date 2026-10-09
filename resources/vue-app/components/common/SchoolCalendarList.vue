@@ -1,8 +1,9 @@
 <template>
     <div>
         <div v-for="month in months" :key="month.key" class="mb-4">
-            <button v-if="collapsible" type="button" class="btn btn-light w-100 month-toggle" :aria-expanded="expandedMonths[month.key] ? 'true' : 'false'" @click="expandedMonths[month.key] = !expandedMonths[month.key]">
-                {{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }} · {{ schoolMonthCounts(month).open }} {{ schoolMonthCounts(month).open === 1 ? labels.schoolDay.toLocaleLowerCase(locale) : labels.schoolDays }}, {{ schoolMonthCounts(month).closed }} {{ labels.withNoSchool }}
+            <button v-if="collapsible" type="button" class="btn w-100 month-toggle" :aria-expanded="expandedMonths[month.key] ? 'true' : 'false'" @click="expandedMonths[month.key] = !expandedMonths[month.key]">
+                <span>{{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }} · {{ labels.schoolDays }}: {{ schoolMonthCounts(month).open }} · {{ labels.withNoSchool }}: {{ schoolMonthCounts(month).closed }}</span>
+                <span class="month-arrow" aria-hidden="true"></span>
             </button>
             <h3 v-else class="h6 text-muted fw-semibold mb-2">{{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }}</h3>
             <ul v-if="!collapsible || expandedMonths[month.key]" class="list-group" :class="{ 'mt-2': collapsible }">
@@ -67,7 +68,23 @@ watch(() => props.days, () => { expandedMonths.value = {}; });
 </script>
 
 <style scoped>
-.month-toggle { text-align: start; white-space: normal; overflow-wrap: anywhere; min-height: 44px; }
+/* Drawn as a bordered box with an arrow that turns, so it reads as something to
+   press on the family page's tinted background as well as the teacher's white one.
+   Label first, then the number: a count before a noun cannot be grammatical in
+   every language the family portal speaks. */
+.month-toggle {
+    display: flex; align-items: center; gap: 0.75rem;
+    text-align: start; white-space: normal; overflow-wrap: anywhere; min-height: 44px;
+    background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); color: var(--bs-body-color);
+}
+.month-toggle:hover, .month-toggle:focus-visible { background: var(--bs-tertiary-bg); border-color: var(--bs-secondary-color); }
+.month-arrow {
+    flex: none; margin-inline-start: auto; width: 0.55rem; height: 0.55rem;
+    border-inline-end: 2px solid currentColor; border-block-end: 2px solid currentColor;
+    transform: rotate(45deg); transition: transform 0.15s ease;
+}
+.month-toggle[aria-expanded="true"] .month-arrow { transform: rotate(-135deg); }
+@media (prefers-reduced-motion: reduce) { .month-arrow { transition: none; } }
 .push-end { margin-inline-start: auto; }
 
 /* A day that has passed stays readable — it is dimmed by colour, not opacity,
