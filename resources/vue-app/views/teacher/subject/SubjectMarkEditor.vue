@@ -1,9 +1,10 @@
 <template>
     <div class="subject-marks">
-        <p class="fw-semibold mb-1" dir="auto">{{ heading ?? shown.title }}</p>
+        <p class="fw-semibold mb-1" dir="auto">{{ heading ?? pieceTitle(shown) }}</p>
         <p v-if="shown.standard_code" class="small mb-1" dir="auto">{{ shown.standard_code }}</p>
         <p v-if="shown.detail" class="small" dir="auto">{{ shown.detail }}</p>
-        <p v-if="shown.wording_changed && shown.marked_against_date" class="small text-muted">Marked against the wording of {{ shown.marked_against_date }}</p>
+        <p v-if="shown.wording_changed && shown.marked_against_date" class="small text-muted">Marked against the wording of {{ shown.marked_against_date }}. The guide has since changed.</p>
+        <p v-if="shown.moved_to" class="small text-muted">This lesson plan is now under {{ shown.moved_to }}. Its marks stay here.</p>
         <div v-for="(student, index) in students" :key="student.id" class="mark-row" role="group" :aria-label="`Marks for ${student.name}`">
             <strong dir="auto">{{ student.name }}</strong>
             <template v-if="readonly">
@@ -41,13 +42,16 @@
 </template>
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useId, watch } from 'vue';
-import { workError, workFieldErrors, type WorkApi, type WorkLevel, type WorkMark, type WorkPiece, type WorkStudent } from './subjectWork';
-const props = defineProps<{ piece: WorkPiece; students: WorkStudent[]; levels: WorkLevel[]; base: string; api: WorkApi; readonly?: boolean; heading?: string }>();
+import { pieceTitle, workError, workFieldErrors, type WorkApi, type WorkLevel, type WorkMark, type WorkPiece, type WorkStudent } from './subjectWork';
+const props = defineProps<{ piece: WorkPiece; students: WorkStudent[]; levels: WorkLevel[]; base: string; api: WorkApi; readonly?: boolean; heading?: string;
+    /** Called with what the server accepted, even if this editor has already been left: an emit from an unmounted component goes nowhere. */
+    accept?: (piece: WorkPiece) => void }>();
 const emit = defineEmits<{ dirty: [value: boolean]; saved: [piece: WorkPiece] }>();
 const makeDraft = (piece = props.piece) => props.students.map(student => {
     const mark = piece.marks.find(m => m.group_membership_id === student.id);
     return { group_membership_id: student.id, level: mark?.level ?? null, comment: mark?.comment ?? '', updated_at: mark?.updated_at ?? null };
 });
+const publish = (piece: WorkPiece) => { if (props.accept) props.accept(piece); else emit('saved', piece); };
 const draft = ref<WorkMark[]>(makeDraft());
 const baseline = ref<WorkMark[]>(makeDraft());
 const shown = ref({ ...props.piece });
@@ -79,7 +83,7 @@ const reload = async () => {
         if (!alive) return;
         if (!saved) { error.value = 'This piece could not be reloaded.'; return; }
         shown.value = saved; draft.value = makeDraft(saved); baseline.value = makeDraft(saved);
-        fieldErrors.value = {}; conflicts.value = []; emit('saved', saved);
+        fieldErrors.value = {}; conflicts.value = []; publish(saved);
     } catch (failure) { if (alive) error.value = workError(failure, 'These marks could not be reloaded.'); }
     finally { if (alive) saving.value = false; }
 };
@@ -90,7 +94,7 @@ const refreshWording = async (accepted: WorkPiece, generation: number) => {
         // This read refreshes wording only. It must never overwrite a subsequent save or typing.
         shown.value = { ...accepted, title: saved.title, detail: saved.detail, standard_code: saved.standard_code,
             wording_changed: saved.wording_changed, marked_against_date: saved.marked_against_date };
-        emit('saved', shown.value);
+        publish(shown.value);
     } catch (failure) { if (alive && generation === saveGeneration) error.value = workError(failure, 'Marks saved, but the saved wording could not be reloaded.'); }
 };
 const save = async () => {
@@ -103,7 +107,7 @@ const save = async () => {
         ? { guide_subject: piece.guide_subject, grade_label: piece.grade_label, week_no: piece.week_no } : { lesson_plan_id: piece.lesson_plan_id };
     try {
         const response = await props.api.put(`${props.base}/marks`, { source: piece.source, ...identity, marks: sent });
-        if (!alive) return;
+        // No early return when the teacher has already left this entry: the page must still learn what was saved.
         const versions: Pick<WorkMark, 'group_membership_id' | 'updated_at'>[] = response.data.data.marks ?? [];
         const merged = new Map(piece.marks.map(m => [m.group_membership_id, m]));
         let count = piece.mark_count;
@@ -119,7 +123,9 @@ const save = async () => {
         shown.value = { ...piece, piece_id: response.data.data.piece_id, marks: [...merged.values()], mark_count: count };
         baseline.value = draft.value.map(m => ({ ...m }));
         // Publish the accepted values and server versions before any read can yield or unmount us.
-        emit('saved', shown.value); emit('dirty', false); notice.value = 'Saved.';
+        publish(shown.value);
+        if (!alive) return;
+        emit('dirty', false); notice.value = 'Saved.';
         const accepted = shown.value;
         void refreshWording(accepted, generation);
     } catch (failure: any) {
@@ -143,7 +149,9 @@ onBeforeUnmount(() => { alive = false; emit('dirty', false); });
 .mark-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 2fr); gap: .75rem; align-items: center; padding: .75rem 0; border-bottom: 1px solid #dee2e6; }
 .mark-row > div { min-width: 0; }
 .mark-conflict { grid-column: 1 / -1; }
-.mark-levels { display: flex; gap: .25rem; }
+.mark-levels { display: flex; gap: .5rem; }
+/* Filled when chosen, as the report card's levels are: the theme's outline button only darkens its edge. */
+.mark-levels button[aria-pressed="true"] { background-color: var(--bs-primary, #005c2a); border-color: var(--bs-primary, #005c2a); color: #fff; font-weight: 700; }
 .mark-levels button { min-width: 44px; min-height: 44px; padding: .4rem; }
 .mark-comment { min-width: 0; width: 100%; white-space: pre-wrap; }
 @media (max-width: 767px) {

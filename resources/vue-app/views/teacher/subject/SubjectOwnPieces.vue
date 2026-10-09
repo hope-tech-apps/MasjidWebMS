@@ -22,11 +22,11 @@
             <p class="piece-detail mb-1" dir="auto">{{ piece.detail }}</p>
             <p class="small text-muted">{{ piece.mark_count }} {{ piece.mark_count === 1 ? 'student marked' : 'students marked' }}</p>
             <template v-if="!readonly">
-                <button type="button" class="btn btn-outline-secondary btn-sm me-2" :disabled="busy" :aria-label="`Edit piece ${piece.piece_id}`" @click="edit(piece)">Edit</button>
-                <button type="button" class="btn btn-outline-danger btn-sm" :disabled="busy" :aria-label="`Delete piece ${piece.piece_id}`" @click="askDelete(piece)">Delete</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm me-2" :disabled="busy" :aria-label="`Edit ${piece.title}`" @click="edit(piece)">Edit</button>
+                <button type="button" class="btn btn-outline-danger btn-sm" :disabled="busy" :aria-label="`Delete ${piece.title}`" @click="askDelete(piece)">Delete</button>
             </template>
             <SubjectMarkEditor v-if="opened === piece.piece_id" :piece="piece" :students="students" :levels="levels" :base="base" :api="api" :readonly="readonly"
-                @dirty="marksDirty = $event" @saved="Object.assign(piece, $event)" />
+                @dirty="marksDirty = $event" :accept="accepted => Object.assign(piece, accepted)" />
         </article>
         <div v-if="removing && !readonly" class="border rounded p-3 mt-2" role="group" aria-label="Confirm piece deletion">
             <p>{{ deleteWords }}</p>
@@ -47,7 +47,7 @@ const baseline = ref(''); const error = ref(''); const busy = ref(false); const 
 const marksDirty = ref(false); const removing = ref<{ id: number; count: number } | null>(null); let alive = true;
 const deleteWords = computed(() => {
     const correction = form.value?.id === removing.value?.id && formDirty.value;
-    const parts = [removing.value?.count ? `its ${removing.value.count} marks` : '', correction ? 'the correction you were typing' : ''].filter(Boolean);
+    const parts = [removing.value?.count ? `its ${removing.value.count} ${removing.value.count === 1 ? 'mark' : 'marks'}` : '', correction ? 'the correction you were typing' : ''].filter(Boolean);
     return `Delete this piece${parts.length ? ` and ${parts.join(' and ')}` : ''}?`;
 });
 const formDirty = computed(() => form.value !== null && JSON.stringify(form.value) !== baseline.value);

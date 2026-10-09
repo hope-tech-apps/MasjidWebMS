@@ -16,9 +16,9 @@
                 <h3 class="h5">From lesson plans</h3>
                 <p v-if="!page.lesson_plans.length" class="text-muted small">No lesson plans for this subject yet.</p>
                 <article v-for="(plan, index) in page.lesson_plans" :key="plan.lesson_plan_id ? `plan:${plan.lesson_plan_id}` : `piece:${plan.piece_id}`" class="border-bottom py-2">
-                    <button type="button" class="btn btn-link text-start px-0" :aria-expanded="openedPlan === index ? 'true' : 'false'" @click="openPlan(index)">{{ plan.title }}</button>
+                    <button type="button" class="btn btn-link text-start px-0" :aria-expanded="openedPlan === index ? 'true' : 'false'" @click="openPlan(index)">{{ pieceTitle(plan) }}</button>
                     <SubjectMarkEditor v-if="openedPlan === index" :piece="plan" :students="page.students" :levels="page.levels"
-                        :base="base" :api="api" :readonly="readonly" @dirty="dirtyParts.plan = $event" @saved="Object.assign(plan, $event)" />
+                        :base="base" :api="api" :readonly="readonly" @dirty="dirtyParts.plan = $event" :accept="accepted => Object.assign(plan, accepted)" />
                 </article>
             </section>
             <SubjectOwnPieces :pieces="page.own_pieces" :students="page.students" :levels="page.levels" :base="base" :api="api" :readonly="readonly"
@@ -42,7 +42,7 @@ import SubjectCurriculumBlock from './SubjectCurriculumBlock.vue';
 import SubjectMarkEditor from './SubjectMarkEditor.vue';
 import SubjectOwnPieces from './SubjectOwnPieces.vue';
 import SubjectNotes from './SubjectNotes.vue';
-import { workError, type WorkApi, type WorkPage } from './subjectWork';
+import { pieceTitle, workError, type WorkApi, type WorkPage } from './subjectWork';
 const props = defineProps<{ base: string; api: WorkApi; readonly?: boolean }>();
 const page = ref<WorkPage | null>(null); const loading = ref(false); const error = ref('');
 const notesError = ref(''); const piecesError = ref(''); let notesGeneration = 0; let piecesGeneration = 0;

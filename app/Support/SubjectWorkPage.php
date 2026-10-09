@@ -127,8 +127,18 @@ final class SubjectWorkPage
         // A marked plan stays on the subject it was marked under: its piece is listed even after the
         // plan is deleted (no plan id) or linked to another subject (a plan id this subject no longer lists).
         $listed = $plans->pluck('id')->all();
+        $elsewhere = $pieces->where('source', 'plan')->whereNotNull('lesson_plan_id')->whereNotIn('lesson_plan_id', $listed);
+        // One extra read, and only when a marked plan now sits under another subject: say where.
+        $movedTo = collect();
+        if ($elsewhere->isNotEmpty()) {
+            $subjectOf = LessonPlan::where('group_id', $group->id)->whereIn('id', $elsewhere->pluck('lesson_plan_id'))->pluck('class_subject_id', 'id');
+            $names = ClassSubject::where('group_id', $group->id)->whereIn('id', $subjectOf->filter()->unique())->pluck('name', 'id');
+            $movedTo = $subjectOf->map(fn ($id) => $id === null ? null : $names->get($id));
+        }
         foreach ($pieces->where('source', 'plan') as $piece) {
-            if ($piece->lesson_plan_id === null || ! in_array($piece->lesson_plan_id, $listed)) $planData->push($pieceData($piece));
+            if ($piece->lesson_plan_id === null || ! in_array($piece->lesson_plan_id, $listed)) {
+                $planData->push($pieceData($piece) + ['moved_to' => $piece->lesson_plan_id === null ? null : $movedTo->get($piece->lesson_plan_id)]);
+            }
         }
         $planData = $planData->sortByDesc(fn ($p) => substr($p['title'], 0, 10))->values(); // Title begins with the copied ISO date, including deleted plans.
 

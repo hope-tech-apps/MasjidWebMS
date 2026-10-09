@@ -34,8 +34,8 @@
             <p class="note-text mb-1" dir="auto">{{ note.body }}</p>
             <p class="small text-muted">{{ note.author_name }} · <time :datetime="note.created_at">{{ formatDate(note.created_at) }}</time></p>
             <template v-if="!readonly">
-                <button type="button" class="btn btn-outline-secondary btn-sm me-2" :aria-label="`Edit note ${note.id}`" :disabled="busy" @click="start(note)">Edit</button>
-                <button type="button" class="btn btn-outline-danger btn-sm" :aria-label="`Delete note ${note.id}`" :disabled="busy" @click="removeId = note.id; error = ''">Delete</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm me-2" :aria-label="`Edit note: ${firstWords(note.body)}`" :disabled="busy" @click="start(note)">Edit</button>
+                <button type="button" class="btn btn-outline-danger btn-sm" :aria-label="`Delete note: ${firstWords(note.body)}`" :disabled="busy" @click="removeId = note.id; error = ''">Delete</button>
             </template>
         </article>
         <div v-if="removeId !== null && !readonly" class="border rounded p-3 mt-2" role="group" aria-label="Confirm note deletion">
@@ -47,7 +47,7 @@
 </template>
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useId, watch } from 'vue';
-import { workError, workFieldErrors, type WorkApi, type WorkNote, type WorkStudent } from './subjectWork';
+import { firstWords, workError, workFieldErrors, workMoment, type WorkApi, type WorkNote, type WorkStudent } from './subjectWork';
 const props = defineProps<{ notes: WorkNote[]; students: WorkStudent[]; base: string; api: WorkApi; readonly?: boolean; confirmDiscard: () => Promise<boolean>; refresh: () => Promise<void>; readError?: string }>();
 const emit = defineEmits<{ dirty: [value: boolean];  }>();
 const form = ref<{ id: number | null; about: string; student: number | null; body: string; studentName: string } | null>(null);
@@ -81,7 +81,7 @@ const remove = async () => {
     catch (failure) { if (alive) error.value = workError(failure, 'This note could not be deleted.'); }
     finally { if (alive) busy.value = false; }
 };
-const formatDate = (value: string) => new Date(value).toLocaleString();
+const formatDate = workMoment;
 onBeforeUnmount(() => { alive = false; emit('dirty', false); });
 </script>
 <style scoped>

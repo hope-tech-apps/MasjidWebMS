@@ -522,6 +522,7 @@ it('review keeps a marked plan on the subject it was marked under after the plan
     expect($plans)->toHaveCount(1);
     expect($plans[0]['mark_count'])->toBe(1);
     expect(collect($plans[0]['marks'])->firstWhere('group_membership_id', $this->one->id)['comment'])->toBe('Kept');
+    expect($plans[0]['moved_to'])->toBe($this->other->name);
 
     // The other subject lists the plan itself, unmarked: marks do not follow a relink.
     $otherBase = str_replace('/subjects/'.$this->subject->id, '/subjects/'.$this->other->id, $this->base);

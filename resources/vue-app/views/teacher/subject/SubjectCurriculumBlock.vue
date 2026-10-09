@@ -7,7 +7,7 @@
             </select>
         </label>
         <SubjectMarkEditor v-if="piece" :key="selected" :piece="piece" :students="block.students" :levels="levels"
-            :base="base" :api="api" :readonly="readonly" :heading="multipleGuides ? entryWords(piece) : undefined" @dirty="setDirty" @saved="saved" />
+            :base="base" :api="api" :readonly="readonly" :heading="multipleGuides ? entryWords(piece) : undefined" @dirty="setDirty" :accept="saved" />
     </div>
 </template>
 <script setup lang="ts">
@@ -33,7 +33,8 @@ const choose = async (event: Event) => {
     if (dirty.value && !await props.confirmDiscard()) return;
     selected.value = next; choice.value = next;
 };
-const saved = (value: WorkPiece) => { if (piece.value) Object.assign(piece.value, value); };
+// By the saved entry's own identity: the teacher may have moved to another entry before the save came back.
+const saved = (value: WorkPiece) => { const target = props.block.entries.find(e => entryKey(e) === entryKey(value)); if (target) Object.assign(target, value); };
 </script>
 
 <style scoped>

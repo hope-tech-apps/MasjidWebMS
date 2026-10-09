@@ -1550,8 +1550,8 @@ test('walk 12: student and whole-class notes create, edit and confirmed delete',
         assert.deepEqual(r.calls.find(c => c.method === 'post' && c.url.endsWith('/notes')).body, { group_membership_id: 9, body: 'New student note' });
         click(s.button('New note')); await flush(); type(workField(s, 'Note text'), 'New class update'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10);
         assert.match(s.text(), /New class update/);
-        click(workField(s, 'Edit note 51')); await flush(); type(workField(s, 'Note text'), 'Corrected note'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10); assert.match(s.text(), /Corrected note/);
-        click(workField(s, 'Delete note 51')); await flush(); assert.match(s.text(), /Delete this note\?/); click(s.button('Delete note')); await flush(10); assert.doesNotMatch(s.text(), /Corrected note/);
+        click(workField(s, 'Edit note: Practice note')); await flush(); type(workField(s, 'Note text'), 'Corrected note'); submit(within(area(s, 'notes'), n => n.tag === 'form')[0]); await flush(10); assert.match(s.text(), /Corrected note/);
+        click(workField(s, 'Delete note: Corrected note')); await flush(); assert.match(s.text(), /Delete this note\?/); click(s.button('Delete note')); await flush(10); assert.doesNotMatch(s.text(), /Corrected note/);
         assert.doesNotMatch(s.text(), /Share with the family/);
     } finally { s.unmount(); }
 });
@@ -1563,7 +1563,7 @@ test('walk 14: office reads all four blocks, opens entries/pieces and has no wri
     const r = await workSetup('office'); const s = r.screen;
     try {
         for (const words of ['From the curriculum', 'From lesson plans', 'Your own pieces', 'Notes and updates', 'Practice note', 'Whole class']) assert.ok(s.text().includes(words), s.text());
-        click(s.button('2026-10-09: Practice objective')); await flush(); click(s.button('Practice piece')); await flush();
+        click(s.button('Oct 9, 2026 · Practice objective')); await flush(); click(s.button('Practice piece')); await flush();
         assert.equal(s.all(n => n.tag === 'textarea' || n.tag === 'input' || n.props['aria-pressed'] !== undefined).length, 0);
         assert.equal(s.all(n => n.tag === 'button' && /^(Save|Edit|Delete|Add a piece|New note)/.test(n.textContent)).length, 0);
         assert.equal(r.calls.filter(c => c.method !== 'get').length, 0);
@@ -1587,13 +1587,13 @@ test('walk 15: server-selected numbered entries, combined-grade rows and no cale
 test('walk 16: linked plans in server order open marking rows, including retained deleted plans', async () => {
     const r = await workSetup(); const s = r.screen;
     try {
-        const a = area(s, 'plans'); assert.ok(a.textContent.indexOf('2026-10-09') < a.textContent.indexOf('2026-10-08'));
-        click(s.button('2026-10-09: Practice objective')); await flush(); assert.match(a.textContent, /Practice student.*Practice learner/);
+        const a = area(s, 'plans'); assert.ok(a.textContent.indexOf('Oct 9, 2026') < a.textContent.indexOf('Oct 8, 2026'));
+        click(s.button('Oct 9, 2026 · Practice objective')); await flush(); assert.match(a.textContent, /Practice student.*Practice learner/);
         assert.equal(areaButton(s, 'plans', 'Save').props.disabled, true); assert.equal(r.calls.filter(c => c.url.endsWith('/marks')).length, 0);
         type(within(a, n => n.props['aria-label'] === 'Comment for Practice student')[0], 'Plan comment'); await flush(); click(areaButton(s, 'plans', 'Save')); await flush(10);
         const saved = r.calls.find(c => c.url.endsWith('/marks')).body;
         assert.equal(saved.lesson_plan_id, 31); assert.deepEqual(saved.marks, [{ group_membership_id: 9, level: null, comment: 'Plan comment', updated_at: null }]);
-        click(s.button('2026-10-09: Practice objective')); await flush(); click(s.button('2026-10-08: Retained objective')); await flush();
+        click(s.button('Oct 9, 2026 · Practice objective')); await flush(); click(s.button('Oct 8, 2026 · Retained objective')); await flush();
         type(within(a, n => n.props['aria-label'] === 'Comment for Practice learner')[0], 'Retained correction'); await flush(); click(areaButton(s, 'plans', 'Save')); await flush(10);
         const retained = r.calls.filter(c => c.url.endsWith('/marks'))[1].body;
         assert.equal(retained.piece_id, 32); assert.deepEqual(retained.marks, [{ group_membership_id: 10, level: null, comment: 'Retained correction', updated_at: null }]);
@@ -1605,8 +1605,8 @@ test('walk 17: own piece create/edit/delete count conflict requires another expl
     const r = await workSetup('teacher', { work, write: (m: string, u: string) => { if (m === 'delete' && u.endsWith('/pieces/41') && conflict) { conflict = false; throw httpError(409, { mark_count: 8, message: 'The number of marks changed.' }); } } }); const s = r.screen;
     try {
         click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'New piece'); type(workField(s, 'Piece detail'), 'New detail'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10); assert.match(s.text(), /New piece.*New detail/);
-        click(workField(s, 'Edit piece 41')); await flush(); type(workField(s, 'Piece title'), 'Changed piece'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10); assert.match(s.text(), /Changed piece/);
-        click(workField(s, 'Delete piece 41')); await flush(); assert.match(s.text(), /Delete this piece and its 7 marks\?/); click(s.button('Delete piece')); await flush(10);
+        click(workField(s, 'Edit Practice piece')); await flush(); type(workField(s, 'Piece title'), 'Changed piece'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10); assert.match(s.text(), /Changed piece/);
+        click(workField(s, 'Delete Changed piece')); await flush(); assert.match(s.text(), /Delete this piece and its 7 marks\?/); click(s.button('Delete piece')); await flush(10);
         assert.match(s.text(), /Delete this piece and its 8 marks\?/); assert.equal(r.calls.filter(c => c.method === 'delete').length, 1);
         click(s.button('Delete piece')); await flush(10); assert.deepEqual(r.calls.filter(c => c.method === 'delete').map(c => c.body), [{ mark_count: 7 }, { mark_count: 8 }]); assert.doesNotMatch(s.text(), /Changed piece/);
     } finally { s.unmount(); }
@@ -1634,7 +1634,7 @@ test('work drafts: changing entry or menu line asks before discarding, staying k
 test('work failed saves: 422 field words, 403/404 and network errors keep typed comments next to the entry', async () => {
     for (const failure of [httpError(422, { errors: { 'marks.0.comment': ['Practice field refusal.'] }, message: 'Validation failed.' }), httpError(403, { message: 'Forbidden.' }), httpError(404, { message: 'Not found.' }), new Error('Network Error')]) {
         const r = await workSetup('teacher', { write: (_m: string, u: string) => { if (u.endsWith('/marks')) throw failure; } }); const s = r.screen;
-        try { type(workField(s, 'Comment for Practice student'), 'Still typed'); const b = workField(s, 'Curriculum grade 1'); await flush(); click(within(b, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10); assert.equal(workField(s, 'Comment for Practice student').value, 'Still typed'); assert.match(b.textContent, /Practice field refusal\.|Forbidden\.|Not found\.|Network Error/); } finally { s.unmount(); }
+        try { type(workField(s, 'Comment for Practice student'), 'Still typed'); const b = workField(s, 'Curriculum grade 1'); await flush(); click(within(b, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10); assert.equal(workField(s, 'Comment for Practice student').value, 'Still typed'); assert.match(b.textContent, /Practice field refusal\.|Forbidden\.|Not found\.|Check your connection and try again\./); assert.doesNotMatch(b.textContent, /Network Error/); } finally { s.unmount(); }
     }
 });
 test('walk 19: copied guide wording stays visible with changed-wording date supplied by server', async () => {
@@ -1663,7 +1663,7 @@ test('work forms: failed note/piece saves keep text and show field errors; cance
         assert.equal(workField(s, 'Note text').value, 'Typed note'); assert.match(area(s, 'notes').textContent, /Practice note refusal\./);
         click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'Typed title'); type(workField(s, 'Piece detail'), 'Typed detail'); submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10);
         assert.equal(workField(s, 'Piece title').value, 'Typed title'); assert.equal(workField(s, 'Piece detail').value, 'Typed detail'); assert.match(area(s, 'own').textContent, /Practice title refusal\./);
-        click(workField(s, 'Delete note 51')); await flush(); click(within(s.all(n => n.props['aria-label'] === 'Confirm note deletion')[0], n => n.tag === 'button' && n.textContent === 'Cancel')[0]); await flush();
+        click(workField(s, 'Delete note: Practice note')); await flush(); click(within(s.all(n => n.props['aria-label'] === 'Confirm note deletion')[0], n => n.tag === 'button' && n.textContent === 'Cancel')[0]); await flush();
         assert.equal(r.calls.filter(c => c.method === 'delete').length, 0);
         await pick(s, 'Roster'); assert.match(s.text(), /Discard unsaved changes\?/); click(s.button('Keep editing')); await flush(10); assert.equal(workField(s, 'Note text').value, 'Typed note');
     } finally { s.unmount(); }
@@ -1721,7 +1721,7 @@ test('work clears: saving empty marks removes a row; an own piece without marks 
         const block = workField(s, 'Curriculum grade 1'); click(within(block, n => n.props['aria-pressed'] === 'true')[0]); type(workField(s, 'Comment for Practice student'), '');
         await flush(); click(within(block, n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
         assert.deepEqual(r.calls.find(c => c.url.endsWith('/marks')).body.marks, [{ group_membership_id: 9, level: null, comment: null, updated_at: null }]); assert.equal(work.curriculum[0].entries[1].marks.length, 0);
-        click(workField(s, 'Delete piece 41')); await flush(); assert.match(s.text(), /Delete this piece\?/); assert.doesNotMatch(s.text(), /and its 0 marks/);
+        click(workField(s, 'Delete Practice piece')); await flush(); assert.match(s.text(), /Delete this piece\?/); assert.doesNotMatch(s.text(), /and its 0 marks/);
         click(s.button('Delete piece')); await flush(10); assert.deepEqual(r.calls.find(c => c.method === 'delete').body, { mark_count: 0 });
     } finally { s.unmount(); }
 });
@@ -1817,13 +1817,13 @@ test('Build D saved marks reach the parent before a pending wording read for gui
         const r = await workSetup('teacher', { read: (u: string) => { if (u.endsWith('/work') && ++reads === 2) return pending.promise; } });
         const s = r.screen;
         try {
-            if (kind === 'plan') { click(s.button('2026-10-09: Practice objective')); await flush(); }
+            if (kind === 'plan') { click(s.button('Oct 9, 2026 · Practice objective')); await flush(); }
             if (kind === 'own') { click(s.button('Practice piece')); await flush(); }
             const container = () => kind === 'guide' ? workField(s, 'Curriculum grade 1') : area(s, kind === 'plan' ? 'plans' : 'own');
             type(within(container(), n => n.props['aria-label'] === 'Comment for Practice student')[0], 'Saved before reload');
             await flush(); click(within(container(), n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush(10);
             if (kind === 'guide') { chooseOption(workField(s, 'Entry for 1st'), 2); await flush(); chooseOption(workField(s, 'Entry for 1st'), 12); }
-            else { click(s.button(kind === 'plan' ? '2026-10-09: Practice objective' : 'Practice piece')); await flush(); click(s.button(kind === 'plan' ? '2026-10-09: Practice objective' : 'Practice piece')); }
+            else { click(s.button(kind === 'plan' ? 'Oct 9, 2026 · Practice objective' : 'Practice piece')); await flush(); click(s.button(kind === 'plan' ? 'Oct 9, 2026 · Practice objective' : 'Practice piece')); }
             await flush(10);
             assert.equal(within(container(), n => n.props['aria-label'] === 'Comment for Practice student')[0].value, 'Saved before reload');
             assert.equal(within(container(), n => n.tag === 'button' && n.textContent === 'Save')[0].props.disabled, true);
@@ -1878,14 +1878,14 @@ test('Build D deleting an edited note or own piece keeps the correction through 
     for (const kind of ['note', 'piece']) {
         const r = await workSetup(); const s = r.screen;
         try {
-            click(workField(s, kind === 'note' ? 'Edit note 51' : 'Edit piece 41')); await flush();
+            click(workField(s, kind === 'note' ? 'Edit note: Practice note' : 'Edit Practice piece')); await flush();
             type(workField(s, kind === 'note' ? 'Note text' : 'Piece title'), 'Unsaved correction');
-            click(workField(s, kind === 'note' ? 'Delete note 51' : 'Delete piece 41')); await flush();
+            click(workField(s, kind === 'note' ? 'Delete note: Practice note' : 'Delete Practice piece')); await flush();
             assert.match(s.text(), kind === 'note' ? /Delete this note and the correction you were typing\?/ : /correction you were typing/);
             const confirm = workField(s, kind === 'note' ? 'Confirm note deletion' : 'Confirm piece deletion');
             click(within(confirm, n => n.tag === 'button' && n.textContent === 'Cancel')[0]); await flush();
             assert.equal(workField(s, kind === 'note' ? 'Note text' : 'Piece title').value, 'Unsaved correction');
-            click(workField(s, kind === 'note' ? 'Delete note 51' : 'Delete piece 41')); await flush(); click(s.button(kind === 'note' ? 'Delete note' : 'Delete piece')); await flush(10);
+            click(workField(s, kind === 'note' ? 'Delete note: Practice note' : 'Delete Practice piece')); await flush(); click(s.button(kind === 'note' ? 'Delete note' : 'Delete piece')); await flush(10);
             assert.equal(s.all(n => n.props['aria-label'] === (kind === 'note' ? 'Note text' : 'Piece title')).length, 0);
             await pick(s, 'Roster'); assert.doesNotMatch(s.text(), /Discard unsaved/);
         } finally { s.unmount(); }
@@ -1932,4 +1932,38 @@ test('Build D phone targets are scoped locally including help used in Grades and
     assert.match(grades, /<PerformanceLevelHelp v-if="openAssignment.scale === 'levels'" :levels="levelKey" \/>/);
     assert.match(reports, /<PerformanceLevelHelp :levels="levelKey" \/>/);
     assert.doesNotMatch(help, /class_subject_work|workEnabled/, 'summary target does not depend on the work switch');
+});
+
+test('walk fixes: a pressed level is drawn filled, plan dates and note times read as dates, and labels name the thing', () => {
+    const read = (file: string) => readFileSync(new URL('../views/teacher/subject/' + file, import.meta.url), 'utf8');
+    const editor = read('SubjectMarkEditor.vue');
+    // Mounted tests cannot see paint: pin the rule that fills the chosen level and the phone gap between levels.
+    assert.match(editor, /\.mark-levels button\[aria-pressed="true"\] \{[^}]*background-color:[^}]*color: #fff/);
+    assert.match(editor, /\.mark-levels \{ display: flex; gap: \.5rem; \}/);
+    assert.match(editor, /The guide has since changed\./);
+    assert.match(editor, /This lesson plan is now under \{\{ shown\.moved_to \}\}/);
+    const helpers = read('subjectWork.ts');
+    assert.doesNotMatch(helpers, /error\?\.message \?\? ''/);
+    assert.doesNotMatch(read('SubjectNotes.vue'), /note \$\{note\.id\}/);
+    assert.doesNotMatch(read('SubjectOwnPieces.vue'), /piece \$\{piece\.piece_id\}/);
+});
+
+test('walk fixes: a save that returns after the teacher moved to another entry updates the entry that was saved', async () => {
+    const pending = deferred<any>();
+    const r = await workSetup('teacher', { write: (method: string, url: string) => { if (method === 'put' && url.endsWith('/marks')) return pending.promise; } });
+    const s = r.screen;
+    const comment = () => within(workField(s, 'Curriculum grade 1'), n => n.props['aria-label'] === 'Comment for Practice student')[0];
+    try {
+        type(comment(), 'Saved late'); await flush();
+        click(within(workField(s, 'Curriculum grade 1'), n => n.tag === 'button' && n.textContent === 'Save')[0]); await flush();
+        // The request is still in flight. The teacher picks another entry and discards the prompt.
+        chooseOption(workField(s, 'Entry for 1st'), 2); await flush();
+        click(s.button('Discard changes')); await flush(10);
+        assert.equal(comment().value, '', 'the other entry opens empty');
+        pending.resolve(ok({ piece_id: 70, marks: [{ group_membership_id: 9, updated_at: '2026-10-09T16:00:00.000000Z' }] })); await flush(10);
+        assert.equal(comment().value, '', 'the entry now on screen was not overwritten by the late save');
+        chooseOption(workField(s, 'Entry for 1st'), 12); await flush(10);
+        assert.equal(comment().value, 'Saved late', 'the saved entry shows what was saved');
+        assert.equal(within(workField(s, 'Curriculum grade 1'), n => n.tag === 'button' && n.textContent === 'Save')[0].props.disabled, true);
+    } finally { s.unmount(); pending.resolve(ok({ piece_id: 70, marks: [] })); }
 });
