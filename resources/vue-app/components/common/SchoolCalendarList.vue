@@ -2,7 +2,7 @@
     <div>
         <div v-for="month in months" :key="month.key" class="mb-4">
             <button v-if="collapsible" type="button" class="btn w-100 month-toggle" :aria-expanded="expandedMonths[month.key] ? 'true' : 'false'" @click="expandedMonths[month.key] = !expandedMonths[month.key]">
-                <span>{{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }} · {{ labels.schoolDays }}: {{ schoolMonthCounts(month).open }} · {{ labels.withNoSchool }}: {{ schoolMonthCounts(month).closed }}</span>
+                <span>{{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }} · <span class="month-count">{{ labels.schoolDays }}: {{ schoolMonthCounts(month).open }}</span> · <span class="month-count">{{ labels.withNoSchool }}: {{ schoolMonthCounts(month).closed }}</span></span>
                 <span class="month-arrow" aria-hidden="true"></span>
             </button>
             <h3 v-else class="h6 text-muted fw-semibold mb-2">{{ formatSchoolDay(month.firstDate, locale, { month: 'long', year: 'numeric' }) }}</h3>
@@ -80,9 +80,13 @@ watch(() => props.days, () => { expandedMonths.value = {}; });
 .month-toggle:hover, .month-toggle:focus-visible { background: var(--bs-tertiary-bg); border-color: var(--bs-secondary-color); }
 .month-arrow {
     flex: none; margin-inline-start: auto; width: 0.55rem; height: 0.55rem;
-    border-inline-end: 2px solid currentColor; border-block-end: 2px solid currentColor;
+    /* Physical sides on purpose: logical ones flip in right-to-left while the
+       rotation does not, which turned down/up into left/right in Arabic. */
+    border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
     transform: rotate(45deg); transition: transform 0.15s ease;
 }
+/* Each "label: number" pair breaks as one piece, so a narrow line breaks at the dot. */
+.month-count { display: inline-block; }
 .month-toggle[aria-expanded="true"] .month-arrow { transform: rotate(-135deg); }
 @media (prefers-reduced-motion: reduce) { .month-arrow { transition: none; } }
 .push-end { margin-inline-start: auto; }
