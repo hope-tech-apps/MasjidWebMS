@@ -592,6 +592,16 @@ return [
         'report_card_marks' => [
             'comment' => 'free_text',
         ],
+        'subject_pieces' => [
+            'title' => 'free_text', // Own titles may name a child; scrub all snapshots conservatively.
+            'detail' => 'free_text',
+        ],
+        'subject_piece_marks' => [
+            'comment' => 'free_text',
+        ],
+        'subject_notes' => [
+            'body' => 'free_text',
+        ],
 
         'properties' => [
             'tenant_name' => 'full_name', // a named private individual renting from the masjid

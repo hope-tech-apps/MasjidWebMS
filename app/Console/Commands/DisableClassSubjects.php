@@ -32,6 +32,10 @@ class DisableClassSubjects extends Command
                 $state = $row['untranslated'] ? 'untranslated, legacy value kept' : ($row['expressible'] ? 'exact legacy choice' : ($row['accepted'] ? 'accepted unrestricted' : 'INEXPRESSIBLE'));
                 $this->line("Assignment #{$row['id']} | class #{$row['class_id']} | teacher #{$row['teacher_id']}: [{$before}] -> [{$after}] ({$state})");
             }
+            $notes = \App\Models\SubjectNote::where('masjid_id', $org->id)->count();
+            $pieces = \App\Models\SubjectPiece::where('masjid_id', $org->id)->count();
+            $marks = \App\Models\SubjectPieceMark::where('masjid_id', $org->id)->count();
+            $this->line("Retained subject work: {$notes} notes; {$pieces} pieces; {$marks} marks.");
             foreach ($report['blocked'] as $message) $this->error('BLOCKED '.$message);
             $this->line('School summary: '.count($report['assignments']).' assignments; '.count($report['blocked']).' blockers.');
             $this->line($this->option('dry-run') || $report['blocked'] !== [] ? 'No changes saved.' : 'Legacy authority restored; subjects, IDs and saved-work links retained.');

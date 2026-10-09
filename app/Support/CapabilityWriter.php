@@ -48,6 +48,7 @@ final class CapabilityWriter
      */
     public static function applyAtCreation(Masjid $new, array $desired, ?int $actor): array
     {
+        SchoolSettings::assertSubjectWorkChange($new, $desired);
         if (($desired['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($new);
 
         $orgType = $new->orgType();
@@ -159,6 +160,7 @@ final class CapabilityWriter
 
         return DB::transaction(function () use ($org, $changes, $actor, $keys) {
             $locked = Masjid::query()->whereKey($org->getKey())->lockForUpdate()->firstOrFail();
+            SchoolSettings::assertSubjectWorkChange($locked, $changes);
             if (($changes['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($locked);
             if (($changes['class_subjects'] ?? null) === false) ClassSubjectDisabler::assertAllowed($locked);
 
@@ -168,7 +170,7 @@ final class CapabilityWriter
             $unchanged = [];
             foreach ($keys as $key) {
                 // Hidden no-op: do not materialize an override or an audit row.
-                if ($key === 'class_subjects' && ! $locked->hasCapability($key) && $changes[$key] === false) {
+                if (in_array($key, ['class_subjects', 'class_subject_work'], true) && ! $locked->hasCapability($key) && $changes[$key] === false) {
                     $unchanged[] = $key;
                     continue;
                 }

@@ -166,6 +166,19 @@ Route::prefix('teacher')
                             Route::get('/subjects/{subject_id}', [\App\Http\Controllers\AdminDashboard\ClassSubjectsController::class, 'show']);
                         });
 
+                        Route::middleware('capability:class_subject_work')->prefix('/subjects/{subject_id}')->group(function () {
+                            $controller = \App\Http\Controllers\AdminDashboard\SubjectWorkController::class;
+                            Route::get('/work', [$controller, 'page']);
+                            Route::get('/notes', [$controller, 'notes']);
+                            Route::post('/notes', [$controller, 'createNote']);
+                            Route::put('/notes/{note_id}', [$controller, 'updateNote']);
+                            Route::delete('/notes/{note_id}', [$controller, 'deleteNote']);
+                            Route::post('/pieces', [$controller, 'createPiece']);
+                            Route::put('/pieces/{piece_id}', [$controller, 'updatePiece']);
+                            Route::delete('/pieces/{piece_id}', [$controller, 'deletePiece']);
+                            Route::put('/marks', [$controller, 'saveMarks']);
+                        });
+
                         Route::middleware('teacher.teaches:arabic')->group(function () {
                         // Arabic letters (reused; fenced by teacher.leads).
                         Route::get('/letters', [ArabicLettersController::class, 'index']);

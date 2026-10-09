@@ -142,6 +142,14 @@ class TeacherRealmTest extends TestCase
 
         $this->assertEqualsCanonicalizing([
             'POST /api/teacher/logout',
+            // Subject work: notes, own pieces and one bulk marks save, behind both school grants.
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/notes',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/notes/{note_id}',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/notes/{note_id}',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/pieces',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/pieces/{piece_id}',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/pieces/{piece_id}',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/marks',
             // Guide-only question, with no tenant data in the provider request.
             'POST /api/teacher/masjids/{masjid_id}/guides/ask',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/letters/stage',

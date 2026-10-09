@@ -364,3 +364,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Reader ON mode uses presence of meeting_weekdays in the existing payload (including NULL/empty); OFF omits it. No extra request or capability lookup.
 - Weekly skipped classes use the same active-group selection as the send path, independent of whether a group currently has recipients. Append the line only when at least one ON class is skipped.
 - Local Chrome headless aborts134 before DOM output; 390px geometry and native keyboard/screen-reader interaction remain unverified in a real browser. Mounted tests check native button structure, aria states and expansion behavior.
+
+## Class subject work Build A — 2026-10-09
+- Partial saves affect submitted students only, following existing gradebook bulk-save behaviour. No client implementation in this build.
+- Existing class subject writers and roster writers use the organisation/class mutex order; work writes use that order before point-locking subject/student rows. MySQL runtime contention remains unchecked locally.
+- The caller commits and separately reviews any deployment/capability change. Output path was unspecified; use artifacts/subject-work-server-report.md.

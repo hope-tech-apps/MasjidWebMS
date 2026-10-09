@@ -66,6 +66,17 @@ final class ClassSubjectMode
         return $enabled;
     }
 
+    /** Reuse the class-subject row already held by this request; no second switch SELECT. */
+    public static function workEnabled(int|string|null $masjidId): bool
+    {
+        if ($masjidId === null) return false;
+        $id = (int) $masjidId;
+        if (! self::enabled($id)) return false;
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::withTrashed()->select(['id', 'org_type', 'capability_overrides', 'deleted_at'])->find($id);
+        return $org?->deleted_at === null && SchoolSettings::classSubjectWork($org);
+    }
+
     public static function responseEnabled(int|string|null $masjidId): bool
     {
         return self::enabled($masjidId);

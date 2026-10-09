@@ -44,13 +44,14 @@ final class SchoolCalendarCapabilityWriter
         $switch = function () use ($org, $changes, $actor, $keys, &$committed) {
             $locked = Masjid::query()->whereKey($org->getKey())->lockForUpdate()->firstOrFail();
             // A request that carries both switches still answers to the class-subject guards.
+            SchoolSettings::assertSubjectWorkChange($locked, $changes);
             if (($changes['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($locked);
             if (($changes['class_subjects'] ?? null) === false) ClassSubjectDisabler::assertAllowed($locked);
             // Only the two switches that stay out of the panel while off skip a
             // hidden OFF -> OFF write, as main's writer does for class subjects.
             // Every other key stores its override and its audit row, no-ops included.
             $unchangedHidden = [];
-            foreach ([SchoolSettings::SCHOOL_CALENDAR_TERMS, 'class_subjects'] as $hidden) {
+            foreach ([SchoolSettings::SCHOOL_CALENDAR_TERMS, 'class_subjects', 'class_subject_work'] as $hidden) {
                 if (($changes[$hidden] ?? null) === false && ! $locked->hasCapability($hidden)) {
                     $unchangedHidden[] = $hidden;
                     unset($changes[$hidden]);

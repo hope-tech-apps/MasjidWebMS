@@ -45,6 +45,12 @@ class EnsureOrgCapability
 
     public function handle(Request $request, Closure $next, string ...$capabilities): Response
     {
+        if (in_array('class_subject_work', $capabilities, true)) {
+            $id = $this->tenant->get() ?? $request->route('masjid_id');
+            abort_unless(\App\Support\ClassSubjectMode::workEnabled($id), 404);
+            return $next($request);
+        }
+
         $user = $request->user();
 
         if ($user instanceof User && $user->type === 'SuperAdmin') {

@@ -1096,6 +1096,13 @@ Route::prefix('admin')->group(function () {
                         Route::delete('/{subject_id}', 'destroy')->middleware('permission:manage contacts');
                     });
 
+                Route::prefix('{masjid_id}/groups/{group_id}/subjects/{subject_id}')
+                    ->middleware(['capability:class_subject_work', 'permission:view contacts'])
+                    ->group(function () {
+                        Route::get('/work', [\App\Http\Controllers\AdminDashboard\SubjectWorkController::class, 'page']);
+                        Route::get('/notes', [\App\Http\Controllers\AdminDashboard\SubjectWorkController::class, 'notes']);
+                    });
+
                 Route::prefix('{masjid_id}/school-subjects')
                     ->controller(\App\Http\Controllers\AdminDashboard\SchoolSubjectsController::class)
                     ->group(function () {

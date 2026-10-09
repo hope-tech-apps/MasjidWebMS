@@ -180,7 +180,9 @@ final class SubjectFence
         $ids = $user?->type === 'Teacher' ? self::assignedIds((int) $group->id, (int) $user->id) : null;
         $subjects = \App\Models\ClassSubject::where('group_id', $group->id)->whereNull('hidden_at')
             ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))->orderBy('position')->orderBy('id')->get();
-        return ['class_subjects_enabled' => true, 'class_subjects' => $subjects, 'my_class_subject_ids' => $ids];
+        $payload = ['class_subjects_enabled' => true, 'class_subjects' => $subjects, 'my_class_subject_ids' => $ids];
+        if (ClassSubjectMode::workEnabled($group->masjid_id)) $payload['class_subject_work_enabled'] = true;
+        return $payload;
     }
 
     /**

@@ -538,6 +538,8 @@ class Masjid extends Model implements HasMedia
             unset($out[\App\Support\SchoolSettings::SCHOOL_CALENDAR_TERMS]);
         }
 
+        if (! \App\Support\SchoolSettings::classSubjectWork($this)) unset($out['class_subject_work']);
+
         return $out;
     }
 
@@ -583,6 +585,9 @@ class Masjid extends Model implements HasMedia
             && is_array($attributes['capability_overrides'] ?? null)
             && array_key_exists('school_calendar_terms', $attributes['capability_overrides'])) {
             unset($attributes['capability_overrides']['school_calendar_terms']);
+        }
+        if (! \App\Support\SchoolSettings::classSubjectWork($this) && is_array($attributes['capability_overrides'] ?? null)) {
+            unset($attributes['capability_overrides']['class_subject_work']);
         }
         return $attributes;
     }

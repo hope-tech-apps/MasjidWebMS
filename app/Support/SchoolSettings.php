@@ -139,6 +139,23 @@ final class SchoolSettings
         return (bool) $masjid?->hasCapability('class_subjects');
     }
 
+    /** Work stays dark unless both school grants are on, with no operator bypass. */
+    public static function classSubjectWork(?Masjid $school): bool
+    {
+        return self::classSubjects($school) && (bool) $school?->hasCapability('class_subject_work');
+    }
+
+    /** Evaluate the intended map under the organisation mutex, before any writes. */
+    public static function assertSubjectWorkChange(Masjid $school, array $changes): void
+    {
+        if (($changes['class_subject_work'] ?? false) === true
+            && ! ($changes['class_subjects'] ?? self::classSubjects($school))) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'capability' => ['Switch on class subjects before enabling subject notes and marks.'],
+            ]);
+        }
+    }
+
     public static function classStore(?Masjid $masjid): bool
     {
         return (bool) $masjid?->hasCapability(self::CLASS_STORE);

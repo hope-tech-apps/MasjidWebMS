@@ -1,0 +1,263 @@
+{
+    "bootstrap": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select \"t\".\"group_id\", \"t\".\"id\" as \"thread_id\", count(*) as unread from \"group_messages\" inner join \"group_threads\" as \"t\" on \"t\".\"id\" = \"group_messages\".\"group_thread_id\" and \"t\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"t\".\"deleted_at\" is null left join \"group_thread_reads\" as \"r\" on \"r\".\"group_thread_id\" = \"t\".\"id\" and \"r\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"r\".\"user_id\" = ? where (\"group_messages\".\"author_user_id\" is null or \"group_messages\".\"author_user_id\" <> ?) and ((\"r\".\"id\" is not null and ((\"r\".\"last_read_message_id\" is not null and \"group_messages\".\"id\" > \"r\".\"last_read_message_id\") or (\"r\".\"last_read_message_id\" is null and (\"r\".\"last_read_at\" is null or \"group_messages\".\"created_at\" > \"r\".\"last_read_at\")))) or (\"r\".\"id\" is null and \"group_messages\".\"created_at\" >= ?)) and \"t\".\"group_id\" in (?) and \"group_messages\".\"masjid_id\" = ? group by \"t\".\"group_id\", \"t\".\"id\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+            "select name, type, not \"notnull\" as \"nullable\", dflt_value as \"default\", pk as \"primary\", hidden as \"extra\" from pragma_table_xinfo('contacts', 'main') order by cid asc",
+            "select \"sql\" from \"main\".sqlite_master where type = 'table' and name = 'contacts'",
+            "select \"subjects\" from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_staff\".\"id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"class_subjects\" where \"group_id\" = ? and \"hidden_at\" is null and \"class_subjects\".\"masjid_id\" = ? order by \"position\" asc, \"id\" asc",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "name": "Practice",
+                "kind": "class",
+                "description": "Consequatur quia eum quas eum.",
+                "is_active": true,
+                "arabic_stage": "letters",
+                "points_period": "running",
+                "my_subjects": null,
+                "subject_labels": {
+                    "quran": "Qur'an",
+                    "arabic": "Arabic",
+                    "islamic_studies": "Islamic Studies"
+                },
+                "students": [],
+                "unread_messages": 0,
+                "class_subjects_enabled": true,
+                "class_subjects": [
+                    {
+                        "id": 1,
+                        "masjid_id": 1,
+                        "group_id": 1,
+                        "name": "Science",
+                        "guide_subject": null,
+                        "tool": null,
+                        "position": 0,
+                        "hidden_at": null,
+                        "created_at": "2026-10-09T16:00:00.000000Z",
+                        "updated_at": "2026-10-09T16:00:00.000000Z"
+                    }
+                ],
+                "my_class_subject_ids": null
+            }
+        }
+    },
+    "lesson-list": {
+        "sql": [
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"lesson_plans\" where \"group_id\" = ? and strftime('%Y-%m-%d', \"session_date\") >= cast(? as text) and strftime('%Y-%m-%d', \"session_date\") <= cast(? as text) and \"lesson_plans\".\"masjid_id\" = ? order by \"session_date\" asc, \"subject_key\" asc, \"id\" asc",
+            "select * from \"lesson_plan_resources\" where \"lesson_plan_resources\".\"lesson_plan_id\" in (1) and \"lesson_plan_resources\".\"masjid_id\" = ? order by \"position\" asc, \"id\" asc",
+            "select * from \"class_subjects\" where \"class_subjects\".\"id\" in (1) and \"class_subjects\".\"masjid_id\" = ?",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_staff\".\"id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "from": "2026-10-05",
+                "to": "2026-10-11",
+                "plans": [
+                    {
+                        "subject": "Science",
+                        "grade_label": null,
+                        "curriculum_week_no": null,
+                        "standard_code": null,
+                        "standard_description": null,
+                        "objective": null,
+                        "learning_outcomes": null,
+                        "differentiation_support": null,
+                        "differentiation_extension": null,
+                        "differentiation_learning_styles": null,
+                        "differentiation_ell_aal": null,
+                        "differentiation_sen": null,
+                        "cross_integration_subject": null,
+                        "cross_integration_islamic": null,
+                        "cross_integration_stem": null,
+                        "teaching_methods": null,
+                        "teaching_methods_other": null,
+                        "teaching_aids": null,
+                        "assessment_formative": null,
+                        "assessment_exit_ticket": null,
+                        "reflection_worked": null,
+                        "reflection_improve": null,
+                        "id": 1,
+                        "class_subject_id": 1,
+                        "session_date": "2026-10-09",
+                        "title": null,
+                        "body": "Practice",
+                        "prefill_source": null,
+                        "attachments": [],
+                        "updated_at": "2026-10-09T16:00:00+00:00"
+                    }
+                ],
+                "hidden_fields": [],
+                "meeting_weekdays": null
+            }
+        }
+    },
+    "gradebook-list": {
+        "sql": [
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_staff\".\"id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select count(*) as aggregate from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+            "select \"class_assignments\".*, (select count(*) from \"assignment_scores\" where \"class_assignments\".\"id\" = \"assignment_scores\".\"class_assignment_id\" and \"assignment_scores\".\"masjid_id\" = ?) as \"scores_count\" from \"class_assignments\" where \"class_assignments\".\"group_id\" = ? and \"class_assignments\".\"group_id\" is not null and \"class_assignments\".\"deleted_at\" is null and \"class_assignments\".\"masjid_id\" = ? order by \"assigned_on\" desc, \"id\" desc",
+            "select * from \"class_subjects\" where \"class_subjects\".\"id\" in (1) and \"class_subjects\".\"masjid_id\" = ?",
+            "select * from \"class_subjects\" where \"group_id\" = ? and \"hidden_at\" is null and \"class_subjects\".\"masjid_id\" = ? order by \"position\" asc, \"id\" asc",
+            "select \"weight\", \"assignment_type\" from \"class_grade_weights\" where \"group_id\" = ? and \"class_grade_weights\".\"masjid_id\" = ?",
+            "select \"subjects\" from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_staff\".\"id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"class_subjects\" where \"group_id\" = ? and \"hidden_at\" is null and \"class_subjects\".\"masjid_id\" = ? order by \"position\" asc, \"id\" asc",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": [
+                {
+                    "id": 1,
+                    "title": "Practice",
+                    "points_possible": 10,
+                    "scale": "points",
+                    "assigned_on": "2026-10-09",
+                    "subject": "Science",
+                    "class_subject_id": 1,
+                    "type": null,
+                    "type_label": null,
+                    "weight": null,
+                    "standard_code": null,
+                    "curriculum_focus": null,
+                    "curriculum_week_no": null,
+                    "scored": 0,
+                    "roster": 0
+                }
+            ],
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ],
+            "default_scale": "levels",
+            "scales": [
+                "levels",
+                "points"
+            ],
+            "simple_marks": [
+                {
+                    "value": 3,
+                    "label": "Excellent"
+                },
+                {
+                    "value": 2,
+                    "label": "Good"
+                },
+                {
+                    "value": 1,
+                    "label": "Needs work"
+                }
+            ],
+            "types": [
+                {
+                    "key": "test",
+                    "label": "Test"
+                },
+                {
+                    "key": "quiz",
+                    "label": "Quiz"
+                },
+                {
+                    "key": "homework",
+                    "label": "Homework"
+                },
+                {
+                    "key": "classwork",
+                    "label": "Classwork"
+                },
+                {
+                    "key": "other",
+                    "label": "Other"
+                }
+            ],
+            "weights": [],
+            "weighting_enabled": false,
+            "weight_max": 100,
+            "subjects": [
+                {
+                    "name": "Science",
+                    "key": "science",
+                    "class_subject_id": 1
+                }
+            ],
+            "default_subject": null,
+            "my_subjects": null,
+            "standards_enabled": true,
+            "class_subjects_enabled": true,
+            "class_subjects": [
+                {
+                    "id": 1,
+                    "masjid_id": 1,
+                    "group_id": 1,
+                    "name": "Science",
+                    "guide_subject": null,
+                    "tool": null,
+                    "position": 0,
+                    "hidden_at": null,
+                    "created_at": "2026-10-09T16:00:00.000000Z",
+                    "updated_at": "2026-10-09T16:00:00.000000Z"
+                }
+            ],
+            "my_class_subject_ids": null
+        }
+    }
+}

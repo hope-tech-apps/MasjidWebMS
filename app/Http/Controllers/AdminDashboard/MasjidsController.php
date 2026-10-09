@@ -370,6 +370,16 @@ class MasjidsController extends Controller
      */
     private function withoutHiddenCalendarTerms($response, string $masjid_id)
     {
+        if (! \App\Support\ClassSubjectMode::workEnabled((int) $masjid_id)) {
+            $payload = $response->getData(true);
+            foreach ($payload['data']['groups'] as &$group) {
+                $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== 'class_subject_work'));
+            }
+            unset($group);
+            $payload['data']['history'] = array_values(array_filter($payload['data']['history'], fn ($row) => $row['capability'] !== 'class_subject_work'));
+            $response->setData($payload);
+        }
+
         // The request memo already holds the row the branch above loaded: no second read.
         if (\App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id) || request()->boolean('include_calendar_terms')) {
             return $response;
