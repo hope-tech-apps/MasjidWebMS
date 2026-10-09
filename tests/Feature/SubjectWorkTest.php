@@ -538,3 +538,22 @@ it('review saves marks in the same number of statements for one student and for 
     expect($cleared)->toBeLessThanOrEqual($one);
     expect(SubjectPieceMark::count())->toBe(1);
 });
+
+it('says when a marked curriculum entry was marked against earlier wording', function () {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-09 15:00:00 UTC'));
+    ($this->saveGuide)([($this->mark)()])->assertOk();
+    $entry = fn () => collect($this->getJson($this->base.'/work')->assertOk()->json('data.curriculum.0.entries'))->firstWhere('week_no', 4);
+
+    expect($entry()['wording_changed'])->toBeFalse();
+    expect($entry()['marked_against_date'])->toBe('Oct 9, 2026');
+
+    $this->entry->update(['focus' => 'Reworded focus']);
+    $after = $entry();
+    expect($after['wording_changed'])->toBeTrue();
+    expect($after['title'])->toBe('Practice focus 4');
+
+    // An entry nobody has marked carries the live words and no such line.
+    ($this->guide)(5);
+    $unmarked = collect($this->getJson($this->base.'/work')->json('data.curriculum.0.entries'))->firstWhere('week_no', 5);
+    expect($unmarked)->not->toHaveKey('wording_changed');
+});

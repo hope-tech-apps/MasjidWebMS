@@ -66,14 +66,20 @@ final class SubjectWorkPage
                 $entries = [];
                 foreach ($guide->filter(fn ($g) => GradeLevel::key($g->grade_label) === (string) $key) as $entry) {
                     $piece = $gradePieces->firstWhere('week_no', $entry->week_no);
-                    $entries[$entry->week_no] = $piece ? $pieceData($piece, $gradeStudents->pluck('id')->all()) : [
+                    // A marked entry keeps the words it was marked against; say so when the guide has since changed.
+                    $entries[$entry->week_no] = $piece ? $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
+                        'wording_changed' => $piece->title !== $entry->focus || $piece->detail !== $entry->assessment_note || $piece->standard_code !== $entry->standard_code,
+                        'marked_against_date' => $piece->created_at?->format('M j, Y'),
+                    ] : [
                         'piece_id' => null, 'source' => 'guide', 'title' => $entry->focus, 'detail' => $entry->assessment_note,
                         'grade_label' => $entry->grade_label, 'week_no' => $entry->week_no, 'quarter' => $entry->quarter,
                         'standard_code' => $entry->standard_code, 'lesson_plan_id' => null, 'mark_count' => 0, 'marks' => [],
                     ];
                 }
                 // A reimport may remove an entry; its saved work is still reachable by piece_id.
-                foreach ($gradePieces as $piece) $entries[$piece->week_no] ??= $pieceData($piece, $gradeStudents->pluck('id')->all());
+                foreach ($gradePieces as $piece) $entries[$piece->week_no] ??= $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
+                    'wording_changed' => true, 'marked_against_date' => $piece->created_at?->format('M j, Y'),
+                ];
                 ksort($entries, SORT_NUMERIC);
                 if ($entries === []) continue;
                 // A piece exists only after a meaningful mark/comment. Its timestamp keeps
