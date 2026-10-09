@@ -4,13 +4,13 @@ export type WorkLevel = { level: number; short_label: string; description: strin
 export type WorkMark = { group_membership_id: number; level: number | null; comment: string | null };
 export type WorkPiece = {
     source: 'guide' | 'plan' | 'own'; piece_id: number | null; title: string; detail: string | null;
-    marks: WorkMark[]; mark_count: number; grade_label?: string; week_no?: number;
+    marks: WorkMark[]; mark_count: number; grade_label?: string; week_no?: number; guide_subject?: string;
     standard_code?: string | null; lesson_plan_id?: number | null;
     wording_changed?: boolean; marked_against_date?: string;
 };
-export type WorkBlock = { grade_key: string; grade_label: string; students: WorkStudent[]; entries: WorkPiece[]; opening_week_no: number; selected_week_no: number };
+export type WorkBlock = { grade_key: string; grade_label: string; students: WorkStudent[]; entries: WorkPiece[]; opening_week_no: number; selected_week_no: number; opening_guide_subject?: string; selected_guide_subject?: string };
 export type WorkNote = { id: number; group_membership_id: number | null; student_name: string; body: string; author_name: string; created_at: string };
-export type WorkPage = { levels: WorkLevel[]; students: WorkStudent[]; curriculum: WorkBlock[]; lesson_plans: WorkPiece[]; own_pieces: WorkPiece[]; notes: WorkNote[] };
+export type WorkPage = { curriculum_empty_message?: string; levels: WorkLevel[]; students: WorkStudent[]; curriculum: WorkBlock[]; lesson_plans: WorkPiece[]; own_pieces: WorkPiece[]; notes: WorkNote[] };
 export type WorkApi = { get(url: string): Promise<any>; post(url: string, body: unknown): Promise<any>; put(url: string, body: unknown): Promise<any>; delete(url: string, body?: unknown): Promise<any> };
 /** Laravel's work routes use its errors bag; older routes use the data envelope. */
 export function workError(error: any, fallback: string): string {

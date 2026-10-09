@@ -5,6 +5,7 @@
         <button v-if="error" type="button" class="btn btn-outline-secondary mb-3" @click="load">Try again</button>
         <template v-if="page">
             <PerformanceLevelHelp :levels="page.levels" />
+            <p v-if="readonly && page.curriculum_empty_message" class="text-muted">{{ page.curriculum_empty_message }}</p>
             <section v-if="page.curriculum.length" data-work-area="curriculum" class="mb-4">
                 <h3 class="h5">From the curriculum</h3>
                 <SubjectCurriculumBlock v-for="block in page.curriculum" :key="block.grade_key" :block="block" :levels="page.levels"

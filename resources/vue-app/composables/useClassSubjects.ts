@@ -38,7 +38,7 @@ export function classSubjectApi(api: OfficeSubjectTransport, base: string) {
             const res = await read(`${schoolBase}/school-subjects`);
             return (res.data?.data ?? []).map((s: { name: string }) => s.name);
         },
-        save: (id: number | null, data: { name: string; guide_subject?: string | null; tool?: ClassSubjectTool | null; attach_saved_work?: boolean }) =>
+        save: (id: number | null, data: { name: string; guide_subject?: string | null; guide_subjects?: string[]; tool?: ClassSubjectTool | null; attach_saved_work?: boolean }) =>
             json(id === null ? 'post' : 'put', `${base}/subjects${id === null ? '' : `/${id}`}`, data),
         reorder: (ids: number[]) => json('put', `${base}/subjects/reorder`, { subject_ids: ids }),
         hide: (id: number) => api.delete(`${base}/subjects/${id}`),

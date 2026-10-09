@@ -1,6 +1,6 @@
 # Class subject work: notes, pieces and marks
 
-This server build provides steps 2 and 3. It adds no screens, family sharing or report-card summaries.
+Steps 2 and 3 provide subject notes, pieces and marks in the teacher and office screens. Family sharing and report-card summaries are not part of this build.
 
 ## The switch
 
@@ -23,11 +23,11 @@ The initializer has no new saved-text mapping to do: all three new tables alread
 
 ## Tables
 
-Three additive CREATE TABLE migrations use an `id` primary key, named indexes and foreign keys shorter than 64 characters. Existing migrations are unchanged.
+Three additive CREATE TABLE migrations use an `id` primary key, named indexes and foreign keys shorter than 64 characters. The three subject-work CREATE TABLE migrations have not run on a real system and include the Build C guide identity. The live class-subjects table gains its list through a separate nullable JSON migration, with MySQL `ALGORITHM=INSTANT` and no default.
 
 | Table | Meaning and constraints |
 |---|---|
-| `subject_pieces` | A snapshot, or an own piece. Source is `guide`, `plan` or `own`. Guide identity is unique on `(class_subject_id, grade_label, week_no)`; plan identity on `(class_subject_id, lesson_plan_id)`. Guide grade spelling is copied, and subsequent reads resolve grade aliases with `GradeLevel::key()`. A removed plan sets `lesson_plan_id` NULL and leaves its piece and marks. Retiring the creator sets its user ID NULL. Microsecond timestamps preserve marking order. |
+| `subject_pieces` | A snapshot, or an own piece. Source is `guide`, `plan` or `own`. Guide identity is unique on `(class_subject_id, guide_subject, grade_label, week_no)`; plan identity on `(class_subject_id, lesson_plan_id)`. Guide grade spelling is copied, and subsequent reads resolve grade aliases with `GradeLevel::key()`. A removed plan sets `lesson_plan_id` NULL and leaves its piece and marks. Retiring the creator sets its user ID NULL. Microsecond timestamps preserve marking order. |
 | `subject_piece_marks` | Unique `(subject_piece_id, group_membership_id)`. Level is nullable 1..4, comment nullable. No row means unmarked. Saving both empty deletes that student's row. Piece and membership hard deletion cascade; retiring the marker sets its user ID NULL. |
 | `subject_notes` | Body about one class membership, or a whole-class update when membership is NULL. Plain body replacement and deletion, no history. Membership hard deletion cascades so a child's note cannot become a whole-class update. Withdrawing a student does not delete notes. Retiring the author sets its user ID NULL. |
 
@@ -53,7 +53,7 @@ Teacher base: `/api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subj
 
 All teacher routes retain auth, staff token, tenant and `teacher.leads` middleware. `SubjectWorkController::context()` resolves the subject through its class and uses the **one** `SubjectFence::allowsWork()` ID predicate. A foreign organisation/class/child/piece/note/plan ID is 404; a visible subject outside a teacher's limit is 403; a hidden subject is 404 for teachers. Both school grants must be on.
 
-The office has only GET `/work` and GET `/notes` at the same base under `/api/admin`, behind admin, tenant, CRM, `permission:view contacts` and the work capability. The payload is shared with teachers. Office reads include hidden subjects when addressed directly; teacher reads do not. No office writes were added.
+The office has only GET `/work` and GET `/notes` at the same base under `/api/admin`, behind admin, tenant, CRM, `permission:view contacts` and the work capability. The work payload is shared with teachers, with office-only advice when a subject follows no curriculum. Office reads include hidden subjects when addressed directly; teacher reads do not. No office writes were added.
 
 Writes recheck capability, current class, visibility, assignment and students under existing organisation/class/subject primary-key locks, in that order. Current roster membership is required for new notes and every mark save. Existing withdrawn notes remain readable and their bodies can still be corrected; withdrawn marks remain stored but cannot be edited. Deletion confirmation counts all marks, including departed students. A mismatched count returns 409 with `mark_count` and requires confirmation again.
 
@@ -65,7 +65,7 @@ The source's required title must fit the specified 255-character snapshot column
 
 Save `/marks` with `source` and one of:
 
-- `guide`: `grade_label` and `week_no`, or an existing `piece_id`.
+- `guide`: `guide_subject`, `grade_label` and `week_no`, or an existing `piece_id`. A single followed subject can still supply the name for an older caller; several choices require an explicit name. The server checks following only before the first mark; an existing piece can be updated after unfollowing.
 - `plan`: linked `lesson_plan_id`, or an existing `piece_id` (including a piece whose plan was deleted).
 - `own`: existing `piece_id`.
 
@@ -77,9 +77,9 @@ A unique key and Laravel `createOrFirst()` recover a competing first insert insi
 
 `data` includes `subject`, `levels` from the report-card authority `PerformanceLevel::key()`, current `students`, `curriculum`, `lesson_plans`, `own_pieces` and `notes`. Entries/pieces have `piece_id`, copied or live `title` and `detail`, `marks` and `mark_count`; guide entries also include their own `week_no`, grade, quarter and standard code. Unmarked students have no mark row.
 
-Each curriculum block corresponds to one current grade key, contains only that grade's students and is ordered by entry number. Opening uses the piece most recently meaningfully marked for that grade, even if its mark rows were later cleared; otherwise the lowest entry number. No calendar arithmetic or school-year lookup occurs. `GET /work?grade_label=1st&week_no=4` selects a particular entry. Saved entries removed by reimport remain reachable by `piece_id`. Marked plan pieces remain listed after plan deletion. Lessons are ordered newest date first; own pieces newest creation first; note edits do not reorder original creation dates.
+Each curriculum block corresponds to one current grade key, contains only that grade's students and orders by the office's followed subject list, then entry number. Its heading uses the first followed guide column's grade label, falling back to the roster only when there are no live guide rows. Opening uses the piece most recently meaningfully marked for that grade, even if its mark rows were later cleared; otherwise the first entry in that order. No calendar arithmetic or school-year lookup occurs. `GET /work?grade_label=1st&week_no=4&guide_subject=Science` selects a particular entry. Omitting the subject is accepted only when the number identifies exactly one entry for that grade. Blocks include `opening_guide_subject` and `selected_guide_subject` alongside their existing number fields. Saved entries removed by reimport or by changing the following list remain listed and reachable by `piece_id`. Retained guide subjects come after the current choices, in first-piece order, then entry number. Marked plan pieces remain listed after plan deletion. Lessons are ordered newest date first; own pieces newest creation first; note edits do not reorder original creation dates.
 
-Read queries are bulk operations, independent of roster and guide size. The cold teacher HTTP page count is pinned at 18 for 1 and 30 current students, 1 and 40 guide entries, and with a saved piece. The SQL list is recorded in `artifacts/subject-work-query-count.json`. This includes the existing authentication/class/subject fences as well as the page reads; user relation caches can reduce the count on later requests in the same test process.
+Read queries are bulk operations, independent of roster and guide size. The cold teacher HTTP page count is pinned at 18 for 1 and 30 current students, 1 and 40 guide entries, with a saved piece, and with two followed guide subjects and 80 entries. The SQL list is recorded in `artifacts/subject-work-query-count.json`. This includes the existing authentication/class/subject fences as well as the page reads; user relation caches can reduce the count on later requests in the same test process.
 
 Local evidence and limitations are in `artifacts/subject-work-server-report.md`. MySQL grammar compilation is checked without connecting; actual MySQL contention and production operation require separate verification.
 
@@ -89,6 +89,21 @@ When bootstrap has both `class_subjects_enabled: true` and `class_subject_work_e
 
 Teachers choose the server's numbered curriculum entries for each grade, open linked plans or own pieces, and save one entry's levels/comments together. Pressing a selected level clears it. Drafts remain until saved or explicitly discarded when changing entry or class line. Note/piece forms preserve text on failed saves. Piece deletion includes the server count and asks again after a 409 count change. Family sharing is not offered.
 
-The existing work payload preserves copied wording but lacks its copy date and a flag comparing it with current guide words. Build B can render optional `wording_changed` and `marked_against_date` fields if supplied; these are a pending read-contract addition, not fields currently served by Build A. The dated changed-wording notice therefore remains blocked on the contract clarification; no date is guessed.
+The work payload serves `wording_changed` and `marked_against_date` for marked guide entries, comparing copied words against the current guide. Removed or unfollowed entries keep their copied words and date.
 
 Local evidence and limitations: `artifacts/subject-work-screens-report.md`. Mounted tests do not measure actual phone overflow or touch-target geometry.
+
+
+## Multiple curriculum subjects (Build C)
+
+A class subject follows an ordered list of the school's curriculum subjects. `ClassSubject::followedGuideSubjects()` reads `guide_subjects` when non-null; NULL falls back to the existing `guide_subject` or an empty list. The office list API exposes the raw nullable list, and every list writer keeps the single field equal to its first name or NULL. The list is hidden in existing teacher serialization so the work-OFF teacher payloads and SQL remain unchanged. Initializing a class or adding a subject keeps the existing single-match choice and leaves the list NULL.
+
+In Class subjects, edit a subject and tick **Follows the curriculum for**. The checklist is in name order and hints at the guide's own grade labels with entries for the class's current roster grades. Zero choices explicitly follows nothing. Several class subjects may follow the same guide subject. The checklist and manager API are available independently of `class_subject_work`, under the same office authorization as all manager writes.
+
+The manager save accepts `guide_subjects: ["Science", "Joint studies"]`. Each name must exist in this school's guide. Duplicates, non-lists and invalid names are 422. If a request also includes `guide_subject`, it must equal the first list item (or NULL for an empty list). An older update supplying only the single field replaces the list with that one choice or an empty list; omitted fields preserve the saved choice. Office list metadata retains `guide_subjects` (the ordered distinct names) and adds `guide_subject_grades` (names to relevant guide grade labels).
+
+Guide pieces record `guide_subject`. Same-number entries in separate guide subjects stay separate. No curriculum row is merged, split or rewritten. A grade block containing several guide subjects shows each name in its chooser and heading after the entry number and focus. One guide subject keeps the existing wording. Saved work stays listed after unfollowing; new marks on an unfollowed guide are refused. If a subject follows nothing, the office sees “This subject follows no curriculum. Choose one under Class subjects.” Teachers receive no such advice; retained marked entries, when present, still appear.
+
+`class-subjects:initialize --dry-run` and `class-subjects:audit` report curriculum coverage per class: visible subjects following nothing where the guide serves the class's current grades, and guide subjects serving those grades with no visible follower. The initializer diagnoses its proposed list before initialization and the actual list afterwards. Hidden subjects do not count as followers. Both sections contain counts and subject names only and make no writes.
+
+Local Build C evidence and unverified browser/MySQL checks: `artifacts/build-c-report.md`.

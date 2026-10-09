@@ -9486,3 +9486,10 @@ Owner decisions implemented: inclusive today..today+27 ON form offers, collapsed
 - Dates on notes use the user's locale/timezone; copied-wording dates, if supplied, are displayed as the server's ISO date. Lesson row titles/dates/order are server-owned, including retained deleted-plan snapshots.
 - Scope gap awaiting caller answer: Build A has no snapshot date or indication of changed guide words. UI accepts optional wording_changed/marked_against_date and the mounted test is synthetic; the actual server date notice is NOT verified or complete. No server contract was changed by Build B.
 - Browser geometry/assistive technology/staging are outside this mounted/local build and remain unchecked. Guides are owned by the staging-walk session; this build documents local behavior without publishing guides.
+
+## Build C curriculum following (2026-10-09)
+- Store raw nullable guide_subjects; hide it by default in existing teacher serialization, expose explicitly in the office manager. NULL seeds retain existing fallback behaviour. Single-field office updates replace the list; name-only updates preserve it.
+- Retained, unfollowed guide subjects sort after current choices, by first saved piece id, then number. Within followed subjects, removed saved entries keep number order. Grade heading chooses the first office-followed column with rows for the key.
+- Coverage counts visible followers only. Initialize dry-run reports proposed subjects before initial activation and persisted subjects afterwards; audit reports persisted subjects. Match the existing initializer class set, including archived classes and classes carrying subjects/staff.
+- Work requests retain the existing number fields and gain guide-subject selection fields; ambiguous number-only page selection is 422. A legacy first-mark caller may omit the guide name only with exactly one followed subject.
+- Output filename unspecified in brief: artifacts/build-c-report.md. No commit or deployment.

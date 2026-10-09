@@ -11,7 +11,7 @@ class SubjectPiece extends Model
 
     protected $dateFormat = 'Y-m-d H:i:s.u';
 
-    protected $fillable = ['masjid_id', 'class_subject_id', 'source', 'title', 'detail', 'grade_label', 'week_no', 'quarter', 'standard_code', 'lesson_plan_id', 'created_by_user_id'];
+    protected $fillable = ['masjid_id', 'class_subject_id', 'source', 'guide_subject', 'title', 'detail', 'grade_label', 'week_no', 'quarter', 'standard_code', 'lesson_plan_id', 'created_by_user_id'];
     protected $hidden = ['shared_with_family'];
 
     protected function casts(): array

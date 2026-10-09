@@ -233,7 +233,9 @@ test('check 7: rename keeps letters, Holds and curriculum pickers save, each ser
     const { screen, calls } = await setup('office');
     try {
         click(exactButton(screen, 'Rename Arabic')); await flush(); type(field(screen, 'name'), 'Arabic Language');
-        chooseOption(field(screen, 'guide'), 'Science'); submit(screen.all((n) => n.props['data-subject-form'] !== undefined)[0]); await flush();
+        const scienceGuide = screen.all(n => n.props['data-guide-subject'] === 'Science')[0]; scienceGuide.checked = true; scienceGuide.props.onChange({ target: scienceGuide }); await flush(); submit(screen.all((n) => n.props['data-subject-form'] !== undefined)[0]); await flush();
+        assert.deepEqual(calls.filter(c => c.method === 'put').at(-1).body.guide_subjects, ['Science']);
+        assert.equal(calls.filter(c => c.method === 'put').at(-1).body.guide_subject, 'Science');
         await pick(screen, 'Arabic Language'); assert.match(screen.text(), /Practice student/);
         assert.ok(calls.some((c) => c.url?.endsWith('/letters?alphabet=arabic')));
         await pick(screen, 'Roster'); click(exactButton(screen, 'Class subjects (4)')); await flush();
@@ -1495,7 +1497,7 @@ async function workSetup(realm: 'teacher' | 'office' = 'teacher', opts: any = {}
             if (url.endsWith('/marks')) {
                 const pieces = [...work.curriculum.flatMap((b: any) => b.entries), ...work.lesson_plans, ...work.own_pieces];
                 const piece = body.piece_id ? pieces.find((p: any) => p.piece_id === body.piece_id) : body.source === 'guide'
-                    ? pieces.find((p: any) => p.week_no === body.week_no && p.grade_label === body.grade_label) : pieces.find((p: any) => p.lesson_plan_id === body.lesson_plan_id);
+                    ? pieces.find((p: any) => p.guide_subject === body.guide_subject && p.week_no === body.week_no && p.grade_label === body.grade_label) : pieces.find((p: any) => p.lesson_plan_id === body.lesson_plan_id);
                 piece.piece_id ??= 70; piece.marks = body.marks.filter((m: any) => m.level != null || m.comment?.trim()); piece.mark_count = piece.marks.length;
                 return ok({ piece_id: piece.piece_id });
             }
@@ -1719,4 +1721,73 @@ test('work refresh failures: a saved note/piece reports list failure locally wit
         click(s.button('Add a piece')); await flush(); type(workField(s, 'Piece title'), 'Saved task'); failPieces = true; submit(within(area(s, 'own'), n => n.tag === 'form')[0]); await flush(10);
         assert.match(area(s, 'own').textContent, /piece was changed.*pieces could not be reloaded/); assert.equal(workField(s, 'Comment for Practice learner').value, 'Preserved draft');
     } finally { s.unmount(); }
+});
+
+test('Build C office checklist saves zero or several names in shown order with grade hints and failed drafts', async () => {
+    const r = await setup('office', { width: 390, data: { class_subject_work_enabled: false }, read: (url: string) => url.endsWith('/subjects')
+        ? ok(structuredClone(subjects), { guide_subjects: ['English Language Arts', 'Science'], guide_subject_grades: { 'English Language Arts': ['Grade 1', 'Grade 2'], Science: [] }, tools: [] }) : undefined });
+    const s = r.screen;
+    try {
+        click(exactButton(s, 'Rename Arabic')); await flush();
+        assert.match(s.text(), /Grade 1, Grade 2/); assert.match(s.text(), /no entries for this class's grades/);
+        const checks = () => s.all(n => n.props['data-guide-subject'] !== undefined);
+        assert.equal(checks().length, 2);
+        for (const n of [...checks()].reverse()) { n.checked = true; n.props.onChange({ target: n }); } await flush();
+        submit(s.all(n => n.props['data-subject-form'] !== undefined)[0]); await flush(10);
+        assert.deepEqual(r.calls.find(c => c.method === 'put').body.guide_subjects, ['English Language Arts', 'Science']);
+        assert.equal(r.calls.find(c => c.method === 'put').body.guide_subject, 'English Language Arts');
+        click(exactButton(s, 'Rename Arabic')); await flush();
+        for (const n of checks()) { n.checked = false; n.props.onChange({ target: n }); } await flush();
+        submit(s.all(n => n.props['data-subject-form'] !== undefined)[0]); await flush(10);
+        assert.deepEqual(r.calls.filter(c => c.method === 'put').at(-1).body.guide_subjects, []);
+        assert.equal(r.calls.filter(c => c.method === 'put').at(-1).body.guide_subject, null);
+        assert.equal(r.calls.some(c => c.url.endsWith('/work')), false);
+    } finally { s.unmount(); }
+    const refused = await setup('office', { refuse: () => ({ status: 'failed', data: { guide_subjects: ["Choose a subject from this school's curriculum."] } }) });
+    try {
+        click(exactButton(refused.screen, 'Rename Arabic')); await flush();
+        const n = refused.screen.all(n => n.props['data-guide-subject'] === 'Science')[0]; n.checked = true; n.props.onChange({ target: n }); await flush();
+        submit(refused.screen.all(n => n.props['data-subject-form'] !== undefined)[0]); await flush(10);
+        assert.match(refused.screen.text(), /Choose a subject from this school's curriculum/);
+        assert.equal(n.checked, true);
+    } finally { refused.screen.unmount(); }
+});
+
+test('Build C overlapping guide numbers select and save their own subject and show guide headings', async () => {
+    const work: any = workFixture();
+    work.curriculum = [{ ...work.curriculum[0], grade_label: 'Grade 1', opening_guide_subject: 'Joint studies', selected_guide_subject: 'Joint studies', opening_week_no: 12, selected_week_no: 12,
+        entries: [{ ...workEntry(12), guide_subject: 'Science' }, { ...workEntry(12), guide_subject: 'Joint studies' }] }];
+    const r = await workSetup('teacher', { work }); const s = r.screen;
+    try {
+        const select = workField(s, 'Entry for Grade 1');
+        assert.deepEqual(select.children.filter(n => n.tag === 'option').map(n => n.textContent), ['12 · Focus 12 — Science', '12 · Focus 12 — Joint studies']);
+        assert.match(workField(s, 'Curriculum grade 1').textContent, /Grade 1/);
+        type(workField(s, 'Comment for Practice student'), 'Joint comment'); click(areaButton(s, 'curriculum', 'Save')); await flush(10);
+        assert.equal(r.calls.find(c => c.url.endsWith('/marks')).body.guide_subject, 'Joint studies');
+        chooseOption(select, select.children.filter(n => n.tag === 'option')[0].props.value); await flush();
+        assert.match(workField(s, 'Curriculum grade 1').textContent, /12 · Focus 12 — Science/);
+        assert.equal(workField(s, 'Comment for Practice student').value, '');
+    } finally { s.unmount(); }
+});
+
+test('Build C no-following office advice is displayed without a teacher curriculum block', async () => {
+    const work: any = workFixture(); work.curriculum = []; work.curriculum_empty_message = 'This subject follows no curriculum. Choose one under Class subjects.';
+    for (const realm of ['office', 'teacher'] as const) {
+        const r = await workSetup(realm, { work });
+        try { if (realm === 'office') assert.match(r.screen.text(), /This subject follows no curriculum\. Choose one under Class subjects\./); else assert.doesNotMatch(r.screen.text(), /This subject follows no curriculum/); }
+        finally { r.screen.unmount(); }
+    }
+});
+
+test('Build C a grade with one guide keeps focus-only heading and chooser words', async () => {
+    const work: any = workFixture();
+    work.curriculum = [{ ...work.curriculum[0], grade_label: 'Grade 1', opening_guide_subject: 'Science', selected_guide_subject: 'Science', entries: work.curriculum[0].entries.map((entry: any) => ({ ...entry, guide_subject: 'Science' })) }];
+    const r = await workSetup('teacher', { work });
+    try {
+        const select = workField(r.screen, 'Entry for Grade 1');
+        assert.deepEqual(select.children.filter(n => n.tag === 'option').map(n => n.textContent), ['2 · Focus 2', '12 · Focus 12']);
+        const heading = r.screen.all(n => n.tag === 'p' && String(n.props.class).includes('fw-semibold'))[0];
+        assert.equal(heading.textContent, 'Focus 12');
+        assert.equal(r.screen.all(n => n.tag === 'h4' && n.textContent === 'Grade 1').length, 1);
+    } finally { r.screen.unmount(); }
 });

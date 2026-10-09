@@ -12,12 +12,18 @@ class ClassSubject extends Model
 
     public const TOOLS = ['hifdh', 'arabic_letters', 'english_letters'];
 
-    protected $fillable = ['masjid_id', 'group_id', 'name', 'guide_subject', 'tool', 'position', 'hidden_at'];
-    protected $hidden = ['name_key', 'previous_name_keys'];
+    protected $fillable = ['masjid_id', 'group_id', 'name', 'guide_subject', 'guide_subjects', 'tool', 'position', 'hidden_at'];
+    protected $hidden = ['name_key', 'previous_name_keys', 'guide_subjects'];
 
     protected function casts(): array
     {
-        return ['previous_name_keys' => 'array', 'position' => 'integer', 'hidden_at' => 'datetime'];
+        return ['guide_subjects' => 'array', 'previous_name_keys' => 'array', 'position' => 'integer', 'hidden_at' => 'datetime'];
+    }
+
+    /** Ordered office choices; NULL preserves the initializer's single-match fallback. */
+    public function followedGuideSubjects(): array
+    {
+        return $this->guide_subjects ?? ($this->guide_subject === null ? [] : [$this->guide_subject]);
     }
 
     private bool $attachOrphanedSavedWork = false;
@@ -55,6 +61,12 @@ class ClassSubject extends Model
                 $dirty = $this->getDirty();
                 $this->setRawAttributes($current->getAttributes(), true);
                 $this->setRawAttributes(array_replace($this->getAttributes(), $dirty));
+            }
+            // Keep all legacy readers on the first choice. Automatic seeds leave the list NULL.
+            if ($this->isDirty('guide_subjects') && $this->guide_subjects !== null) {
+                $this->guide_subject = $this->guide_subjects[0] ?? null;
+            } elseif ($this->exists && $this->isDirty('guide_subject') && $this->guide_subjects !== null) {
+                $this->guide_subjects = $this->guide_subject === null ? [] : [$this->guide_subject];
             }
             $this->masjid_id = $orgId;
             $this->name = (string) SubjectKey::clean($this->name);

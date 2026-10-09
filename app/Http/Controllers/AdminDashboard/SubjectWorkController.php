@@ -42,7 +42,7 @@ class SubjectWorkController extends Controller
     public function page(Request $request, $masjid_id, $group_id, $subject_id)
     {
         [$group, $subject] = $this->context($request, (int) $group_id, (int) $subject_id);
-        $request->validate(['week_no' => 'sometimes|integer|min:1|max:255', 'grade_label' => 'required_with:week_no|nullable|string|max:32']);
+        $request->validate(['week_no' => 'sometimes|integer|min:1|max:255', 'grade_label' => 'required_with:week_no|nullable|string|max:32', 'guide_subject' => 'nullable|string|max:64']);
         return response()->json(['status' => 'success', 'data' => SubjectWorkPage::data($group, $subject, $request)]);
     }
 
@@ -145,7 +145,7 @@ class SubjectWorkController extends Controller
             $this->refuseSharing($request);
             $fields = $request->validate([
                 'source' => 'required|in:guide,plan,own', 'piece_id' => 'nullable|integer|min:1',
-                'grade_label' => 'nullable|string|max:32', 'week_no' => 'nullable|integer|min:1|max:255',
+                'guide_subject' => 'nullable|string|max:64', 'grade_label' => 'nullable|string|max:32', 'week_no' => 'nullable|integer|min:1|max:255',
                 'lesson_plan_id' => 'nullable|integer|min:1', 'marks' => 'present|array',
                 'marks.*.group_membership_id' => 'required|integer|min:1|distinct',
                 'marks.*.level' => 'nullable|integer|min:1|max:4', 'marks.*.comment' => 'nullable|string',
@@ -196,19 +196,23 @@ class SubjectWorkController extends Controller
             return [$piece, [], []];
         }
         if ($fields['source'] === 'guide') {
-            if ($subject->guide_subject === null || empty($fields['grade_label']) || empty($fields['week_no'])) {
+            if (empty($fields['grade_label']) || empty($fields['week_no'])) {
                 throw ValidationException::withMessages(['grade_label' => ['Choose a curriculum grade and entry number.']]);
             }
-            $piece = SubjectPiece::where('class_subject_id', $subject->id)->where('source', 'guide')->where('week_no', $fields['week_no'])
+            $followed = $subject->followedGuideSubjects();
+            $name = $fields['guide_subject'] ?? (count($followed) === 1 ? $followed[0] : null);
+            if ($name === null) throw ValidationException::withMessages(['guide_subject' => ['Choose the curriculum subject for this entry.']]);
+            $piece = SubjectPiece::where('class_subject_id', $subject->id)->where('source', 'guide')->where('guide_subject', $name)->where('week_no', $fields['week_no'])
                 ->get()->first(fn ($p) => GradeLevel::key($p->grade_label) === GradeLevel::key($fields['grade_label']));
             if ($piece) return [$piece, [], []];
-            $entries = CurriculumWeek::where('subject', $subject->guide_subject)->where('week_no', $fields['week_no'])->get()
+            if (! in_array($name, $followed, true)) throw ValidationException::withMessages(['guide_subject' => ['Choose a curriculum subject this class subject follows.']]);
+            $entries = CurriculumWeek::where('subject', $name)->where('week_no', $fields['week_no'])->get()
                 ->filter(fn ($g) => GradeLevel::key($g->grade_label) === GradeLevel::key($fields['grade_label']));
             if ($entries->count() !== 1) throw ValidationException::withMessages(['week_no' => ['Choose an unambiguous curriculum entry for this grade.']]);
             $entry = $entries->first();
-            $this->snapshotFits(['title' => $entry->focus, 'grade_label' => $entry->grade_label, 'standard_code' => $entry->standard_code]);
+            $this->snapshotFits(['guide_subject' => $name, 'title' => $entry->focus, 'grade_label' => $entry->grade_label, 'standard_code' => $entry->standard_code]);
             return [null, ['title' => $entry->focus, 'detail' => $entry->assessment_note, 'quarter' => $entry->quarter, 'standard_code' => $entry->standard_code],
-                ['class_subject_id' => $subject->id, 'grade_label' => $entry->grade_label, 'week_no' => $entry->week_no]];
+                ['class_subject_id' => $subject->id, 'guide_subject' => $name, 'grade_label' => $entry->grade_label, 'week_no' => $entry->week_no]];
         }
         if ($fields['source'] === 'plan' && isset($fields['lesson_plan_id'])) {
             $plan = LessonPlan::where('group_id', $subject->group_id)->where('class_subject_id', $subject->id)->findOrFail($fields['lesson_plan_id']);
@@ -223,7 +227,7 @@ class SubjectWorkController extends Controller
 
     private function snapshotFits(array $fields): void
     {
-        foreach (['title' => 255, 'grade_label' => 32, 'standard_code' => 32] as $field => $max) {
+        foreach (['guide_subject' => 64, 'title' => 255, 'grade_label' => 32, 'standard_code' => 32] as $field => $max) {
             if (isset($fields[$field]) && mb_strlen($fields[$field]) > $max) {
                 throw ValidationException::withMessages([$field => ["The source {$field} is longer than {$max} characters. Shorten it before marking."]]);
             }

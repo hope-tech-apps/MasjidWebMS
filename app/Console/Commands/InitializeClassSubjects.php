@@ -45,6 +45,12 @@ class InitializeClassSubjects extends Command
                         if (count($subject['attaches_saved_work'] ?? []) > 1) $this->warn('    NOTE: work saved under '.count($subject['attaches_saved_work']).' different names ('.implode(', ', array_keys($subject['attaches_saved_work'])).') will show as ONE subject after switch-on.');
                     }
                     foreach ($row['combined_columns'] ?? [] as $column) $this->line("  curriculum columns that combine subjects on this class's list: {$column['name']} | grades=".implode(', ', $column['grades']));
+                    if ($this->option('dry-run')) {
+                        $coverage = $row['curriculum_coverage'];
+                        $this->line('  Curriculum coverage: '.count($coverage['unfollowed_subjects']).' subjects follow nothing; '.count($coverage['uncovered_guides']).' guide subjects not followed.');
+                        foreach ($coverage['unfollowed_subjects'] as $name) $this->line("    follows no curriculum: {$name}");
+                        foreach ($coverage['uncovered_guides'] as $name) $this->line("    not followed: {$name}");
+                    }
                     foreach ($row['saved_work_links'] ?? [] as $name => $count) $this->line("  LINK {$name}: {$count} items");
                     foreach ($row['orphaned_work'] ?? [] as $key => $count) {
                         $this->line("  saved work under a subject that is not in this class's list: {$key}, {$count} items");

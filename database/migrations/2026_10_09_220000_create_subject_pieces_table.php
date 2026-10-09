@@ -16,6 +16,7 @@ return new class extends Migration
             $table->unsignedBigInteger('masjid_id');
             $table->unsignedBigInteger('class_subject_id');
             $table->string('source', 8);
+            $table->string('guide_subject', 64)->nullable();
             $table->string('title', 255);
             $table->text('detail')->nullable();
             $table->string('grade_label', 32)->nullable();
@@ -27,7 +28,7 @@ return new class extends Migration
             $table->index('masjid_id', 'sw_piece_org_idx');
             $table->index('lesson_plan_id', 'sw_piece_plan_idx');
             $table->index('created_by_user_id', 'sw_piece_creator_idx');
-            $table->unique(['class_subject_id', 'grade_label', 'week_no'], 'sw_piece_guide_unique');
+            $table->unique(['class_subject_id', 'guide_subject', 'grade_label', 'week_no'], 'sw_piece_guide_unique');
             $table->unique(['class_subject_id', 'lesson_plan_id'], 'sw_piece_plan_unique');
             $table->foreign('masjid_id', 'sw_piece_org_fk')->references('id')->on('masjids')->cascadeOnDelete();
             $table->foreign('class_subject_id', 'sw_piece_subject_fk')->references('id')->on('class_subjects')->cascadeOnDelete();

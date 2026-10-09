@@ -7,6 +7,7 @@ export type ClassSubject = {
     name: string;
     position: number;
     guide_subject: string | null;
+    guide_subjects?: string[] | null;
     tool: ClassSubjectTool | null;
     hidden_at: string | null;
     created_at: string;
@@ -24,5 +25,5 @@ export type ClassSubjectFields = {
 export type ClassSubjectListResponse = {
     status: 'success';
     data: ClassSubject[];
-    meta: { guide_subjects: string[]; tools: ClassSubjectTool[] };
+    meta: { guide_subjects: string[]; guide_subject_grades?: Record<string, string[]>; tools: ClassSubjectTool[] };
 };

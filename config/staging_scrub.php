@@ -704,6 +704,8 @@ return [
         'properties.name' => 'The masjid\'s own label for a rental unit ("Unit B, 12 Elm"). The person renting it is properties.tenant_name, which IS anonymised, and properties.address, which IS anonymised.',
         'sections.content' => 'JSON page content an admin composed for the public website. Kept so staging renders real pages; the inventory flags it for a spot-check rather than a blanket scrub because it is publication copy.',
         'class_subjects.guide_subject' => 'Chosen from the organisation’s distinct curriculum subject names, never typed freely.',
+        'class_subjects.guide_subjects' => 'Ordered curriculum reference names selected by the office, never personal text.',
+        'subject_pieces.guide_subject' => 'Copied curriculum reference name identifying the marked entry, never personal text.',
         'class_subjects.tool' => 'One of the three fixed tool keys, never personal text.',
         'group_staff.class_subject_legacy_snapshot' => 'Unused historical legacy enum snapshot retained by a shipped migration; no free text.',
         'group_staff.class_subjects_translated_from' => 'Audit-only copy of legacy subject enum restrictions translated at activation; never an authorization source.',

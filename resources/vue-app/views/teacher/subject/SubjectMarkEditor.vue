@@ -1,6 +1,6 @@
 <template>
     <div class="subject-marks">
-        <p class="fw-semibold mb-1" dir="auto">{{ shown.title }}</p>
+        <p class="fw-semibold mb-1" dir="auto">{{ heading ?? shown.title }}</p>
         <p v-if="shown.standard_code" class="small mb-1" dir="auto">{{ shown.standard_code }}</p>
         <p v-if="shown.detail" class="small" dir="auto">{{ shown.detail }}</p>
         <p v-if="shown.wording_changed && shown.marked_against_date" class="small text-muted">Marked against the wording of {{ shown.marked_against_date }}</p>
@@ -30,7 +30,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { workError, type WorkApi, type WorkLevel, type WorkMark, type WorkPiece, type WorkStudent } from './subjectWork';
-const props = defineProps<{ piece: WorkPiece; students: WorkStudent[]; levels: WorkLevel[]; base: string; api: WorkApi; readonly?: boolean }>();
+const props = defineProps<{ piece: WorkPiece; students: WorkStudent[]; levels: WorkLevel[]; base: string; api: WorkApi; readonly?: boolean; heading?: string }>();
 const emit = defineEmits<{ dirty: [value: boolean]; saved: [piece: WorkPiece] }>();
 const makeDraft = () => props.students.map(student => {
     const mark = props.piece.marks.find(m => m.group_membership_id === student.id);
@@ -55,7 +55,7 @@ const save = async () => {
     const sent = draft.value.map(m => ({ ...m, comment: m.comment || null }));
     const piece = shown.value;
     const identity = piece.piece_id ? { piece_id: piece.piece_id } : piece.source === 'guide'
-        ? { grade_label: piece.grade_label, week_no: piece.week_no } : { lesson_plan_id: piece.lesson_plan_id };
+        ? { guide_subject: piece.guide_subject, grade_label: piece.grade_label, week_no: piece.week_no } : { lesson_plan_id: piece.lesson_plan_id };
     try {
         const response = await props.api.put(`${props.base}/marks`, { source: piece.source, ...identity, marks: sent });
         if (!alive) return;

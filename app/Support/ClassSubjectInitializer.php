@@ -171,7 +171,8 @@ final class ClassSubjectInitializer
             (new ClassSubject($fields))->forceFill(['id' => -($i + 1), 'name_key' => SubjectKey::for($fields['name'])]));
         $report = ['class' => $group->name, 'class_id' => $group->id, 'archived' => $group->trashed(), 'subjects_added' => count($creates),
             'assignments_mapped' => 0, 'creates' => $creates, 'assignments' => [], 'losses' => [], 'blocked' => $blocked,
-            'saved_work_links' => [], 'orphaned_work' => [], 'combined_columns' => $combined];
+            'saved_work_links' => [], 'orphaned_work' => [], 'combined_columns' => $combined,
+            'curriculum_coverage' => ClassSubjectCurriculum::coverage($subjects, $data['guide'], $data['grades']->get($group->id, collect()))];
         $work = [];
         foreach ($data['work'] as $table => $classes) {
             $work[$table] = $classes->get($group->id, collect())->map(function ($row) use ($subjects) {

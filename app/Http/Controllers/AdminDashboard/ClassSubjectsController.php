@@ -10,6 +10,7 @@ use App\Models\CurriculumWeek;
 use App\Models\Group;
 use App\Models\Masjid;
 use App\Support\ClassSubjectInitializer;
+use App\Support\ClassSubjectCurriculum;
 use App\Support\SchoolSettings;
 use App\Support\SubjectFence;
 use App\Support\SubjectKey;
@@ -36,10 +37,13 @@ class ClassSubjectsController extends Controller
             $ids = SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id);
             $query->whereNull('hidden_at')->when($ids !== null, fn ($q) => $q->whereIn('id', $ids));
         }
-        $payload = ['status' => 'success', 'data' => $query->get()];
+        $subjects = $query->get();
+        if ($request->user()->type !== 'Teacher') $subjects->each->makeVisible('guide_subjects');
+        $payload = ['status' => 'success', 'data' => $subjects];
         if ($request->user()->type !== 'Teacher') $payload['meta'] = [
             'guide_subjects' => CurriculumWeek::distinct()->orderBy('subject')->pluck('subject'),
             'tools' => ClassSubject::TOOLS,
+            'guide_subject_grades' => ClassSubjectCurriculum::choices($group),
         ];
         return response()->json($payload);
     }
@@ -52,6 +56,7 @@ class ClassSubjectsController extends Controller
             $ids = SubjectFence::assignedIds((int) $group->id, (int) $request->user()->id);
             abort_if($subject->hidden_at !== null || ! SubjectFence::allowsWork($ids === null ? null : ['class_subject_ids' => $ids], (int) $subject->id), 404);
         }
+        if ($request->user()->type !== 'Teacher') $subject->makeVisible('guide_subjects');
         return response()->json(['status' => 'success', 'data' => $subject]);
     }
 
@@ -60,7 +65,7 @@ class ClassSubjectsController extends Controller
         $group = $this->group((int) $group_id);
         $subject = DB::transaction(function () use ($group, $request) {
             $this->lockGroup($group);
-            $fields = $request->safe()->except('attach_saved_work');
+            $fields = $this->guideFields($request->safe()->except('attach_saved_work'), false);
             if (! array_key_exists('tool', $fields)) {
                 $tool = ClassSubjectInitializer::defaultTool(SubjectKey::for($fields['name']));
                 $fields['tool'] = $tool !== null && ! ClassSubject::where('group_id', $group->id)->where('tool', $tool)->exists() ? $tool : null;
@@ -79,7 +84,7 @@ class ClassSubjectsController extends Controller
             else $subject->save();
             return $subject;
         });
-        return response()->json(['status' => 'success', 'data' => $subject->fresh(), 'attached_saved_work' => $subject->attachedSavedWork()], 201);
+        return response()->json(['status' => 'success', 'data' => $subject->fresh()->makeVisible('guide_subjects'), 'attached_saved_work' => $subject->attachedSavedWork()], 201);
     }
 
     public function update(SaveClassSubjectRequest $request, $masjid_id, $group_id, $subject_id)
@@ -88,11 +93,27 @@ class ClassSubjectsController extends Controller
         $subject = DB::transaction(function () use ($group, $request, $subject_id) {
             $this->lockGroup($group);
             $subject = ClassSubject::where('group_id', $group->id)->findOrFail($subject_id);
-            $this->check($group, $request->validated(), $subject);
-            $subject->update($request->validated());
+            $fields = $this->guideFields($request->validated());
+            $this->check($group, $fields, $subject);
+            $subject->update($fields);
             return $subject->fresh();
         });
-        return response()->json(['status' => 'success', 'data' => $subject]);
+        return response()->json(['status' => 'success', 'data' => $subject->makeVisible('guide_subjects')]);
+    }
+
+    /** Both API generations replace the office choice; omitted fields preserve it. */
+    private function guideFields(array $fields, bool $replaceSingle = true): array
+    {
+        if (array_key_exists('guide_subjects', $fields)) {
+            $first = $fields['guide_subjects'][0] ?? null;
+            if (array_key_exists('guide_subject', $fields) && $fields['guide_subject'] !== $first) {
+                throw ValidationException::withMessages(['guide_subjects' => ['The curriculum list must begin with the single curriculum choice.']]);
+            }
+            $fields['guide_subject'] = $first;
+        } elseif ($replaceSingle && array_key_exists('guide_subject', $fields)) {
+            $fields['guide_subjects'] = $fields['guide_subject'] === null ? [] : [$fields['guide_subject']];
+        }
+        return $fields;
     }
 
     /** Match activation's lock order, before a child insert takes foreign-key shared locks. */
@@ -118,8 +139,14 @@ class ClassSubjectsController extends Controller
         if (isset($fields['tool']) && $others->contains('tool', $fields['tool'])) {
             throw ValidationException::withMessages(['tool' => ['Another subject in this class already holds that tool. Clear its Holds choice first.']]);
         }
-        if (isset($fields['guide_subject']) && ! CurriculumWeek::where('subject', $fields['guide_subject'])->exists()) {
-            throw ValidationException::withMessages(['guide_subject' => ['Choose a subject from this school\'s curriculum.']]);
+        $guides = $fields['guide_subjects'] ?? (isset($fields['guide_subject']) ? [$fields['guide_subject']] : []);
+        if ($guides !== []) {
+            $names = CurriculumWeek::distinct()->pluck('subject')->all();
+            foreach ($guides as $index => $name) {
+                if (in_array($name, $names, true)) continue;
+                $field = array_key_exists('guide_subjects', $fields) ? "guide_subjects.{$index}" : 'guide_subject';
+                throw ValidationException::withMessages([$field => ['Choose a subject from this school\'s curriculum.']]);
+            }
         }
 
     }
@@ -185,6 +212,6 @@ class ClassSubjectsController extends Controller
             $subject->update(['hidden_at' => $hide ? ($subject->hidden_at ?? now()) : null]);
             return $subject->fresh();
         });
-        return response()->json(['status' => 'success', 'data' => $subject]);
+        return response()->json(['status' => 'success', 'data' => $subject->makeVisible('guide_subjects')]);
     }
 }

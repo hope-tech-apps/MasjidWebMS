@@ -490,3 +490,62 @@ it('preserves existing Hifdh and both alphabet records and responses when enable
     foreach ($records as $table => $rows) expect(DB::table($table)->get()->toJson())->toBe($rows);
     foreach ($responses as $url => $payload) expect($this->getJson($this->teacherBase.$url)->assertOk()->json())->toBe($payload);
 });
+
+it('Build C office can follow several valid guide subjects while work is off and teachers cannot write', function () {
+    ($this->catalogue)('Science'); ($this->catalogue)('Arabic');
+    ($this->guide)('Science'); ($this->guide)('Joint studies'); ($this->guide)('Joint studies', 'Grade 2'); ($this->guide)('Senior studies', 'Grade 5');
+    ($this->child)('1'); ($this->child)('2nd');
+    ($this->enable)(); Sanctum::actingAs($this->office);
+    $list = $this->getJson($this->base)->assertOk();
+    expect($list->json('meta.guide_subjects'))->toBe(['Joint studies', 'Science', 'Senior studies']);
+    expect($list->json('meta.guide_subject_grades'))->toBe(['Joint studies' => ['Grade 1', 'Grade 2'], 'Science' => ['Grade 1'], 'Senior studies' => []]);
+    $id = ClassSubject::where('name', 'Science')->firstOrFail()->id;
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => ['Joint studies', 'Science']])->assertOk()->assertJsonPath('data.guide_subject', 'Joint studies')->assertJsonPath('data.guide_subjects', ['Joint studies', 'Science']);
+    $arabic = ClassSubject::where('name', 'Arabic')->firstOrFail();
+    $this->putJson($this->base.'/'.$arabic->id, ['guide_subjects' => ['Joint studies']])->assertOk();
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => [], 'guide_subject' => 'Science'])->assertUnprocessable();
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => ['Science', 'Science']])->assertUnprocessable();
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => ['Foreign guide']])->assertUnprocessable()->assertSee("Choose a subject from this school's curriculum.", false);
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => []])->assertOk()->assertJsonPath('data.guide_subject', null);
+    // Old single-field clients replace the list too, and omission preserves it.
+    $this->putJson($this->base.'/'.$id, ['guide_subject' => 'Science'])->assertOk()->assertJsonPath('data.guide_subjects', ['Science']);
+    $this->putJson($this->base.'/'.$id, ['name' => 'Natural Science'])->assertOk()->assertJsonPath('data.guide_subjects', ['Science']);
+    ($this->guide)('Fresh studies');
+    $added = $this->postJson($this->base, ['name' => 'Fresh studies'])->assertCreated()->json('data');
+    expect($added['guide_subjects'])->toBeNull(); expect($added['guide_subject'])->toBe('Fresh studies');
+    Sanctum::actingAs($this->teacher, ['staff']);
+    expect($this->getJson($this->teacherBase.'/subjects')->assertOk()->json('data.0'))->not->toHaveKey('guide_subjects');
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => []])->assertUnauthorized();
+});
+
+it('Build C coverage diagnostics are per-class visible-only and read-only', function () {
+    ($this->catalogue)('Science'); ($this->catalogue)('Arabic');
+    ($this->guide)('Science'); ($this->guide)('Joint studies'); ($this->guide)('Senior studies', 'Grade 5');
+    ($this->child)('1'); ($this->enable)();
+    $science = ClassSubject::where('name', 'Science')->firstOrFail();
+    $science->update(['guide_subjects' => []]);
+    ClassSubject::where('name', 'Joint studies')->firstOrFail()->update(['hidden_at' => now()]);
+    DB::flushQueryLog(); DB::enableQueryLog();
+    foreach (['class-subjects:initialize', 'class-subjects:audit'] as $command) {
+        $args = ['--masjid' => $this->school->id]; if ($command === 'class-subjects:initialize') $args['--dry-run'] = true;
+        $this->artisan($command, $args)->expectsOutputToContain('Curriculum coverage:')->expectsOutputToContain('follows no curriculum: Science')->expectsOutputToContain('not followed: Joint studies')->assertSuccessful();
+    }
+    $sql = implode("\n", array_column(DB::getQueryLog(), 'query')); DB::disableQueryLog();
+    expect($sql)->not->toMatch('/\b(insert|update|delete|begin|savepoint)\b/i');
+});
+
+it('Build C office validates following names within its school and preserves choices on every refusal', function () {
+    ($this->catalogue)('Science'); ($this->guide)('Science'); ($this->enable)();
+    $foreign = Masjid::create(['name' => 'Foreign practice', 'email' => uniqid().'@example.invalid', 'phone' => '+15555550200', 'country_id' => '1', 'city_id' => '1', 'address' => 'Practice', 'latitude' => 0, 'longitude' => 0, 'org_type' => 'school']);
+    CurriculumWeek::create(['masjid_id' => $foreign->id, 'subject' => 'Foreign guide', 'grade_label' => 'Grade 1', 'week_no' => 1, 'focus' => 'Practice']);
+    Sanctum::actingAs($this->office);
+    $id = ClassSubject::where('name', 'Science')->firstOrFail()->id;
+    $this->getJson($this->base)->assertOk()->assertJsonPath('meta.guide_subjects', ['Science']);
+    foreach ([['Foreign guide'], ['Science', 'Foreign guide'], ['Science', 'Science'], [null], [str_repeat('x', 65)]] as $names) {
+        $this->putJson($this->base.'/'.$id, ['guide_subjects' => $names])->assertUnprocessable()->assertSee("Choose a subject from this school's curriculum.", false);
+        expect(ClassSubject::findOrFail($id)->followedGuideSubjects())->toBe(['Science']);
+    }
+    foreach (['Science', null, [1 => 'Science']] as $badList) $this->putJson($this->base.'/'.$id, ['guide_subjects' => $badList])->assertUnprocessable();
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => ['Science'], 'guide_subject' => null])->assertUnprocessable();
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => ['Science'], 'guide_subject' => 'Science'])->assertOk();
+});

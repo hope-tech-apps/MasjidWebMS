@@ -14,11 +14,18 @@ class SaveClassSubjectRequest extends BaseFormRequest
         if (is_string($this->input('name'))) $this->merge(['name' => SubjectKey::clean($this->input('name'))]);
     }
 
+    public function messages(): array
+    {
+        return ['guide_subjects.*' => "Choose a subject from this school's curriculum."];
+    }
+
     public function rules(): array
     {
         return [
             'name' => [$this->isMethod('post') ? 'required' : 'sometimes', 'required', 'string', 'max:64'],
             'guide_subject' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'guide_subjects' => ['sometimes', 'array', 'list'],
+            'guide_subjects.*' => ['required', 'string', 'max:64', 'distinct:strict'],
             'attach_saved_work' => [$this->isMethod('post') ? 'sometimes' : 'prohibited', 'boolean'],
             'tool' => ['sometimes', 'nullable', Rule::in(ClassSubject::TOOLS)],
         ];

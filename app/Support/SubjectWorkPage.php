@@ -49,7 +49,7 @@ final class SubjectWorkPage
             $editable = $all->whereIn('group_membership_id', $gradeIds ?? $visibleIds);
             return [
                 'piece_id' => (int) $piece->id, 'source' => $piece->source, 'title' => $piece->title, 'detail' => $piece->detail,
-                'grade_label' => $piece->grade_label, 'week_no' => $piece->week_no, 'quarter' => $piece->quarter,
+                'guide_subject' => $piece->guide_subject, 'grade_label' => $piece->grade_label, 'week_no' => $piece->week_no, 'quarter' => $piece->quarter,
                 'standard_code' => $piece->standard_code, 'lesson_plan_id' => $piece->lesson_plan_id,
                 'mark_count' => $all->count(), 'marks' => $editable->map(fn ($mark) => [
                     'group_membership_id' => (int) $mark->group_membership_id, 'level' => $mark->level, 'comment' => $mark->comment,
@@ -58,45 +58,60 @@ final class SubjectWorkPage
         };
 
         $blocks = [];
-        if ($subject->guide_subject !== null) {
-            $guide = CurriculumWeek::where('subject', $subject->guide_subject)->orderBy('week_no')->orderBy('id')->get();
-            foreach ($students->groupBy('grade_key') as $key => $gradeStudents) {
-                if ((string) $key === '') continue;
-                $gradePieces = $pieces->where('source', 'guide')->filter(fn ($p) => GradeLevel::key($p->grade_label) === (string) $key);
-                $entries = [];
-                foreach ($guide->filter(fn ($g) => GradeLevel::key($g->grade_label) === (string) $key) as $entry) {
-                    $piece = $gradePieces->firstWhere('week_no', $entry->week_no);
-                    // A marked entry keeps the words it was marked against; say so when the guide has since changed.
-                    $entries[$entry->week_no] = $piece ? $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
+        $followed = $subject->followedGuideSubjects();
+        // One guide read regardless of how many subjects the office follows.
+        $guide = $followed === [] ? collect() : CurriculumWeek::whereIn('subject', $followed)->orderBy('week_no')->orderBy('id')->get();
+        $identity = fn ($name, $number) => json_encode([$name, (int) $number]);
+        foreach ($students->groupBy('grade_key') as $key => $gradeStudents) {
+            if ((string) $key === '') continue;
+            $gradePieces = $pieces->where('source', 'guide')->filter(fn ($p) => GradeLevel::key($p->grade_label) === (string) $key);
+            $gradeGuide = $guide->filter(fn ($g) => GradeLevel::key($g->grade_label) === (string) $key);
+            $entries = [];
+            foreach ($followed as $name) {
+                foreach ($gradeGuide->where('subject', $name) as $entry) {
+                    $entryKey = $identity($name, $entry->week_no);
+                    $piece = $gradePieces->where('guide_subject', $name)->firstWhere('week_no', $entry->week_no);
+                    // A marked entry keeps the words it was marked against.
+                    $entries[$entryKey] = $piece ? $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
                         'wording_changed' => $piece->title !== $entry->focus || $piece->detail !== $entry->assessment_note || $piece->standard_code !== $entry->standard_code,
                         'marked_against_date' => $piece->created_at?->format('M j, Y'),
                     ] : [
-                        'piece_id' => null, 'source' => 'guide', 'title' => $entry->focus, 'detail' => $entry->assessment_note,
+                        'piece_id' => null, 'source' => 'guide', 'guide_subject' => $name, 'title' => $entry->focus, 'detail' => $entry->assessment_note,
                         'grade_label' => $entry->grade_label, 'week_no' => $entry->week_no, 'quarter' => $entry->quarter,
                         'standard_code' => $entry->standard_code, 'lesson_plan_id' => null, 'mark_count' => 0, 'marks' => [],
                     ];
                 }
-                // A reimport may remove an entry; its saved work is still reachable by piece_id.
-                foreach ($gradePieces as $piece) $entries[$piece->week_no] ??= $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
-                    'wording_changed' => true, 'marked_against_date' => $piece->created_at?->format('M j, Y'),
-                ];
-                ksort($entries, SORT_NUMERIC);
-                if ($entries === []) continue;
-                // A piece exists only after a meaningful mark/comment. Its timestamp keeps
-                // the last marked entry even when a teacher later clears every mark row.
-                $recent = $gradePieces->sort(function ($a, $b) {
-                    return [$b->updated_at->format('Y-m-d H:i:s.u'), (int) $b->id] <=> [$a->updated_at->format('Y-m-d H:i:s.u'), (int) $a->id];
-                })->first();
-                $opening = $recent?->week_no ?? array_key_first($entries);
-                $selected = $opening;
-                if ($request->filled('week_no') && GradeLevel::key($request->input('grade_label')) === (string) $key) {
-                    $selected = (int) $request->input('week_no');
-                    if (! isset($entries[$selected])) throw ValidationException::withMessages(['week_no' => ['Choose an entry for this grade.']]);
-                }
-                $blocks[] = ['grade_label' => $gradeStudents->first()['grade_label'], 'grade_key' => (string) $key,
-                    'students' => $gradeStudents->values()->all(), 'entries' => array_values($entries),
-                    'opening_week_no' => $opening, 'selected_week_no' => $selected];
             }
+            // Removed rows and unfollowed columns retain saved work after the current choices.
+            foreach ($gradePieces as $piece) $entries[$identity($piece->guide_subject, $piece->week_no)] ??= $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
+                'wording_changed' => true, 'marked_against_date' => $piece->created_at?->format('M j, Y'),
+            ];
+            // Sort removed entries within a still-followed subject by number too. Unfollowed saved
+            // subjects follow current choices, in their first-piece order, then entry number.
+            $order = array_values(array_unique([...$followed, ...$gradePieces->sortBy('id')->pluck('guide_subject')->all()]));
+            uasort($entries, fn ($a, $b) => [array_search($a['guide_subject'], $order, true), $a['week_no']] <=> [array_search($b['guide_subject'], $order, true), $b['week_no']]);
+            if ($entries === []) continue;
+            $recent = $gradePieces->sort(function ($a, $b) {
+                return [$b->updated_at->format('Y-m-d H:i:s.u'), (int) $b->id] <=> [$a->updated_at->format('Y-m-d H:i:s.u'), (int) $a->id];
+            })->first();
+            $opening = $recent ? $entries[$identity($recent->guide_subject, $recent->week_no)] : reset($entries);
+            $selected = $opening;
+            if ($request->filled('week_no') && GradeLevel::key($request->input('grade_label')) === (string) $key) {
+                $candidates = collect($entries)->where('week_no', (int) $request->input('week_no'));
+                if ($request->filled('guide_subject')) $candidates = $candidates->where('guide_subject', $request->input('guide_subject'));
+                if ($candidates->count() !== 1) throw ValidationException::withMessages(['week_no' => ['Choose an unambiguous entry and curriculum subject for this grade.']]);
+                $selected = $candidates->first();
+            }
+            // Prefer the first office-followed column's own label, then the roster when no live rows exist.
+            $guideLabel = null;
+            foreach ($followed as $name) {
+                $row = $gradeGuide->firstWhere('subject', $name);
+                if ($row) { $guideLabel = $row->grade_label; break; }
+            }
+            $blocks[] = ['grade_label' => $guideLabel ?? $gradeStudents->first()['grade_label'], 'grade_key' => (string) $key,
+                'students' => $gradeStudents->values()->all(), 'entries' => array_values($entries),
+                'opening_week_no' => $opening['week_no'], 'selected_week_no' => $selected['week_no'],
+                'opening_guide_subject' => $opening['guide_subject'], 'selected_guide_subject' => $selected['guide_subject']];
         }
         if ($request->filled('week_no') && ! collect($blocks)->contains(fn ($b) => $b['grade_key'] === GradeLevel::key($request->input('grade_label')))) {
             throw ValidationException::withMessages(['grade_label' => ['Choose a current grade with curriculum entries.']]);
@@ -116,7 +131,8 @@ final class SubjectWorkPage
         }
         $planData = $planData->sortByDesc(fn ($p) => substr($p['title'], 0, 10))->values(); // Title begins with the copied ISO date, including deleted plans.
 
-        return ['subject' => $subject, 'levels' => PerformanceLevel::key(), 'students' => $students->all(),
+        return ($request->user()->type !== 'Teacher' && $followed === []
+            ? ['curriculum_empty_message' => 'This subject follows no curriculum. Choose one under Class subjects.'] : []) + ['subject' => $subject, 'levels' => PerformanceLevel::key(), 'students' => $students->all(),
             'curriculum' => $blocks, 'lesson_plans' => $planData->all(),
             'own_pieces' => $pieces->where('source', 'own')->map(fn ($piece) => $pieceData($piece))->values()->all(), 'notes' => self::notes($subject)];
     }

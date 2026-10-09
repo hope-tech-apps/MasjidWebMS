@@ -188,7 +188,7 @@ it('recovers a competing first guide insert through its unique key', function ()
         // Simulate a competing commit after our lookup but before the insertion's
         // savepoint. A duplicate rollback cannot roll back this winner as well.
         DB::table('subject_pieces')->insert(['masjid_id' => $this->org->id,
-            'class_subject_id' => $this->subject->id, 'source' => 'guide', 'title' => 'Winning snapshot',
+            'class_subject_id' => $this->subject->id, 'source' => 'guide', 'guide_subject' => 'Science', 'title' => 'Winning snapshot',
             'grade_label' => 'Grade 1', 'week_no' => 4, 'created_at' => now(), 'updated_at' => now()]);
     });
     ($this->saveGuide)([($this->mark)()])->assertOk();
@@ -264,6 +264,10 @@ it('has a fixed page query count for 1 and 30 students and 1 and 40 guide entrie
     expect(count($large))->toBe(18);
     ($this->saveGuide)([($this->mark)()])->assertOk();
     expect(count($read()))->toBe(count($small));
+    for ($i = 1; $i <= 40; $i++) ($this->guide)($i, 'Grade 1', 'Joint studies');
+    $this->subject->update(['guide_subjects' => ['Science', 'Joint studies']]);
+    expect(count($read()))->toBe(18);
+    $this->getJson($this->base.'/work')->assertJsonCount(80, 'data.curriculum.0.entries');
     file_put_contents(base_path('artifacts/subject-work-query-count.json'), json_encode(['small' => count($small), 'large' => count($large), 'sql' => $large], JSON_PRETTY_PRINT)."\n");
 });
 
@@ -401,6 +405,10 @@ it('compiles the three new migrations with the MySQL grammar without connecting'
             expect($sql)->not->toBeEmpty();
             $create = $sql[0]['query'];
             expect($create)->toContain('`id` bigint unsigned not null auto_increment primary key');
+            if (str_ends_with($file, 'create_subject_pieces_table.php')) {
+                expect($create)->toContain('`guide_subject` varchar(64) null');
+                expect(implode('\n', array_column($sql, 'query')))->toContain('(`class_subject_id`, `guide_subject`, `grade_label`, `week_no`)');
+            }
             foreach ($sql as $statement) {
                 preg_match_all('/(?:index|constraint|unique) `([^`]+)`/', $statement['query'], $names);
                 foreach ($names[1] as $name) expect(strlen($name))->toBeLessThan(64);
@@ -556,4 +564,105 @@ it('says when a marked curriculum entry was marked against earlier wording', fun
     ($this->guide)(5);
     $unmarked = collect($this->getJson($this->base.'/work')->json('data.curriculum.0.entries'))->firstWhere('week_no', 5);
     expect($unmarked)->not->toHaveKey('wording_changed');
+});
+
+it('Build C reads nullable ordered following lists with explicit empty overriding legacy', function () {
+    expect($this->subject->followedGuideSubjects())->toBe(['Science']);
+    $this->subject->update(['guide_subjects' => ['Science', 'Joint studies']]);
+    expect($this->subject->fresh()->followedGuideSubjects())->toBe(['Science', 'Joint studies']);
+    $this->subject->update(['guide_subjects' => []]);
+    expect($this->subject->fresh()->followedGuideSubjects())->toBe([]);
+    expect($this->subject->fresh()->guide_subject)->toBeNull();
+});
+
+it('Build C orders overlapping guide numbers by following order and uses guide grade labels', function () {
+    ($this->guide)(1, 'Grade 1', 'Joint studies');
+    ($this->guide)(4, 'Grade 1', 'Joint studies');
+    ($this->guide)(2, 'Grade 2', 'Joint studies');
+    $this->subject->update(['guide_subjects' => ['Joint studies', 'Science']]);
+    $blocks = $this->getJson($this->base.'/work')->assertOk()->json('data.curriculum');
+    expect($blocks[0]['grade_label'])->toBe('Grade 1');
+    expect(array_column($blocks[0]['entries'], 'guide_subject'))->toBe(['Joint studies', 'Joint studies', 'Science']);
+    expect(array_column($blocks[0]['entries'], 'week_no'))->toBe([1, 4, 4]);
+    expect($blocks[0]['opening_guide_subject'])->toBe('Joint studies');
+    $this->getJson($this->base.'/work?grade_label=1&week_no=4&guide_subject=Science')->assertOk()->assertJsonPath('data.curriculum.0.selected_guide_subject', 'Science');
+    $this->getJson($this->base.'/work?grade_label=1&week_no=4')->assertUnprocessable();
+    $this->getJson($this->base.'/work?grade_label=1&week_no=4&guide_subject=Unknown')->assertUnprocessable();
+});
+
+it('Build C marks each guide identity and retains unfollowed saved work with no first marks allowed', function () {
+    ($this->guide)(4, 'Grade 1', 'Joint studies');
+    ($this->guide)(5, 'Grade 1', 'Joint studies');
+    $this->subject->update(['guide_subjects' => ['Science', 'Joint studies']]);
+    $save = fn ($guide, $week = 4) => $this->putJson($this->base.'/marks', ['source' => 'guide', 'guide_subject' => $guide, 'grade_label' => '1', 'week_no' => $week, 'marks' => [($this->mark)()]]);
+    ($this->saveGuide)([($this->mark)()])->assertUnprocessable();
+    $save('Science')->assertOk(); $this->travel(1)->seconds(); $save('Joint studies')->assertOk();
+    expect(SubjectPiece::count())->toBe(2);
+    expect(SubjectPiece::orderBy('id')->pluck('guide_subject')->all())->toBe(['Science', 'Joint studies']);
+    $this->getJson($this->base.'/work')->assertJsonPath('data.curriculum.0.opening_guide_subject', 'Joint studies');
+    $this->subject->update(['guide_subjects' => []]);
+    $page = $this->getJson($this->base.'/work')->assertOk()->json('data');
+    expect($page['curriculum'][0]['grade_label'])->toBe('1st');
+    expect($page['curriculum'][0]['entries'])->toHaveCount(2);
+    $save('Joint studies', 5)->assertUnprocessable();
+    $save('Joint studies')->assertOk();
+    $piece = SubjectPiece::where('guide_subject', 'Science')->firstOrFail();
+    $this->putJson($this->base.'/marks', ['source' => 'guide', 'piece_id' => $piece->id, 'marks' => [($this->mark)(null, 4)]])->assertOk();
+    expect(SubjectPiece::count())->toBe(2);
+});
+
+it('Build C serves no-following advice only to the office', function () {
+    $this->subject->update(['guide_subjects' => []]);
+    $teacher = $this->getJson($this->base.'/work')->assertOk()->json('data');
+    expect($teacher['curriculum'])->toBe([]);
+    expect($teacher)->not->toHaveKey('curriculum_empty_message');
+    Sanctum::actingAs($this->office);
+    $this->getJson(str_replace('/teacher/', '/admin/', $this->base).'/work')->assertOk()->assertJsonPath('data.curriculum_empty_message', 'This subject follows no curriculum. Choose one under Class subjects.');
+});
+
+it('Build C has nullable JSON fallback and guide uniqueness including its subject', function () {
+    $column = collect(Schema::getColumns('class_subjects'))->firstWhere('name', 'guide_subjects');
+    expect($column['nullable'])->toBeTrue(); expect($column['default'])->toBeNull();
+    expect($column['type_name'])->toBe('text'); // SQLite represents Blueprint JSON as text.
+    expect(collect(Schema::getIndexes('subject_pieces'))->firstWhere('name', 'sw_piece_guide_unique')['columns'])->toBe(['class_subject_id', 'guide_subject', 'grade_label', 'week_no']);
+    $code = file_get_contents(database_path('migrations/2026_10_09_230000_add_guide_subjects_to_class_subjects_table.php'));
+    expect($code)->toContain('JSON NULL, ALGORITHM=INSTANT')->not->toContain('DEFAULT');
+});
+
+it('Build C includes grades served only by the joint guide and preserves first-mark words across list edits', function () {
+    $third = ($this->student)('3');
+    ($this->guide)(9, 'Grade 3', 'Joint studies');
+    $this->subject->update(['guide_subjects' => ['Science', 'Joint studies']]);
+    $blocks = $this->getJson($this->base.'/work')->assertOk()->json('data.curriculum');
+    expect($blocks[2]['grade_label'])->toBe('Grade 3');
+    expect(array_column($blocks[2]['entries'], 'guide_subject'))->toBe(['Joint studies']);
+    $fields = ['source' => 'guide', 'guide_subject' => 'Joint studies', 'grade_label' => '3rd', 'week_no' => 9, 'marks' => [($this->mark)($third, 4, 'Kept words')]];
+    $this->putJson($this->base.'/marks', $fields)->assertOk();
+    $piece = SubjectPiece::where('guide_subject', 'Joint studies')->firstOrFail();
+    CurriculumWeek::where('subject', 'Joint studies')->delete();
+    $this->subject->update(['guide_subjects' => ['Science']]);
+    $after = $this->getJson($this->base.'/work')->assertOk()->json('data.curriculum.2');
+    expect($after['grade_label'])->toBe('3');
+    expect($after['entries'][0]['title'])->toBe('Practice focus 9');
+    expect($after['entries'][0]['marks'][0]['comment'])->toBe('Kept words');
+    expect($after['opening_guide_subject'])->toBe('Joint studies');
+    $this->putJson($this->base.'/marks', $fields)->assertOk();
+    expect(SubjectPiece::where('guide_subject', 'Joint studies')->count())->toBe(1);
+    expect($piece->fresh()->title)->toBe('Practice focus 9');
+});
+
+it('Build C emits only an instant nullable JSON addition on MySQL and restores fallback on SQLite rollback', function () {
+    $migration = require database_path('migrations/2026_10_09_230000_add_guide_subjects_to_class_subjects_table.php');
+    $connection = new \Illuminate\Database\MySqlConnection(fn () => throw new \RuntimeException('Must not connect'), 'practice', '', ['driver' => 'mysql']);
+    $previous = DB::getFacadeRoot();
+    try {
+        DB::swap($connection);
+        $sql = $connection->pretend(fn () => $migration->up());
+        expect(array_column($sql, 'query'))->toBe(['ALTER TABLE `class_subjects` ADD COLUMN `guide_subjects` JSON NULL, ALGORITHM=INSTANT']);
+    } finally { DB::swap($previous); }
+    $migration->down();
+    expect(Schema::hasColumn('class_subjects', 'guide_subjects'))->toBeFalse();
+    $migration->up();
+    expect($this->subject->fresh()->guide_subjects)->toBeNull();
+    expect($this->subject->fresh()->followedGuideSubjects())->toBe(['Science']);
 });

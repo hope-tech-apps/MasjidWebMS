@@ -15,7 +15,7 @@
                         <span class="fw-semibold" dir="auto">{{ subject.name }}</span>
                         <span v-if="subject.hidden_at" class="badge bg-secondary">Hidden</span>
                         <span class="text-muted small">Holds: {{ toolLabel(subject.tool) }}</span>
-                        <span v-if="subject.guide_subject" class="text-muted small">Follows the curriculum for: {{ subject.guide_subject }}</span>
+                        <span v-if="followed(subject).length" class="text-muted small">Follows the curriculum for: {{ followed(subject).join(', ') }}</span>
                     </div>
                     <div class="d-flex flex-wrap gap-2 mt-2">
                         <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="saving" :aria-label="`Rename ${subject.name}`" @click="edit(subject)">Rename</button>
@@ -56,7 +56,7 @@
                         <label :for="`${id}-name`" class="form-label">Name</label>
                         <input :id="`${id}-name`" ref="nameField" v-model="form.name" data-subject-field="name" class="form-control" maxlength="64" required :disabled="saving">
                     </div>
-                    <div class="col-12 col-md-6">
+                    <div v-if="editing === null" class="col-12 col-md-6">
                         <label :for="`${id}-guide`" class="form-label">Follows the curriculum for</label>
                         <select :id="`${id}-guide`" v-model="form.guide_subject" data-subject-field="guide" class="form-select" :disabled="saving">
                             <option v-if="editing === null" :value="undefined">Choose automatically</option>
@@ -64,6 +64,14 @@
                             <option v-for="name in guideChoices" :key="name" :value="name">{{ name }}</option>
                         </select>
                     </div>
+                    <fieldset v-if="editing !== null" class="col-12 curriculum-checklist">
+                        <legend class="h6">Follows the curriculum for</legend>
+                        <label v-for="name in guideSubjects" :key="name" class="d-flex gap-2 align-items-start py-2">
+                            <input type="checkbox" class="form-check-input flex-shrink-0" :data-guide-subject="name" :checked="form.guide_subjects.includes(name)" :disabled="saving" @change="toggleGuide(name, $event)">
+                            <span dir="auto">{{ name }}<small class="d-block text-muted">{{ guideGrades[name]?.length ? guideGrades[name].join(', ') : "no entries for this class's grades" }}</small></span>
+                        </label>
+                        <p v-if="!guideSubjects.length" class="text-muted small">This school has no curriculum subjects yet.</p>
+                    </fieldset>
                     <div class="col-12 col-md-6">
                         <label :for="`${id}-tool`" class="form-label">Holds</label>
                         <select :id="`${id}-tool`" v-model="form.tool" data-subject-field="tool" class="form-select" :disabled="saving">
@@ -105,6 +113,7 @@ const id = `class-subject-form-${useId()}`;
 const expanded = ref(false);
 const subjects = ref<ClassSubject[]>([]);
 const guideSubjects = ref<string[]>([]);
+const guideGrades = ref<Record<string, string[]>>({});
 const schoolNames = ref<string[]>([]);
 const loading = ref(true);
 const loaded = ref(false);
@@ -115,8 +124,8 @@ const success = ref('');
 const editing = ref<number | null>(null);
 const removing = ref<ClassSubject | null>(null);
 const nameField = ref<HTMLElement | null>(null);
-type SubjectForm = { name: string; guide_subject: string | null | undefined; tool: ClassSubjectTool | null | undefined };
-const freshForm = (): SubjectForm => ({ name: '', guide_subject: undefined, tool: undefined });
+type SubjectForm = { name: string; guide_subject: string | null | undefined; guide_subjects: string[]; tool: ClassSubjectTool | null | undefined };
+const freshForm = (): SubjectForm => ({ name: '', guide_subject: undefined, guide_subjects: [], tool: undefined });
 const form = ref(freshForm());
 const attachSavedWork = ref(false);
 const guideChoices = computed(() => [...new Set([...guideSubjects.value, ...(form.value.guide_subject ? [form.value.guide_subject] : [])])]);
@@ -131,6 +140,7 @@ const reload = async () => {
     if (!alive || token !== generation) return;
     subjects.value = response.data;
     guideSubjects.value = response.meta.guide_subjects;
+    guideGrades.value = response.meta.guide_subject_grades ?? {};
     loaded.value = true;
     emit('changed', subjects.value);
 };
@@ -149,9 +159,14 @@ const cancel = () => { editing.value = null; form.value = freshForm(); attachSav
 const edit = (subject: ClassSubject) => {
     if (saving.value) return;
     editing.value = subject.id;
-    form.value = { name: subject.name, guide_subject: subject.guide_subject, tool: subject.tool };
+    form.value = { name: subject.name, guide_subject: subject.guide_subject, guide_subjects: [...followed(subject)], tool: subject.tool };
     error.value = ''; success.value = ''; removing.value = null;
     nextTick(() => nameField.value?.focus());
+};
+const followed = (subject: ClassSubject) => subject.guide_subjects ?? (subject.guide_subject ? [subject.guide_subject] : []);
+const toggleGuide = (name: string, event: Event) => {
+    const ticked = (event.target as HTMLInputElement).checked;
+    form.value.guide_subjects = ticked ? [...new Set([...form.value.guide_subjects, name])] : form.value.guide_subjects.filter(value => value !== name);
 };
 const fromList = (event: Event) => { const name = (event.target as HTMLSelectElement).value; if (name) form.value.name = name; };
 const fromCurriculum = (event: Event) => {
@@ -178,8 +193,11 @@ const mutate = async (write: () => Promise<unknown>, words: string | ((response:
 };
 const save = () => {
     if (!form.value.name.trim() || saving.value) return;
-    const payload: { name: string; guide_subject?: string | null; tool?: ClassSubjectTool | null; attach_saved_work?: boolean } = { name: form.value.name.trim() };
-    if (form.value.guide_subject !== undefined) payload.guide_subject = form.value.guide_subject;
+    const payload: { name: string; guide_subject?: string | null; guide_subjects?: string[]; tool?: ClassSubjectTool | null; attach_saved_work?: boolean } = { name: form.value.name.trim() };
+    if (editing.value !== null) {
+        payload.guide_subjects = guideSubjects.value.filter(name => form.value.guide_subjects.includes(name));
+        payload.guide_subject = payload.guide_subjects[0] ?? null;
+    } else if (form.value.guide_subject !== undefined) payload.guide_subject = form.value.guide_subject;
     if (form.value.tool !== undefined) payload.tool = form.value.tool;
     if (editing.value === null && attachSavedWork.value) payload.attach_saved_work = true;
     return mutate(() => api().save(editing.value, payload), editing.value === null ? 'Subject added.' : 'Subject saved.', cancel);
@@ -207,5 +225,7 @@ onBeforeUnmount(() => { alive = false; ++generation; });
 
 <style scoped>
 .class-subject-manager { text-align: start; min-width: 0; overflow-wrap: anywhere; }
+.curriculum-checklist { min-width: 0; }
+.curriculum-checklist label span { min-width: 0; overflow-wrap: anywhere; }
 .class-subject-manager .btn { white-space: normal; min-height: 44px; }
 </style>
