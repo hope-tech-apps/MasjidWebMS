@@ -171,13 +171,17 @@ class SubjectWorkController extends Controller
                     $piece = SubjectPiece::where($identity)->lockForUpdate()->firstOrFail();
                 }
             }
+            // Two statements however many students: one upsert on the (piece, student) key, one delete.
+            $keep = []; $clear = [];
             foreach ($fields['marks'] as $mark) {
-                $address = ['subject_piece_id' => $piece->id, 'group_membership_id' => $mark['group_membership_id']];
                 $level = $mark['level'] ?? null; $comment = filled($mark['comment'] ?? null) ? $mark['comment'] : null;
-                if ($level === null && $comment === null) SubjectPieceMark::where($address)->delete();
-                else SubjectPieceMark::updateOrCreate($address, ['masjid_id' => $group->masjid_id, 'level' => $level,
-                    'comment' => $comment, 'marked_by_user_id' => $request->user()->id]);
+                if ($level === null && $comment === null) $clear[] = (int) $mark['group_membership_id'];
+                else $keep[(int) $mark['group_membership_id']] = ['masjid_id' => $group->masjid_id, 'subject_piece_id' => $piece->id,
+                    'group_membership_id' => (int) $mark['group_membership_id'], 'level' => $level, 'comment' => $comment,
+                    'marked_by_user_id' => $request->user()->id];
             }
+            if ($keep !== []) SubjectPieceMark::upsert(array_values($keep), ['subject_piece_id', 'group_membership_id'], ['level', 'comment', 'marked_by_user_id']);
+            if ($clear !== []) SubjectPieceMark::where('subject_piece_id', $piece->id)->whereIn('group_membership_id', $clear)->delete();
             if ($meaningful) $piece->touch();
             return $piece;
         });

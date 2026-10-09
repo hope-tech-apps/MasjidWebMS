@@ -102,7 +102,12 @@ final class SubjectWorkPage
             return $piece ? $pieceData($piece) : ['piece_id' => null, 'source' => 'plan', 'lesson_plan_id' => (int) $plan->id,
                 'title' => self::planTitle($plan), 'detail' => null, 'mark_count' => 0, 'marks' => []];
         });
-        foreach ($pieces->where('source', 'plan')->whereNull('lesson_plan_id') as $piece) $planData->push($pieceData($piece));
+        // A marked plan stays on the subject it was marked under: its piece is listed even after the
+        // plan is deleted (no plan id) or linked to another subject (a plan id this subject no longer lists).
+        $listed = $plans->pluck('id')->all();
+        foreach ($pieces->where('source', 'plan') as $piece) {
+            if ($piece->lesson_plan_id === null || ! in_array($piece->lesson_plan_id, $listed)) $planData->push($pieceData($piece));
+        }
         $planData = $planData->sortByDesc(fn ($p) => substr($p['title'], 0, 10))->values(); // Title begins with the copied ISO date, including deleted plans.
 
         return ['subject' => $subject, 'levels' => PerformanceLevel::key(), 'students' => $students->all(),

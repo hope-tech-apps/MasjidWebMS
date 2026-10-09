@@ -492,3 +492,49 @@ it('keeps newest plan order for a subject renamed between two plans on the same 
     $new = ($this->plan)(); $new->update(['objective' => 'Alpha practice']);
     $this->getJson($this->base.'/work')->assertOk()->assertJsonPath('data.lesson_plans.0.lesson_plan_id', $new->id);
 });
+
+it('review keeps a marked plan on the subject it was marked under after the plan is linked elsewhere', function () {
+    $plan = ($this->plan)();
+    $this->putJson($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)($this->one, 4, 'Kept')]])->assertOk();
+    $plan->forceFill(['class_subject_id' => $this->other->id, 'subject' => $this->other->name])->save();
+
+    $plans = $this->getJson($this->base.'/work')->assertOk()->json('data.lesson_plans');
+    expect($plans)->toHaveCount(1);
+    expect($plans[0]['mark_count'])->toBe(1);
+    expect(collect($plans[0]['marks'])->firstWhere('group_membership_id', $this->one->id)['comment'])->toBe('Kept');
+
+    // The other subject lists the plan itself, unmarked: marks do not follow a relink.
+    $otherBase = str_replace('/subjects/'.$this->subject->id, '/subjects/'.$this->other->id, $this->base);
+    $there = $this->getJson($otherBase.'/work')->assertOk()->json('data.lesson_plans');
+    expect($there)->toHaveCount(1);
+    expect($there[0]['piece_id'])->toBeNull();
+});
+
+it('review refuses to turn a class with notes or pieces into a general group', function (string $kind) {
+    if ($kind === 'note') $this->postJson($this->base.'/notes', ['body' => 'Practice note'])->assertSuccessful();
+    else $this->postJson($this->base.'/pieces', ['title' => 'Practice piece'])->assertSuccessful();
+    app(TenantContext::class)->forgetTenant(); app('auth')->forgetGuards();
+    Sanctum::actingAs($this->office, ['staff']);
+
+    $this->putJson("/api/admin/masjids/{$this->org->id}/groups/{$this->group->id}", ['name' => $this->group->name, 'kind' => 'general'])->assertStatus(422);
+    expect($this->group->fresh()->kind)->toBe('class');
+})->with(['note', 'piece']);
+
+it('review saves marks in the same number of statements for one student and for thirty', function () {
+    $members = collect(range(1, 30))->map(fn () => ($this->student)());
+    $count = function (array $marks): int {
+        DB::flushQueryLog(); DB::enableQueryLog();
+        ($this->saveGuide)($marks)->assertOk();
+        $n = count(DB::getQueryLog()); DB::disableQueryLog();
+        return $n;
+    };
+    ($this->saveGuide)([($this->mark)()])->assertOk(); // the piece exists from here on
+    $one = $count([($this->mark)($this->one, 2, 'Again')]);
+    $thirty = $count($members->map(fn ($m) => ($this->mark)($m, 3, 'Practice'))->all());
+    expect($thirty)->toBe($one);
+    expect(SubjectPieceMark::count())->toBe(31);
+    // Clearing goes through the same two statements and removes the rows.
+    $cleared = $count($members->map(fn ($m) => ($this->mark)($m, null, null))->all());
+    expect($cleared)->toBeLessThanOrEqual($one);
+    expect(SubjectPieceMark::count())->toBe(1);
+});

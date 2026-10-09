@@ -203,7 +203,10 @@ class Group extends Model
                 $work = $this->assignments()->whereNotNull('subject')->exists()
                     || $this->lessonPlans()->whereNotNull('subject')->exists()
                     || $this->hifzEntries()->exists() || $this->arabicLetterProgress()->exists()
-                    || \App\Models\ArabicDailyNote::where('group_id', $this->id)->exists();
+                    || \App\Models\ArabicDailyNote::where('group_id', $this->id)->exists()
+                    // Notes, pieces and marks hang off the class's subjects; a general group has no page to reach them.
+                    || \App\Models\SubjectNote::whereIn('class_subject_id', \App\Models\ClassSubject::where('group_id', $this->id)->select('id'))->exists()
+                    || \App\Models\SubjectPiece::whereIn('class_subject_id', \App\Models\ClassSubject::where('group_id', $this->id)->select('id'))->exists();
                 if ($restricted || $work) throw \Illuminate\Validation\ValidationException::withMessages(['kind' => ['Keep this group as a class while it has subject restrictions or saved subject work.']]);
             }
             $saved = parent::save($options);
