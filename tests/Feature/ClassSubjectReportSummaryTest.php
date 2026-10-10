@@ -316,3 +316,16 @@ it('isolates reference counts and office reads from another class and school', f
     $this->getJson($base."/{$this->group->id}/members/{$this->student->id}/report-card?school_year=2024-2025&term=1")->assertNotFound();
     expect(ReportCard::count())->toBe(1);
 });
+
+it('review refuses the office reads for a group that is not a class', function () {
+    ($this->enableSummary)();
+    $this->getJson($this->url)->assertOk();
+    $general = Group::factory()->create(['masjid_id' => $this->org->id, 'kind' => 'general']);
+    $contact = Contact::factory()->create(['masjid_id' => $this->org->id]);
+    $member = GroupMembership::create(['masjid_id' => $this->org->id, 'group_id' => $general->id, 'contact_id' => $contact->id, 'role' => 'member']);
+    app(TenantContext::class)->forgetTenant(); app('auth')->forgetGuards();
+    Sanctum::actingAs($this->office);
+    $base = "/api/admin/masjids/{$this->org->id}/groups/{$general->id}";
+    $this->getJson($base.'/report-cards')->assertNotFound();
+    $this->getJson($base.'/members/'.$member->id.'/report-card')->assertNotFound();
+});

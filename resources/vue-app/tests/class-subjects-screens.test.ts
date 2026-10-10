@@ -2052,3 +2052,13 @@ test('office report summary ON opens an existing card with its own subject link 
         assert.doesNotMatch(r.screen.text(), /Send to the family|Take it back|\bSave\b/);
     } finally { r.screen.unmount(); }
 });
+
+test('review: a report-card line that closes under a teacher drops her pending change and says so', () => {
+    // The race needs the office to change who teaches a subject while a save is travelling; no mounted test
+    // here can stage that. Pin the rule: a closed line with a pending change goes back to what is stored,
+    // the teacher is told, and "Saved" is not shown over it.
+    const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+    assert.match(source, /if \(stored\) draft\.value\[id\] = \{ \.\.\.stored \}; else delete draft\.value\[id\];/);
+    assert.match(source, /if \(dropped\) \{ closedLineNotice\.value = true; cardSaved\.value = false; \}/);
+    assert.match(source, /A line you changed is now filled in by its own teacher\. Your change there was not saved\./);
+});

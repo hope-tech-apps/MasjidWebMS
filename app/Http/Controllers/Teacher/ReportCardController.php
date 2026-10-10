@@ -63,6 +63,8 @@ class ReportCardController extends TeacherController
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
+        // The teacher's route is already fenced to classes the teacher leads; the office's is fenced here.
+        if ($request->user()?->type !== 'Teacher') abort_unless($group->teachesStudents(), Response::HTTP_NOT_FOUND);
         [$type, $year, $term] = $this->period($request);
 
         $cards = ReportCard::query()
@@ -147,6 +149,8 @@ class ReportCardController extends TeacherController
     public function officeShow(Request $request, $masjid_id, $group_id, $membership_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
+        // Report cards belong to classes; the office's read is not a way into another kind of group.
+        abort_unless($group->teachesStudents(), Response::HTTP_NOT_FOUND);
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
         [$type, $year, $term] = $this->period($request);
         $card = ReportCard::where('group_id', $group->id)->where('group_membership_id', $membership->id)

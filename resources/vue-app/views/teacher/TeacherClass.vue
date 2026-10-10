@@ -2582,6 +2582,7 @@
                                 {{ unsavedCount }} change{{ unsavedCount === 1 ? '' : 's' }} not saved
                             </span>
                             <span v-if="cardSaved" class="text-success small"><i class="bi bi-check-circle me-1"></i>Saved</span>
+                            <span v-if="closedLineNotice" class="text-danger-emphasis small d-block" role="alert">A line you changed is now filled in by its own teacher. Your change there was not saved.</span>
                         </template>
                         <template v-else>
                             <span class="small">{{ unsavedCount }} change{{ unsavedCount === 1 ? '' : 's' }} not saved.</span>
@@ -6469,6 +6470,20 @@ const isDirty = (id: number): boolean => {
 const canFillReportLine = (id: number): boolean => !(openCard.value?.subjects ?? []).some((sub: any) => sub.can_fill === false && sub.criteria.some((line: any) => line.id === id));
 const subjectReportHref = (id: number): string => router.resolve({ path: route.path, query: { subject: String(id) } }).href;
 const dirtyIds = computed(() => Object.keys(draft.value).map(Number).filter(id => canFillReportLine(id) && isDirty(id)));
+// A line can close under a teacher while a save is travelling (the office changed who teaches the
+// subject). Her pending change there can never be saved, so it must not sit on screen looking kept,
+// nor vanish silently: put the line back to what is stored and say so.
+const closedLineNotice = ref(false);
+watch(() => (openCard.value?.subjects ?? []).filter((sub: any) => sub.can_fill === false).flatMap((sub: any) => sub.criteria.map((line: any) => line.id)), (closed: number[]) => {
+    let dropped = false;
+    for (const id of closed) {
+        if (!isDirty(id)) continue;
+        const stored = baseline.value[id];
+        if (stored) draft.value[id] = { ...stored }; else delete draft.value[id];
+        dropped = true;
+    }
+    if (dropped) { closedLineNotice.value = true; cardSaved.value = false; }
+});
 const commentDirty = computed(() => teacherComment.value !== teacherCommentBaseline.value);
 const unsavedCount = computed(() => dirtyIds.value.length + (commentDirty.value ? 1 : 0));
 const hasUnsaved = computed(() => unsavedCount.value > 0);
@@ -6602,6 +6617,7 @@ const hydrateCardDraft = (card: any, preserve = false) => {
 };
 
 const openReportCard = async (row: any) => {
+    closedLineNotice.value = false;
     reportsError.value = '';
     cardSaved.value = false;
     leaveWarned.value = false;
