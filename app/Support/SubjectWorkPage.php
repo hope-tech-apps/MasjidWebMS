@@ -16,12 +16,14 @@ final class SubjectWorkPage
 
     public static function notes(ClassSubject $subject): array
     {
-        // Explicit projection: the dormant sharing field is neither read nor served.
+        $sharing = ClassSubjectMode::sharingEnabled($subject->masjid_id);
+        // OFF keeps the exact projection, including its SQL column order.
         return SubjectNote::where('subject_notes.class_subject_id', $subject->id)
             ->leftJoin('group_memberships as student', 'student.id', '=', 'subject_notes.group_membership_id')
             ->leftJoin('contacts as child', 'child.id', '=', 'student.contact_id')
             ->leftJoin('users as author', 'author.id', '=', 'subject_notes.author_user_id')
             ->select(['subject_notes.id', 'subject_notes.class_subject_id', 'subject_notes.group_membership_id', 'subject_notes.body', 'subject_notes.created_at', 'subject_notes.updated_at', 'author.name as author_name', 'child.first_name', 'child.last_name'])
+            ->when($sharing, fn ($q) => $q->addSelect('subject_notes.shared_with_family'))
             ->orderByDesc('subject_notes.created_at')->orderByDesc('subject_notes.id')->get()
             ->map(fn ($note) => [
                 'id' => (int) $note->id, 'class_subject_id' => (int) $subject->id,
@@ -29,11 +31,12 @@ final class SubjectWorkPage
                 'student_name' => $note->group_membership_id === null ? 'Whole class' : (trim($note->first_name.' '.$note->last_name) ?: 'Former student'),
                 'author_name' => $note->author_name ?? 'Former staff', 'body' => $note->body,
                 'created_at' => $note->created_at, 'updated_at' => $note->updated_at,
-            ])->all();
+            ] + ($sharing ? ['shared_with_family' => (bool) $note->shared_with_family] : []))->all();
     }
 
     public static function data(Group $group, ClassSubject $subject, Request $request): array
     {
+        $sharing = ClassSubjectMode::sharingEnabled($group->masjid_id);
         $students = $group->memberships()->participants()->current()->with('contact:id,first_name,last_name')
             ->orderBy('id')->get()->map(fn ($member) => [
                 'id' => (int) $member->id, 'name' => trim($member->contact?->first_name.' '.$member->contact?->last_name),
@@ -42,9 +45,10 @@ final class SubjectWorkPage
         $pieces = SubjectPiece::where('class_subject_id', $subject->id)->orderByDesc('created_at')->orderByDesc('id')->get();
         // Keep counts for ALL marks for deletion confirmation, while offering only current students for editing.
         $marks = SubjectPieceMark::whereIn('subject_piece_id', $pieces->pluck('id'))
-            ->select(['id', 'subject_piece_id', 'group_membership_id', 'level', 'comment', 'updated_at'])->orderBy('group_membership_id')->get();
+            ->select(['id', 'subject_piece_id', 'group_membership_id', 'level', 'comment', 'updated_at'])
+            ->when($sharing, fn ($q) => $q->addSelect('shared_with_family'))->orderBy('group_membership_id')->get();
         $visibleIds = $students->pluck('id')->all();
-        $pieceData = function (SubjectPiece $piece, ?array $gradeIds = null) use ($marks, $visibleIds): array {
+        $pieceData = function (SubjectPiece $piece, ?array $gradeIds = null) use ($marks, $visibleIds, $sharing): array {
             $all = $marks->where('subject_piece_id', $piece->id);
             $editable = $all->whereIn('group_membership_id', $gradeIds ?? $visibleIds);
             return [
@@ -54,7 +58,7 @@ final class SubjectWorkPage
                 'mark_count' => $all->count(), 'marks' => $editable->map(fn ($mark) => [
                     'group_membership_id' => (int) $mark->group_membership_id, 'level' => $mark->level, 'comment' => $mark->comment,
                     'updated_at' => $mark->updated_at?->toISOString(),
-                ])->values()->all(),
+                ] + ($sharing ? ['shared_with_family' => (bool) $mark->shared_with_family] : []))->values()->all(),
             ];
         };
 
@@ -152,7 +156,7 @@ final class SubjectWorkPage
         }
         $planData = $planData->sortByDesc(fn ($p) => substr($p['title'], 0, 10))->values(); // Title begins with the copied ISO date, including deleted plans.
 
-        return ($request->user()->type !== 'Teacher' && $followed === []
+        return ($sharing ? ['sharing_enabled' => true] : []) + ($request->user()->type !== 'Teacher' && $followed === []
             ? ['curriculum_empty_message' => 'This subject follows no curriculum. Choose one under Class subjects.'] : []) + ['subject' => $subject, 'levels' => PerformanceLevel::key(), 'students' => $students->all(),
             'curriculum' => $blocks, 'lesson_plans' => $planData->all(),
             'own_pieces' => $pieces->where('source', 'own')->map(fn ($piece) => $pieceData($piece))->values()->all(), 'notes' => self::notes($subject)];

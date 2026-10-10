@@ -598,6 +598,9 @@ class FamilyPortalTest extends TestCase
             $this->groupUrl('/threads'),
             $this->groupUrl("/threads/{$thread->id}"),
             $this->groupUrl("/members/{$this->childAMembership->id}/awards"),
+            $this->groupUrl("/members/{$this->childAMembership->id}/subjects"),
+            $this->groupUrl("/members/{$this->childAMembership->id}/subjects/1/marks/1"),
+            $this->groupUrl("/members/{$this->childAMembership->id}/subjects/1/notes/1"),
         ] as $forbidden) {
             $this->withHeader('Authorization', "Bearer {$token}")
                 ->getJson($forbidden)

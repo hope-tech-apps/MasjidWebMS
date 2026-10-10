@@ -384,3 +384,7 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - The explicit named worktree/branch at HEAD authorizes edits in this isolated tree. Initial tracked status was clean; preserve all inherited untracked artifacts. STATE.md's Build C HEAD was stale; actual HEAD is ddf341f3.
 - Mounted tests exercise events and aria associations; source pins prove scoped CSS rules, not actual phone geometry or assistive technology behavior. Actual MySQL concurrent-session behavior remains to be checked outside this local SQLite run.
 - updated_at is an opaque saved version; whole-second storage requires monotonic advancement for same-second edits. No deletion history is introduced, consistent with prior decisions.
+
+## Class subject sharing step 4 (2026-10-09)
+- The named branch/worktree is authorized for writing; tracked files initially clean. No HANDOFF.md; prior STATE.md describes step3 and is stale against actual HEAD8b6d8f09.
+- Output filename unspecified: artifacts/subject-sharing-report.md. Browser geometry remains outside mounted-test evidence.

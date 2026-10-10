@@ -35,7 +35,7 @@
     </div>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import PerformanceLevelHelp from '@/components/classes/PerformanceLevelHelp.vue';
 import SubjectCurriculumBlock from './SubjectCurriculumBlock.vue';
@@ -45,6 +45,7 @@ import SubjectNotes from './SubjectNotes.vue';
 import { pieceTitle, workError, type WorkApi, type WorkPage } from './subjectWork';
 const props = defineProps<{ base: string; api: WorkApi; readonly?: boolean }>();
 const page = ref<WorkPage | null>(null); const loading = ref(false); const error = ref('');
+provide('subjectSharing', computed(() => page.value?.sharing_enabled === true));
 const notesError = ref(''); const piecesError = ref(''); let notesGeneration = 0; let piecesGeneration = 0;
 const discardButton = ref<HTMLButtonElement | null>(null);
 const dirtyParts = ref<Record<string, boolean>>({}); const dirty = computed(() => !props.readonly && Object.values(dirtyParts.value).some(Boolean));

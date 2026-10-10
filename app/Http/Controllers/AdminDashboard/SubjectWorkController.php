@@ -31,12 +31,36 @@ class SubjectWorkController extends Controller
             $limits = SubjectFence::limitsForWithClassSubjects($request->user(), (int) $group->id);
             abort_unless(SubjectFence::allowsWork($limits, (int) $subject->id), 403);
         }
-        return [$group, $subject];
+        return [$group, $subject, $lock ? SchoolSettings::classSubjectSharing($org) : ClassSubjectMode::sharingEnabled($group->masjid_id)];
     }
 
     private function refuseSharing(Request $request): void
     {
         $request->validate(['shared_with_family' => 'sometimes|declined', 'marks.*.shared_with_family' => 'sometimes|declined']);
+    }
+
+    /** OFF uses the original declined rules; ON accepts browser form booleans without coercing garbage. */
+    private function sharing(Request $request, bool $enabled): void
+    {
+        if (! $enabled) { $this->refuseSharing($request); return; }
+        $normalize = fn ($value) => is_scalar($value) ? filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) : null;
+        if ($request->exists('shared_with_family')) $request->merge(['shared_with_family' => $normalize($request->input('shared_with_family'))]);
+        if (is_array($request->input('marks'))) {
+            $marks = $request->input('marks');
+            foreach ($marks as &$mark) {
+                if (is_array($mark) && array_key_exists('shared_with_family', $mark)) $mark['shared_with_family'] = $normalize($mark['shared_with_family']);
+            }
+            unset($mark);
+            $request->merge(['marks' => $marks]);
+        }
+        $request->validate(['shared_with_family' => 'sometimes|boolean', 'marks.*.shared_with_family' => 'sometimes|boolean']);
+    }
+
+    private function noteResponse(SubjectNote $note, bool $sharing)
+    {
+        $fresh = $note->fresh();
+        if ($sharing) $fresh->makeVisible('shared_with_family');
+        return $fresh;
     }
 
     public function page(Request $request, $masjid_id, $group_id, $subject_id)
@@ -54,28 +78,32 @@ class SubjectWorkController extends Controller
 
     public function createNote(Request $request, $masjid_id, $group_id, $subject_id)
     {
-        $note = DB::transaction(function () use ($request, $group_id, $subject_id) {
-            [$group, $subject] = $this->context($request, (int) $group_id, (int) $subject_id, true);
-            $this->refuseSharing($request);
+        [$note, $sharing] = DB::transaction(function () use ($request, $group_id, $subject_id) {
+            [$group, $subject, $sharing] = $this->context($request, (int) $group_id, (int) $subject_id, true);
+            $this->sharing($request, $sharing);
             $fields = $request->validate(['body' => 'required|string', 'group_membership_id' => 'nullable|integer|min:1']);
             if (isset($fields['group_membership_id'])) $this->students($group, [$fields['group_membership_id']]);
-            return SubjectNote::create(['masjid_id' => $group->masjid_id, 'class_subject_id' => $subject->id,
+            $note = new SubjectNote(['masjid_id' => $group->masjid_id, 'class_subject_id' => $subject->id,
                 'group_membership_id' => $fields['group_membership_id'] ?? null, 'body' => $fields['body'], 'author_user_id' => $request->user()->id]);
+            if ($sharing) $note->forceFill(['shared_with_family' => $request->input('shared_with_family', false)]);
+            $note->save();
+            return [$note, $sharing];
         });
-        return response()->json(['status' => 'success', 'data' => $note->fresh()], 201);
+        return response()->json(['status' => 'success', 'data' => $this->noteResponse($note, $sharing)], 201);
     }
 
     public function updateNote(Request $request, $masjid_id, $group_id, $subject_id, $note_id)
     {
-        $note = DB::transaction(function () use ($request, $group_id, $subject_id, $note_id) {
-            [, $subject] = $this->context($request, (int) $group_id, (int) $subject_id, true);
+        [$note, $sharing] = DB::transaction(function () use ($request, $group_id, $subject_id, $note_id) {
+            [, $subject, $sharing] = $this->context($request, (int) $group_id, (int) $subject_id, true);
             $note = SubjectNote::where('class_subject_id', $subject->id)->lockForUpdate()->findOrFail($note_id);
-            $this->refuseSharing($request);
+            $this->sharing($request, $sharing);
             $fields = $request->validate(['body' => 'required|string']);
-            $note->update($fields);
-            return $note;
+            if ($sharing && $request->exists('shared_with_family')) $note->forceFill(['shared_with_family' => $request->input('shared_with_family')]);
+            $note->fill($fields)->save();
+            return [$note, $sharing];
         });
-        return response()->json(['status' => 'success', 'data' => $note->fresh()]);
+        return response()->json(['status' => 'success', 'data' => $this->noteResponse($note, $sharing)]);
     }
 
     public function deleteNote(Request $request, $masjid_id, $group_id, $subject_id, $note_id)
@@ -146,8 +174,8 @@ class SubjectWorkController extends Controller
     public function saveMarks(Request $request, $masjid_id, $group_id, $subject_id)
     {
         $saved = DB::transaction(function () use ($request, $group_id, $subject_id) {
-            [$group, $subject] = $this->context($request, (int) $group_id, (int) $subject_id, true);
-            $this->refuseSharing($request);
+            [$group, $subject, $sharing] = $this->context($request, (int) $group_id, (int) $subject_id, true);
+            $this->sharing($request, $sharing);
             $fields = $request->validate([
                 'source' => 'required|in:guide,plan,own', 'piece_id' => 'nullable|integer|min:1',
                 'guide_subject' => 'nullable|string|max:64', 'grade_label' => 'nullable|string|max:32', 'week_no' => 'nullable|integer|min:1|max:255',
@@ -155,7 +183,7 @@ class SubjectWorkController extends Controller
                 'marks.*.group_membership_id' => 'required|integer|min:1|distinct',
                 'marks.*.level' => 'nullable|integer|min:1|max:4', 'marks.*.comment' => 'nullable|string',
                 'marks.*.updated_at' => 'present|nullable|date_format:Y-m-d\\TH:i:s.u\\Z',
-            ]);
+            ] + ($sharing ? ['marks.*.shared_with_family' => 'sometimes|boolean'] : []));
             $students = $this->students($group, array_column($fields['marks'], 'group_membership_id'));
             [$piece, $snapshot, $identity] = $this->resolvePiece($subject, $fields);
             $grade = $piece?->grade_label ?? ($identity['grade_label'] ?? null);
@@ -210,9 +238,10 @@ class SubjectWorkController extends Controller
                 if ($level === null && $comment === null) $clear[] = (int) $mark['group_membership_id'];
                 else $keep[(int) $mark['group_membership_id']] = ['masjid_id' => $group->masjid_id, 'subject_piece_id' => $piece->id,
                     'group_membership_id' => (int) $mark['group_membership_id'], 'level' => $level, 'comment' => $comment,
-                    'marked_by_user_id' => $request->user()->id, 'updated_at' => $updated->format('Y-m-d H:i:s')];
+                    'marked_by_user_id' => $request->user()->id, 'updated_at' => $updated->format('Y-m-d H:i:s')]
+                    + ($sharing ? ['shared_with_family' => $mark['shared_with_family'] ?? $stored->get($mark['group_membership_id'])?->shared_with_family ?? false] : []);
             }
-            if ($keep !== []) SubjectPieceMark::upsert(array_values($keep), ['subject_piece_id', 'group_membership_id'], ['level', 'comment', 'marked_by_user_id', 'updated_at']);
+            if ($keep !== []) SubjectPieceMark::upsert(array_values($keep), ['subject_piece_id', 'group_membership_id'], array_merge(['level', 'comment', 'marked_by_user_id', 'updated_at'], $sharing ? ['shared_with_family'] : []));
             if ($clear !== []) SubjectPieceMark::where('subject_piece_id', $piece->id)->whereIn('group_membership_id', $clear)->delete();
             if ($fields['marks'] !== []) $piece->forceFill(['updated_at' => $latest])->save();
             return ['piece_id' => $piece?->id, 'marks' => $versions];

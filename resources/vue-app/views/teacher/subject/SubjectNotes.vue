@@ -19,6 +19,11 @@
             <p v-if="fieldErrors.group_membership_id" :id="`${prefix}-student`" class="text-danger small">{{ fieldErrors.group_membership_id }}</p>
             <label class="d-block">Note <textarea v-model="form.body" aria-label="Note text" class="form-control" rows="3" required :disabled="busy" :aria-invalid="fieldErrors.body ? 'true' : undefined" :aria-describedby="fieldErrors.body ? `${prefix}-body` : undefined"></textarea></label>
             <p v-if="fieldErrors.body" :id="`${prefix}-body`" class="text-danger small">{{ fieldErrors.body }}</p>
+            <div v-if="sharing" class="mt-2">
+                <label class="share-control"><input v-model="form.shared_with_family" type="checkbox" :disabled="busy" :aria-invalid="fieldErrors.shared_with_family ? 'true' : undefined" :aria-describedby="fieldErrors.shared_with_family ? `${prefix}-sharing` : undefined"> Share with the family</label>
+                <p class="small mb-0">{{ form.about === 'student' ? "This student's family can read this." : 'Every family in this class can read this.' }}</p>
+                <p v-if="fieldErrors.shared_with_family" :id="`${prefix}-sharing`" class="text-danger small">{{ fieldErrors.shared_with_family }}</p>
+            </div>
             <p v-if="error" class="text-danger small mt-2" role="alert">{{ error }}</p>
             <button class="btn btn-primary mt-2" :disabled="busy">{{ busy ? 'Saving…' : 'Save' }}</button>
             <button type="button" class="btn btn-link mt-2" :disabled="busy" @click="cancel">Cancel</button>
@@ -31,6 +36,7 @@
         <p v-if="!notes.length" class="text-muted small">No notes yet.</p>
         <article v-for="note in notes" :key="note.id" class="border-bottom py-2">
             <strong dir="auto">{{ note.student_name }}</strong>
+            <span v-if="sharing && note.shared_with_family" class="small d-block">Shared with the family</span>
             <p class="note-text mb-1" dir="auto">{{ note.body }}</p>
             <p class="small text-muted">{{ note.author_name }} · <time :datetime="note.created_at">{{ formatDate(note.created_at) }}</time></p>
             <template v-if="!readonly">
@@ -46,18 +52,19 @@
     </section>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, useId, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { firstWords, workError, workFieldErrors, workMoment, type WorkApi, type WorkNote, type WorkStudent } from './subjectWork';
 const props = defineProps<{ notes: WorkNote[]; students: WorkStudent[]; base: string; api: WorkApi; readonly?: boolean; confirmDiscard: () => Promise<boolean>; refresh: () => Promise<void>; readError?: string }>();
+const sharing = inject('subjectSharing', computed(() => false));
 const emit = defineEmits<{ dirty: [value: boolean];  }>();
-const form = ref<{ id: number | null; about: string; student: number | null; body: string; studentName: string } | null>(null);
+const form = ref<{ id: number | null; about: string; student: number | null; body: string; studentName: string; shared_with_family?: boolean } | null>(null);
 const fieldErrors = ref<Record<string, string>>({}); const prefix = useId();
 const baseline = ref(''); const error = ref(''); const busy = ref(false); const removeId = ref<number | null>(null); let alive = true;
 const dirty = computed(() => form.value !== null && JSON.stringify(form.value) !== baseline.value);
 watch(dirty, value => emit('dirty', value), { flush: 'sync' });
 const start = async (note?: WorkNote) => {
     if (props.readonly || busy.value || dirty.value && !await props.confirmDiscard()) return;
-    form.value = { id: note?.id ?? null, about: note?.group_membership_id ? 'student' : 'class', student: note?.group_membership_id ?? null, body: note?.body ?? '', studentName: note?.student_name ?? '' };
+    form.value = { id: note?.id ?? null, about: note?.group_membership_id ? 'student' : 'class', student: note?.group_membership_id ?? null, body: note?.body ?? '', studentName: note?.student_name ?? '', ...(sharing.value ? { shared_with_family: note?.shared_with_family === true } : {}) };
     baseline.value = JSON.stringify(form.value); error.value = ''; fieldErrors.value = {}; removeId.value = null;
 };
 const cancel = async () => { if (!dirty.value || await props.confirmDiscard()) { form.value = null; error.value = ''; } };
@@ -68,10 +75,11 @@ const save = async () => {
     if (f.id === null && f.about === 'student' && !f.student) { fieldErrors.value = { group_membership_id: 'Pick a student.' }; return; }
     busy.value = true; error.value = ''; fieldErrors.value = {};
     try {
-        if (f.id !== null) await props.api.put(`${props.base}/notes/${f.id}`, { body: f.body });
-        else await props.api.post(`${props.base}/notes`, { group_membership_id: f.about === 'student' ? f.student : null, body: f.body });
+        const shared = sharing.value ? { shared_with_family: f.shared_with_family === true } : {};
+        if (f.id !== null) await props.api.put(`${props.base}/notes/${f.id}`, { body: f.body, ...shared });
+        else await props.api.post(`${props.base}/notes`, { group_membership_id: f.about === 'student' ? f.student : null, body: f.body, ...shared });
         if (alive) { form.value = null; emit('dirty', false); await props.refresh(); }
-    } catch (failure) { if (alive) { const errors = workFieldErrors(failure, ['body', 'group_membership_id']); fieldErrors.value = errors.fields; error.value = errors.general; } }
+    } catch (failure) { if (alive) { const errors = workFieldErrors(failure, ['body', 'group_membership_id', ...(sharing.value ? ['shared_with_family'] : [])]); fieldErrors.value = errors.fields; error.value = errors.general; } }
     finally { if (alive) busy.value = false; }
 };
 const remove = async () => {
@@ -86,6 +94,8 @@ onBeforeUnmount(() => { alive = false; emit('dirty', false); });
 </script>
 <style scoped>
 section { min-width: 0; overflow-wrap: anywhere; }
+.share-control { display: flex; align-items: center; gap: .5rem; min-height: 44px; cursor: pointer; }
+.share-control input { flex: 0 0 auto; }
 .note-text { white-space: pre-wrap; }
 button { min-height: 44px; }
 @media (max-width: 767px) {

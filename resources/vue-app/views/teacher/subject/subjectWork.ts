@@ -1,7 +1,7 @@
 /** Shared subject-page contract; IDs identify class memberships, never contacts. */
 export type WorkStudent = { id: number; name: string; grade_label: string; grade_key: string };
 export type WorkLevel = { level: number; short_label: string; description: string };
-export type WorkMark = { group_membership_id: number; level: number | null; comment: string | null; updated_at: string | null };
+export type WorkMark = { group_membership_id: number; level: number | null; comment: string | null; updated_at: string | null; shared_with_family?: boolean };
 export type WorkPiece = {
     source: 'guide' | 'plan' | 'own'; piece_id: number | null; title: string; detail: string | null;
     marks: WorkMark[]; mark_count: number; grade_label?: string; week_no?: number; guide_subject?: string;
@@ -9,8 +9,8 @@ export type WorkPiece = {
     wording_changed?: boolean; marked_against_date?: string; moved_to?: string | null; moved_elsewhere?: boolean; no_longer_followed?: boolean;
 };
 export type WorkBlock = { grade_key: string; grade_label: string; students: WorkStudent[]; entries: WorkPiece[]; opening_week_no: number; selected_week_no: number; opening_guide_subject?: string; selected_guide_subject?: string };
-export type WorkNote = { id: number; group_membership_id: number | null; student_name: string; body: string; author_name: string; created_at: string };
-export type WorkPage = { curriculum_empty_message?: string; levels: WorkLevel[]; students: WorkStudent[]; curriculum: WorkBlock[]; lesson_plans: WorkPiece[]; own_pieces: WorkPiece[]; notes: WorkNote[] };
+export type WorkNote = { id: number; group_membership_id: number | null; student_name: string; body: string; author_name: string; created_at: string; shared_with_family?: boolean };
+export type WorkPage = { sharing_enabled?: boolean; curriculum_empty_message?: string; levels: WorkLevel[]; students: WorkStudent[]; curriculum: WorkBlock[]; lesson_plans: WorkPiece[]; own_pieces: WorkPiece[]; notes: WorkNote[] };
 export type WorkApi = { get(url: string): Promise<any>; post(url: string, body: unknown): Promise<any>; put(url: string, body: unknown): Promise<any>; delete(url: string, body?: unknown): Promise<any> };
 /** Reads general failures from the application data envelope or a Laravel errors bag. */
 export function workError(error: any, fallback: string): string {

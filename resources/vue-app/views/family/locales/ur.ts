@@ -266,6 +266,8 @@ export const UR: Record<string, string> = {
     marks_untyped_two: "{x} کاموں کی کوئی قسم نہیں، اس لیے انہیں وزنی اوسط میں شامل نہیں کیا گیا۔",
     marks_untyped_few: "{x} کاموں کی کوئی قسم نہیں، اس لیے انہیں وزنی اوسط میں شامل نہیں کیا گیا۔",
     marks_untyped_many: "{x} کاموں کی کوئی قسم نہیں، اس لیے انہیں وزنی اوسط میں شامل نہیں کیا گیا۔",
+    // MACHINE-DRAFTED. NOT YET REVIEWED BY A FLUENT SPEAKER.
+    subject_work_heading: "مضامین",
     marks_section_subjects: "مضمون کے لحاظ سے",
     marks_no_subject: "بغیر مضمون",
     marks_section_types: "کام کی قسم کے لحاظ سے",

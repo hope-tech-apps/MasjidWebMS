@@ -466,8 +466,7 @@ class GroupAudience
             return false;
         }
 
-        return in_array((int) $target, $standing['participant_contact_ids'], true)
-            || in_array((int) $target, $standing['ward_contact_ids'], true);
+        return in_array((int) $target, self::participantContactIds($standing), true);
     }
 
     /**
@@ -536,10 +535,7 @@ class GroupAudience
                 $query->orWhere('scope', '!=', GroupThread::SCOPE_GROUP);
                 $granted = true;
             } else {
-                $targets = array_merge(
-                    $standing['participant_contact_ids'],
-                    $standing['ward_contact_ids']
-                );
+                $targets = self::participantContactIds($standing);
 
                 if ($targets !== []) {
                     $query->orWhere(function (Builder $participant) use ($targets): void {
@@ -664,8 +660,7 @@ class GroupAudience
 
         $student = (int) $subject->contact_id;
 
-        return in_array($student, $standing['participant_contact_ids'], true)
-            || in_array($student, $standing['ward_contact_ids'], true);
+        return in_array($student, self::participantContactIds($standing), true);
     }
 
     /**
@@ -813,6 +808,23 @@ class GroupAudience
      * relation to a `group_memberships` row; BehaviorAward and HifzEntry both
      * do, on purpose.
      */
+    /** The child-record predicate also used for participant conversations; consent gates only the class update branch. */
+    public function readableSubjectMarksQuery(?Authenticatable $principal, Group $group, Builder $query): ?Builder
+    {
+        return $this->constrainToOwnStudents($principal, $group, $query);
+    }
+
+    public function readableSubjectNotesQuery(?Authenticatable $principal, Group $group, Builder $query): ?Builder
+    {
+        $personal = $this->constrainToOwnStudents($principal, $group, clone $query);
+        if ($personal === null) return null;
+        $feed = $this->mayReceive($principal, $group, self::DISCLOSURE_FEED);
+        return $query->where(function (Builder $visible) use ($personal, $feed): void {
+            $visible->whereIn('subject_notes.id', $personal->select('subject_notes.id'));
+            if ($feed) $visible->orWhereNull('subject_notes.group_membership_id');
+        });
+    }
+
     private function constrainToOwnStudents(?Authenticatable $principal, Group $group, Builder $query): ?Builder
     {
         $standing = $this->standingIn($principal, $group);
@@ -825,10 +837,7 @@ class GroupAudience
             return $query;
         }
 
-        $targets = array_merge(
-            $standing['participant_contact_ids'],
-            $standing['ward_contact_ids']
-        );
+        $targets = self::participantContactIds($standing);
 
         if ($targets === []) {
             // A guardian edge with no ward is the only way to reach this. It
@@ -925,10 +934,7 @@ class GroupAudience
             return $query;
         }
 
-        $targets = array_merge(
-            $standing['participant_contact_ids'],
-            $standing['ward_contact_ids']
-        );
+        $targets = self::participantContactIds($standing);
 
         return $query->where(function (Builder $audience) use ($standing, $targets): void {
             $granted = false;
@@ -1282,5 +1288,11 @@ class GroupAudience
             'participant_contact_ids' => array_values(array_unique($participantContactIds)),
             'ward_contact_ids' => array_values(array_unique($wardContactIds)),
         ];
+    }
+
+    /** One target set for participant conversations and records about a child. */
+    private static function participantContactIds(array $standing): array
+    {
+        return array_merge($standing['participant_contact_ids'], $standing['ward_contact_ids']);
     }
 }

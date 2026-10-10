@@ -158,6 +158,7 @@ async function mountClass(api: any, groupId: number): Promise<Mounted> {
         '@/core/services/StudentApiService': { default: {} },
         '@/views/family/FamilyAttachment.vue': { default: stub },
         '@/views/family/FamilyBucks.vue': { default: stub },
+        '@/views/family/FamilySubjects.vue': { default: { render: () => null } },
         '@/components/common/MessageSignals.vue': { default: stub },
         '@/stores/familyStore': store(),
         '@/views/family/familyI18n': lang(),

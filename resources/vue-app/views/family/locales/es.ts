@@ -266,6 +266,8 @@ export const ES: Record<string, string> = {
     marks_untyped_two: "{x} trabajos no tienen tipo, por eso quedan fuera del promedio ponderado.",
     marks_untyped_few: "{x} trabajos no tienen tipo, por eso quedan fuera del promedio ponderado.",
     marks_untyped_many: "{x} trabajos no tienen tipo, por eso quedan fuera del promedio ponderado.",
+    // MACHINE-DRAFTED. NOT YET REVIEWED BY A FLUENT SPEAKER.
+    subject_work_heading: "Materias",
     marks_section_subjects: "Por materia",
     marks_no_subject: "Sin materia",
     marks_section_types: "Por tipo de trabajo",

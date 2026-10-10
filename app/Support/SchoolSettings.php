@@ -145,9 +145,21 @@ final class SchoolSettings
         return self::classSubjects($school) && (bool) $school?->hasCapability('class_subject_work');
     }
 
+    public static function classSubjectSharing(?Masjid $school): bool
+    {
+        return self::classSubjectWork($school) && (bool) $school?->hasCapability('class_subject_sharing');
+    }
+
     /** Evaluate the intended map under the organisation mutex, before any writes. */
     public static function assertSubjectWorkChange(Masjid $school, array $changes): void
     {
+        if (($changes['class_subject_sharing'] ?? false) === true
+            && (! ($changes['class_subjects'] ?? self::classSubjects($school))
+                || ! ($changes['class_subject_work'] ?? $school->hasCapability('class_subject_work')))) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'capability' => ['Switch on class subjects and subject notes and marks before enabling family sharing.'],
+            ]);
+        }
         if (($changes['class_subject_work'] ?? false) === true
             && ! ($changes['class_subjects'] ?? self::classSubjects($school))) {
             throw \Illuminate\Validation\ValidationException::withMessages([

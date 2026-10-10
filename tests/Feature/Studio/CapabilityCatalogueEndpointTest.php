@@ -26,7 +26,7 @@ class CapabilityCatalogueEndpointTest extends TestCase
 
     private const URL = '/api/admin/studio/catalogue';
 
-    private const SCHOOL_KEYS = ['school_calendar', 'report_card_core_subjects', 'short_lesson_plan', 'simple_marking', 'points_weekly_report', 'class_subject_work', 'class_subjects', 'class_store'];
+    private const SCHOOL_KEYS = ['school_calendar', 'report_card_core_subjects', 'short_lesson_plan', 'simple_marking', 'points_weekly_report', 'class_subject_sharing', 'class_subject_work', 'class_subjects', 'class_store'];
 
     protected function setUp(): void
     {
@@ -175,7 +175,8 @@ class CapabilityCatalogueEndpointTest extends TestCase
 
         $this->assertFalse($school->has('class_subjects'));
         $this->assertFalse($school->has('class_subject_work'));
-        foreach (array_diff(self::SCHOOL_KEYS, ['class_subjects', 'class_subject_work']) as $key) {
+        $this->assertFalse($school->has('class_subject_sharing'));
+        foreach (array_diff(self::SCHOOL_KEYS, ['class_subjects', 'class_subject_work', 'class_subject_sharing']) as $key) {
             $this->assertSame('optional', $school[$key]['visibility'], $key);
             $this->assertFalse($school[$key]['default_at_creation'], $key);
         }
@@ -398,7 +399,7 @@ class CapabilityCatalogueEndpointTest extends TestCase
 
             // Both catalogues omit grants that must remain dark while OFF; Studio also applies D14.
             $this->assertEqualsCanonicalizing(
-                $orgType === Masjid::ORG_TYPE_SCHOOL ? [] : array_values(array_diff(self::SCHOOL_KEYS, ['class_subjects', 'class_subject_work'])),
+                $orgType === Masjid::ORG_TYPE_SCHOOL ? [] : array_values(array_diff(self::SCHOOL_KEYS, ['class_subjects', 'class_subject_work', 'class_subject_sharing'])),
                 $panel->keys()->diff($catalogue->keys())->values()->all(),
                 "what the panel shows a {$orgType} and Studio does not"
             );

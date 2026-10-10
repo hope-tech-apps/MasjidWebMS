@@ -238,6 +238,16 @@ return [
     // mobile /features and tv-config are not touched at all).
     // App\Support\SchoolSettings::classStore() is the reader; `capability:class_store`
     // gates every store route; `bucks:mint` and `bucks:expire` skip a school without it.
+    'class_subject_sharing' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Share subject work with families',
+        'description' => 'Let teachers choose which subject marks and notes families can read.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'class_subject_work' => [
         'kind' => 'grant',
         'group' => 'school',

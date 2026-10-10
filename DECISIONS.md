@@ -9502,3 +9502,13 @@ Owner decisions implemented: inclusive today..today+27 ON form offers, collapsed
 - Note/piece deletion keeps corrections until successful DELETE; the confirmation names the correction rather than requiring a separate generic discard prompt for the same form. Existing unsaved-mark prompt and deletion-count 409 re-confirmation remain.
 - Field errors accept both data and errors envelopes; unmatched keys remain general alerts. Scoped phone CSS stays with each child and shared help. All touched Vue components were already in the bare-template guard list; annotate their coverage explicitly. No CHANGELOG.md created, as instructed.
 - Extra red-first regression proved a same-second clear/recreate could reuse an old mark version. Retain a watermark in the existing piece updated_at, advance on submitted clears as well as meaningful saves, and preserve it during own-piece corrections. No deleted mark rows retained. Evidence: artifacts/build-d-recreate-red.log.
+
+## Class subject sharing step 4 (2026-10-09)
+- Keep the existing shared_with_family columns and guarded model defaults. Only the fenced teacher note/mark writers explicitly assign sharing. No migration.
+- SchoolSettings requires subjects/work/sharing; hide the ineffective grant and use the request's existing organisation memo. Locked writes decide from the locked row.
+- Family class detail carries bulk children[].subjects; class listing and child-mode data do not. New parent-only GET list/mark/note routes resolve within the shared projection and 404 undisclosed items or another family's child.
+- Reuse the exact participant-thread gate for the child endpoint, the shared conversation/record target set for bulk reads, and the feed audience for class updates. Preserve departed-child history exactly like report cards.
+- Translate both notes and mark comments through the existing text-only pipeline; titles stay original. A note's translation source version is its SHA-256 body hash, avoiding same-second timestamp reuse. No added translation endpoint or provider mechanism.
+- Family disclosure reads are no-store; tab re-entry and foreground revalidate after clearing prior subject data. No push channel is added. An already-open page learns remote changes on its next read.
+- Only subject_work_heading is new; reuse existing six-language report-level keys. Four draft strings remain marked MACHINE-DRAFTED.
+- Report path artifacts/subject-sharing-report.md; local work only, caller commits. Extend Studio's exact school-grant inventory intentionally; existing OFF contracts and fixtures stay unchanged.

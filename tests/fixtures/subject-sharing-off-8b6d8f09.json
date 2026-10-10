@@ -1,0 +1,941 @@
+{
+    "work-on\/teacher-page": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+            "update \"personal_access_tokens\" set \"last_used_at\" = ?, \"updated_at\" = ? where \"id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"class_subjects\" where \"group_id\" = ? and \"class_subjects\".\"id\" = ? and \"class_subjects\".\"masjid_id\" = ? limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_staff\".\"id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ? order by \"id\" asc",
+            "select \"id\", \"first_name\", \"last_name\" from \"contacts\" where \"contacts\".\"id\" in (3, 4, 5) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"subject_pieces\" where \"class_subject_id\" = ? and \"subject_pieces\".\"masjid_id\" = ? order by \"created_at\" desc, \"id\" desc",
+            "select \"id\", \"subject_piece_id\", \"group_membership_id\", \"level\", \"comment\", \"updated_at\" from \"subject_piece_marks\" where \"subject_piece_id\" in (?) and \"subject_piece_marks\".\"masjid_id\" = ? order by \"group_membership_id\" asc",
+            "select * from \"lesson_plans\" where \"group_id\" = ? and \"class_subject_id\" = ? and \"lesson_plans\".\"masjid_id\" = ? order by \"session_date\" desc, \"id\" desc",
+            "select \"subject_notes\".\"id\", \"subject_notes\".\"class_subject_id\", \"subject_notes\".\"group_membership_id\", \"subject_notes\".\"body\", \"subject_notes\".\"created_at\", \"subject_notes\".\"updated_at\", \"author\".\"name\" as \"author_name\", \"child\".\"first_name\", \"child\".\"last_name\" from \"subject_notes\" left join \"group_memberships\" as \"student\" on \"student\".\"id\" = \"subject_notes\".\"group_membership_id\" left join \"contacts\" as \"child\" on \"child\".\"id\" = \"student\".\"contact_id\" left join \"users\" as \"author\" on \"author\".\"id\" = \"subject_notes\".\"author_user_id\" where \"subject_notes\".\"class_subject_id\" = ? and \"subject_notes\".\"masjid_id\" = ? order by \"subject_notes\".\"created_at\" desc, \"subject_notes\".\"id\" desc",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "subject": {
+                    "id": 1,
+                    "masjid_id": 1,
+                    "group_id": 1,
+                    "name": "Science",
+                    "guide_subject": null,
+                    "tool": null,
+                    "position": 0,
+                    "hidden_at": null,
+                    "created_at": "2026-10-09T16:00:00.000000Z",
+                    "updated_at": "2026-10-09T16:00:00.000000Z"
+                },
+                "levels": [
+                    {
+                        "level": 4,
+                        "label": "Exceeds Expectations",
+                        "short_label": "Exceeds",
+                        "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                    },
+                    {
+                        "level": 3,
+                        "label": "Meets Expectations",
+                        "short_label": "Meets",
+                        "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                    },
+                    {
+                        "level": 2,
+                        "label": "Approaching Expectations",
+                        "short_label": "Approaching",
+                        "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                    },
+                    {
+                        "level": 1,
+                        "label": "Needs Support",
+                        "short_label": "Needs Support",
+                        "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                    }
+                ],
+                "students": [
+                    {
+                        "id": 1,
+                        "name": "Practice Student",
+                        "grade_label": "1st",
+                        "grade_key": "1"
+                    },
+                    {
+                        "id": 3,
+                        "name": "Practice Student",
+                        "grade_label": "1st",
+                        "grade_key": "1"
+                    },
+                    {
+                        "id": 5,
+                        "name": "Practice Student",
+                        "grade_label": "1st",
+                        "grade_key": "1"
+                    }
+                ],
+                "curriculum": [],
+                "lesson_plans": [],
+                "own_pieces": [
+                    {
+                        "piece_id": 1,
+                        "source": "own",
+                        "title": "Practice piece",
+                        "detail": null,
+                        "guide_subject": null,
+                        "grade_label": null,
+                        "week_no": null,
+                        "quarter": null,
+                        "standard_code": null,
+                        "lesson_plan_id": null,
+                        "mark_count": 0,
+                        "marks": []
+                    }
+                ],
+                "notes": []
+            }
+        }
+    },
+    "work-on\/mark-save": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"masjid_id\" = ? and \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"class_subjects\" where \"group_id\" = ? and \"class_subjects\".\"id\" = ? and \"class_subjects\".\"masjid_id\" = ? limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_staff\" where \"group_staff\".\"id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_id\" = ? and \"id\" in (?) and \"group_memberships\".\"masjid_id\" = ? order by \"id\" asc",
+            "select * from \"subject_pieces\" where \"class_subject_id\" = ? and \"source\" = ? and \"subject_pieces\".\"id\" = ? and \"subject_pieces\".\"masjid_id\" = ? limit 1",
+            "select * from \"subject_piece_marks\" where \"subject_piece_id\" = ? and \"group_membership_id\" in (?) and \"subject_piece_marks\".\"masjid_id\" = ?",
+            "insert into \"subject_piece_marks\" (\"comment\", \"created_at\", \"group_membership_id\", \"level\", \"marked_by_user_id\", \"masjid_id\", \"subject_piece_id\", \"updated_at\") values (?, ?, ?, ?, ?, ?, ?, ?) on conflict (\"subject_piece_id\", \"group_membership_id\") do update set \"level\" = \"excluded\".\"level\", \"comment\" = \"excluded\".\"comment\", \"marked_by_user_id\" = \"excluded\".\"marked_by_user_id\", \"updated_at\" = \"excluded\".\"updated_at\"",
+            "update \"subject_pieces\" set \"updated_at\" = ? where \"id\" = ?",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "piece_id": 1,
+                "marks": [
+                    {
+                        "group_membership_id": 1,
+                        "updated_at": "2026-10-09T16:00:01.000000Z"
+                    }
+                ]
+            }
+        }
+    },
+    "work-on\/family-class": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null limit 1",
+            "update \"personal_access_tokens\" set \"last_used_at\" = ?, \"updated_at\" = ? where \"id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"contact_id\" in (?, ?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select \"id\", \"first_name\", \"last_name\", \"avatar_character\", \"avatar_tone\", \"avatar_color\", \"staff_avatar_character\", \"staff_avatar_tone\", \"staff_avatar_color\" from \"contacts\" where \"contacts\".\"id\" in (3, 4) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "name": "Practice Class",
+                "kind": "class",
+                "description": "Quis error veritatis recusandae sit voluptas porro.",
+                "is_active": true,
+                "points_period": "running",
+                "weekly_report": false,
+                "starts_on": null,
+                "ends_on": null,
+                "is_guardian": true,
+                "own_membership": null,
+                "children": [
+                    {
+                        "membership_id": 1,
+                        "contact": {
+                            "id": 3,
+                            "first_name": "Practice",
+                            "last_name": "Student",
+                            "avatar": null
+                        }
+                    },
+                    {
+                        "membership_id": 3,
+                        "contact": {
+                            "id": 4,
+                            "first_name": "Practice",
+                            "last_name": "Student",
+                            "avatar": null
+                        }
+                    }
+                ],
+                "may_receive_feed": false,
+                "may_receive_media": false,
+                "in_class_now": true
+            },
+            "meta": {
+                "group_label": "Classrooms",
+                "translation_available": false
+            }
+        }
+    },
+    "work-on\/family-child": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null limit 1",
+            "update \"personal_access_tokens\" set \"last_used_at\" = ?, \"updated_at\" = ? where \"id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"group_memberships\".\"id\" = ? and \"group_memberships\".\"masjid_id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ? limit 1"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "student": {
+                    "membership_id": 1,
+                    "contact": {
+                        "id": 3,
+                        "first_name": "Practice",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "catalogue": {
+                    "characters": [
+                        {
+                            "id": "ameer",
+                            "label": "Amir"
+                        },
+                        {
+                            "id": "ameera",
+                            "label": "Amira"
+                        }
+                    ],
+                    "tones": [
+                        {
+                            "id": "tone1",
+                            "swatch": "#E8C89B"
+                        },
+                        {
+                            "id": "tone2",
+                            "swatch": "#FCEDCC"
+                        },
+                        {
+                            "id": "tone3",
+                            "swatch": "#55350D"
+                        },
+                        {
+                            "id": "tone4",
+                            "swatch": "#976621"
+                        }
+                    ],
+                    "colors": [
+                        {
+                            "id": "black",
+                            "label": "Black",
+                            "swatch": "#1F1A1A"
+                        },
+                        {
+                            "id": "blue",
+                            "label": "Blue",
+                            "swatch": "#65DCF2"
+                        },
+                        {
+                            "id": "green",
+                            "label": "Green",
+                            "swatch": "#9FDF9C"
+                        },
+                        {
+                            "id": "pink",
+                            "label": "Pink",
+                            "swatch": "#EEB5E1"
+                        },
+                        {
+                            "id": "white",
+                            "label": "White",
+                            "swatch": "#FDF1EC"
+                        }
+                    ],
+                    "options": [
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_black.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_blue.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_green.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_pink.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_white.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_black.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_blue.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_green.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_pink.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_white.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_black.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_blue.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_green.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_pink.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_white.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_black.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_blue.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_green.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_pink.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_white.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_black.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_blue.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_green.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_pink.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_white.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_black.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_blue.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_green.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_pink.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_white.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_black.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_blue.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_green.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_pink.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_white.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_black.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_blue.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_green.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_pink.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_white.webp"
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    "both-off\/teacher-page": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1"
+        ],
+        "payload": {
+            "status": "error",
+            "message": ""
+        }
+    },
+    "both-off\/mark-save": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1"
+        ],
+        "payload": {
+            "status": "error",
+            "message": ""
+        }
+    },
+    "both-off\/family-class": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"contact_id\" in (?, ?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select \"id\", \"first_name\", \"last_name\", \"avatar_character\", \"avatar_tone\", \"avatar_color\", \"staff_avatar_character\", \"staff_avatar_tone\", \"staff_avatar_color\" from \"contacts\" where \"contacts\".\"id\" in (3, 4) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "name": "Practice Class",
+                "kind": "class",
+                "description": "Quis error veritatis recusandae sit voluptas porro.",
+                "is_active": true,
+                "points_period": "running",
+                "weekly_report": false,
+                "starts_on": null,
+                "ends_on": null,
+                "is_guardian": true,
+                "own_membership": null,
+                "children": [
+                    {
+                        "membership_id": 1,
+                        "contact": {
+                            "id": 3,
+                            "first_name": "Practice",
+                            "last_name": "Student",
+                            "avatar": null
+                        }
+                    },
+                    {
+                        "membership_id": 3,
+                        "contact": {
+                            "id": 4,
+                            "first_name": "Practice",
+                            "last_name": "Student",
+                            "avatar": null
+                        }
+                    }
+                ],
+                "may_receive_feed": false,
+                "may_receive_media": false,
+                "in_class_now": true
+            },
+            "meta": {
+                "group_label": "Classrooms",
+                "translation_available": false
+            }
+        }
+    },
+    "both-off\/family-child": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"group_memberships\".\"id\" = ? and \"group_memberships\".\"masjid_id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ? limit 1"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "student": {
+                    "membership_id": 1,
+                    "contact": {
+                        "id": 3,
+                        "first_name": "Practice",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "catalogue": {
+                    "characters": [
+                        {
+                            "id": "ameer",
+                            "label": "Amir"
+                        },
+                        {
+                            "id": "ameera",
+                            "label": "Amira"
+                        }
+                    ],
+                    "tones": [
+                        {
+                            "id": "tone1",
+                            "swatch": "#E8C89B"
+                        },
+                        {
+                            "id": "tone2",
+                            "swatch": "#FCEDCC"
+                        },
+                        {
+                            "id": "tone3",
+                            "swatch": "#55350D"
+                        },
+                        {
+                            "id": "tone4",
+                            "swatch": "#976621"
+                        }
+                    ],
+                    "colors": [
+                        {
+                            "id": "black",
+                            "label": "Black",
+                            "swatch": "#1F1A1A"
+                        },
+                        {
+                            "id": "blue",
+                            "label": "Blue",
+                            "swatch": "#65DCF2"
+                        },
+                        {
+                            "id": "green",
+                            "label": "Green",
+                            "swatch": "#9FDF9C"
+                        },
+                        {
+                            "id": "pink",
+                            "label": "Pink",
+                            "swatch": "#EEB5E1"
+                        },
+                        {
+                            "id": "white",
+                            "label": "White",
+                            "swatch": "#FDF1EC"
+                        }
+                    ],
+                    "options": [
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_black.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_blue.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_green.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_pink.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone1",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone1_white.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_black.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_blue.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_green.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_pink.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone2",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone2_white.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_black.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_blue.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_green.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_pink.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone3",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone3_white.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_black.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_blue.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_green.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_pink.webp"
+                        },
+                        {
+                            "character": "ameer",
+                            "tone": "tone4",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameer_tone4_white.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_black.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_blue.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_green.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_pink.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone1",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone1_white.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_black.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_blue.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_green.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_pink.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone2",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone2_white.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_black.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_blue.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_green.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_pink.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone3",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone3_white.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "black",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_black.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "blue",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_blue.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "green",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_green.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "pink",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_pink.webp"
+                        },
+                        {
+                            "character": "ameera",
+                            "tone": "tone4",
+                            "color": "white",
+                            "url": "http:\/\/localhost\/images\/avatars\/ameera_tone4_white.webp"
+                        }
+                    ]
+                }
+            }
+        }
+    }
+}

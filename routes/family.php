@@ -410,6 +410,14 @@ Route::prefix('family')
                 // these modules exist to refuse.
                 Route::get('/grades', [GradesController::class, 'forMember']);
 
+                // Shared subject records use the parent stack only, never the student hand-off stack.
+                Route::prefix('subjects')->middleware('capability:class_subject_sharing')
+                    ->controller(\App\Http\Controllers\Family\SubjectWorkController::class)->group(function () {
+                        Route::get('/', 'index');
+                        Route::get('/{subject_id}/marks/{mark_id}', 'mark');
+                        Route::get('/{subject_id}/notes/{note_id}', 'note');
+                    });
+
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);
                 // Manara Bucks (T-003.4, W6): the child's balance and history. A GET, so the

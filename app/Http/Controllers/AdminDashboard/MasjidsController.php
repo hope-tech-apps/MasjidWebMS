@@ -380,6 +380,16 @@ class MasjidsController extends Controller
             $response->setData($payload);
         }
 
+        if (! \App\Support\ClassSubjectMode::sharingEnabled((int) $masjid_id)) {
+            $payload = $response->getData(true);
+            foreach ($payload['data']['groups'] as &$group) {
+                $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== 'class_subject_sharing'));
+            }
+            unset($group);
+            $payload['data']['history'] = array_values(array_filter($payload['data']['history'], fn ($row) => $row['capability'] !== 'class_subject_sharing'));
+            $response->setData($payload);
+        }
+
         // The request memo already holds the row the branch above loaded: no second read.
         if (\App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id) || request()->boolean('include_calendar_terms')) {
             return $response;

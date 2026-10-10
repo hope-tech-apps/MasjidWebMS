@@ -266,6 +266,8 @@ export const FA_AF: Record<string, string> = {
     marks_untyped_two: "{x} کار نوع ندارند، بنابراین در اوسط وزنی شامل نشده‌اند.",
     marks_untyped_few: "{x} کار نوع ندارند، بنابراین در اوسط وزنی شامل نشده‌اند.",
     marks_untyped_many: "{x} کار نوع ندارند، بنابراین در اوسط وزنی شامل نشده‌اند.",
+    // MACHINE-DRAFTED. NOT YET REVIEWED BY A FLUENT SPEAKER.
+    subject_work_heading: "مضمون‌ها",
     marks_section_subjects: "به تفکیک مضمون",
     marks_no_subject: "بدون مضمون",
     marks_section_types: "به تفکیک نوع کار",

@@ -11,6 +11,7 @@
             <template v-if="readonly">
                 <span>{{ levelWords(draft[index].level) }}</span>
                 <p class="mark-comment mb-0" dir="auto">{{ draft[index].comment }}</p>
+                <span v-if="sharing && draft[index].shared_with_family" class="small">Shared with the family</span>
             </template>
             <template v-else>
                 <div>
@@ -29,6 +30,12 @@
                         :aria-describedby="fieldErrors[student.id]?.comment ? errorId(student.id, 'comment') : undefined" placeholder="Comment"></textarea>
                     <p v-if="fieldErrors[student.id]?.comment" :id="errorId(student.id, 'comment')" class="text-danger small">{{ fieldErrors[student.id].comment }}</p>
                 </div>
+                <div v-if="sharing" class="mark-sharing">
+                    <label class="share-control"><input v-model="draft[index].shared_with_family" type="checkbox" :disabled="saving" :aria-label="`Share with the family for ${student.name}`"
+                        :aria-invalid="fieldErrors[student.id]?.shared_with_family ? 'true' : undefined" :aria-describedby="fieldErrors[student.id]?.shared_with_family ? errorId(student.id, 'shared_with_family') : undefined"> Share with the family</label>
+                    <p class="small mb-0">This student's family can read this.</p>
+                    <p v-if="fieldErrors[student.id]?.shared_with_family" :id="errorId(student.id, 'shared_with_family')" class="text-danger small">{{ fieldErrors[student.id].shared_with_family }}</p>
+                </div>
                 <div v-if="conflicts.includes(student.id)" class="mark-conflict">
                     <p class="text-danger small">Someone else changed this mark. Reload to see it.</p>
                     <button type="button" class="btn btn-outline-secondary" :disabled="saving" @click="reload">Reload</button>
@@ -42,21 +49,22 @@
     </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, useId, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { pieceTitle, workError, workFieldErrors, type WorkApi, type WorkLevel, type WorkMark, type WorkPiece, type WorkStudent } from './subjectWork';
 const props = defineProps<{ piece: WorkPiece; students: WorkStudent[]; levels: WorkLevel[]; base: string; api: WorkApi; readonly?: boolean; heading?: string;
     /** Called with what the server accepted, even if this editor has already been left: an emit from an unmounted component goes nowhere. */
     accept?: (piece: WorkPiece) => void }>();
+const sharing = inject('subjectSharing', computed(() => false));
 const emit = defineEmits<{ dirty: [value: boolean]; saved: [piece: WorkPiece] }>();
 const makeDraft = (piece = props.piece) => props.students.map(student => {
     const mark = piece.marks.find(m => m.group_membership_id === student.id);
-    return { group_membership_id: student.id, level: mark?.level ?? null, comment: mark?.comment ?? '', updated_at: mark?.updated_at ?? null };
+    return { group_membership_id: student.id, level: mark?.level ?? null, comment: mark?.comment ?? '', updated_at: mark?.updated_at ?? null, ...(sharing.value ? { shared_with_family: mark?.shared_with_family === true } : {}) };
 });
 const publish = (piece: WorkPiece) => { if (props.accept) props.accept(piece); else emit('saved', piece); };
 const draft = ref<WorkMark[]>(makeDraft());
 const baseline = ref<WorkMark[]>(makeDraft());
 const shown = ref({ ...props.piece });
-const differs = (mark: WorkMark, index: number) => mark.level !== baseline.value[index].level || (mark.comment ?? '') !== (baseline.value[index].comment ?? '');
+const differs = (mark: WorkMark, index: number) => mark.level !== baseline.value[index].level || (mark.comment ?? '') !== (baseline.value[index].comment ?? '') || (sharing.value && mark.shared_with_family !== baseline.value[index].shared_with_family);
 const dirty = computed(() => draft.value.some(differs));
 const fieldErrors = ref<Record<number, Record<string, string>>>({}); const conflicts = ref<number[]>([]); const conflictPiece = ref<number | null>(null);
 const prefix = useId(); const errorId = (student: number, field: string) => `${prefix}-mark-${student}-${field}`;
@@ -143,7 +151,7 @@ const save = async () => {
             conflicts.value = failure.response.data.students.map((s: any) => s.group_membership_id);
             conflictPiece.value = Number.isInteger(failure.response.data.piece_id) ? failure.response.data.piece_id : null;
         } else {
-            const keys = sent.flatMap((_, i) => [`marks.${i}.level`, `marks.${i}.comment`]);
+            const keys = sent.flatMap((_, i) => [`marks.${i}.level`, `marks.${i}.comment`, ...(sharing.value ? [`marks.${i}.shared_with_family`] : [])]);
             const errors = workFieldErrors(failure, keys); error.value = errors.general;
             for (const [key, message] of Object.entries(errors.fields)) {
                 const [, index, field] = key.split('.'); const id = sent[Number(index)].group_membership_id;
@@ -158,6 +166,9 @@ onBeforeUnmount(() => { alive = false; emit('dirty', false); });
 .subject-marks { min-width: 0; overflow-wrap: anywhere; }
 .mark-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 2fr); gap: .75rem; align-items: center; padding: .75rem 0; border-bottom: 1px solid #dee2e6; }
 .mark-row > div { min-width: 0; }
+.mark-sharing { grid-column: 1 / -1; }
+.share-control { display: flex; align-items: center; gap: .5rem; min-height: 44px; cursor: pointer; }
+.share-control input { flex: 0 0 auto; }
 .mark-conflict { grid-column: 1 / -1; }
 .mark-levels { display: flex; gap: .5rem; }
 /* Filled when chosen, as the report card's levels are: the theme's outline button only darkens its edge. */

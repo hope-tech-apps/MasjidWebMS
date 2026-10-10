@@ -266,6 +266,8 @@ export const PS: Record<string, string> = {
     marks_untyped_two: "{x} کارونه هېڅ ډول نه لري، نو د وزني اوسط څخه پاتې دي.",
     marks_untyped_few: "{x} کارونه هېڅ ډول نه لري، نو د وزني اوسط څخه پاتې دي.",
     marks_untyped_many: "{x} کارونه هېڅ ډول نه لري، نو د وزني اوسط څخه پاتې دي.",
+    // MACHINE-DRAFTED. NOT YET REVIEWED BY A FLUENT SPEAKER.
+    subject_work_heading: "مضمونونه",
     marks_section_subjects: "د مضمون له مخې",
     marks_no_subject: "بې مضمونه",
     marks_section_types: "د کار د ډول له مخې",

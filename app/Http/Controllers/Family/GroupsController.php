@@ -89,11 +89,13 @@ class GroupsController extends FamilyController
             abort(Response::HTTP_FORBIDDEN, 'You are not entitled to this group.');
         }
 
-        return response()->json([
+        $response = response()->json([
             'status' => 'success',
-            'data' => $this->serialize($group),
+            'data' => $this->serialize($group, true),
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
+        if (\App\Support\ClassSubjectMode::sharingEnabled($group->masjid_id)) $response->header('Cache-Control', 'private, no-store');
+        return $response;
     }
 
     /**
@@ -191,7 +193,7 @@ class GroupsController extends FamilyController
      *
      * @return array<string,mixed>
      */
-    private function serialize(Group $group): array
+    private function serialize(Group $group, bool $includeSubjects = false): array
     {
         $contact = $this->contact();
 
@@ -228,6 +230,9 @@ class GroupsController extends FamilyController
                 ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
                 ->get();
 
+        $shared = $includeSubjects && \App\Support\ClassSubjectMode::sharingEnabled($group->masjid_id)
+            ? \App\Support\FamilySubjectWork::forChildren($contact, $group, $children, $this->audience) : null;
+
         $ownParticipant = $mine->first(
             fn (GroupMembership $m) => in_array($m->role, GroupMembership::PARTICIPANT_ROLES, true)
         );
@@ -254,7 +259,7 @@ class GroupsController extends FamilyController
             'own_membership' => $ownParticipant ? $this->student($ownParticipant) : null,
 
             'children' => $children
-                ->map(fn (GroupMembership $m) => $this->student($m))
+                ->map(fn (GroupMembership $m) => $this->student($m) + ($shared !== null ? ['subjects' => $shared[$m->id] ?? []] : []))
                 ->values()
                 ->all(),
 

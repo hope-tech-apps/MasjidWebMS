@@ -433,6 +433,8 @@
                              This child's balance and history, read-only, from their own endpoint. -->
                         <FamilyBucks v-if="group.class_store === true" :base="base" :member-id="child.membership_id" />
 
+                        <FamilySubjects v-if="child.subjects?.length" :subjects="child.subjects" :member-id="child.membership_id" :tx="tx" :key-of="KEY.subject" />
+
                         <h3 class="text-uppercase text-muted small">{{ t('section_letters') }}</h3>
                         <!-- EVERY TRACK THIS CLASS USES, one under the other,
                              each named and each counted on its own. No switcher
@@ -1062,6 +1064,7 @@ import MessageSignals from '@/components/common/MessageSignals.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
+import FamilySubjects from '@/views/family/FamilySubjects.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
 import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadReportCardsFor, watchStoriesSeen } from '@/views/family/familyClassRun';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
@@ -1934,6 +1937,7 @@ const subjectFigures = (b: any, showWeighted: boolean): string => {
  * frozen: its subjects and criteria cannot be reordered underneath a parent.
  */
 const KEY = {
+    subject: (member: number, kind: string, item: any) => `subject:${member}:${kind}:${item.id}:${kind === 'mark' ? item.date : item.translation_version}`,
     groupDescription: () => `group:${groupId.value}:description`,
     // `edited_at` is in the key: a story re-fetched after an edit is a NEW key and is
     // translated again, instead of keeping the old translation over the new words.
@@ -2064,6 +2068,12 @@ const translatableItems = computed<TranslatableItem[]>(() => {
     }
 
     if (tab.value === 'children') {
+        for (const child of group.value?.children ?? []) {
+            for (const subject of child.subjects ?? []) {
+                for (const mark of subject.marks) add(KEY.subject(child.membership_id, 'mark', mark), mark.comment);
+                for (const note of subject.notes) add(KEY.subject(child.membership_id, 'note', note), note.body);
+            }
+        }
         for (const record of Object.values(records.value)) {
             for (const award of record?.awards ?? []) {
                 // The skill label is the school's own wording for the behaviour,
@@ -2173,6 +2183,34 @@ const txBehaviourMark = (card: any, mark: number, row: any) =>
 const txMarkNote = (child: any, score: any, i: number) =>
     tx(KEY.markNote(child.membership_id, score, i), score.note);
 
+// A tab re-entry or return to the page must not reuse a disclosure that was unshared elsewhere.
+let sharedReadGeneration = 0;
+const refreshSharedSubjects = async () => {
+    if (tab.value !== 'children' || !group.value?.children?.some((child: any) => Object.prototype.hasOwnProperty.call(child, 'subjects'))) return;
+    const generation = ++sharedReadGeneration;
+    const run = beginRun();
+    for (const child of group.value.children) child.subjects = [];
+    try {
+        const response = await FamilyApiService.get(run.base);
+        if (run.stale() || generation !== sharedReadGeneration) return;
+        // Refresh the ward projection as well: a guardian edge might have been removed.
+        group.value.children = response.data?.data?.children ?? [];
+    } catch (failure: any) {
+        if (run.stale() || generation !== sharedReadGeneration) return;
+        if (!fail(failure)) error.value = { key: 'class_load_error' };
+    }
+};
+const resumeSharedSubjects = () => { if (document.visibilityState !== 'hidden') void refreshSharedSubjects(); };
+onMounted(() => {
+    document.addEventListener('visibilitychange', resumeSharedSubjects);
+    globalThis.window?.addEventListener('focus', resumeSharedSubjects);
+});
+onBeforeUnmount(() => {
+    ++sharedReadGeneration;
+    document.removeEventListener('visibilitychange', resumeSharedSubjects);
+    globalThis.window?.removeEventListener('focus', resumeSharedSubjects);
+});
+
 onMounted(async () => {
     // The school and class are read once: the chain below awaits five times,
     // and the route it would re-read on each can name another school by then.
@@ -2210,7 +2248,8 @@ onMounted(async () => {
     }
 });
 
-watch(tab, () => {
+watch(tab, next => {
+    if (next === 'children') void refreshSharedSubjects();
     openedThread.value = null;
     openCard.value = null;
 });

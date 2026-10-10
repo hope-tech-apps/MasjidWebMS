@@ -1,6 +1,6 @@
 # Class subject work: notes, pieces and marks
 
-Steps 2 and 3 provide subject notes, pieces and marks in the teacher and office screens. Family sharing and report-card summaries are not part of this build.
+Steps 2 and 3 provide subject notes, pieces and marks in the teacher and office screens. Step 4 adds optional family sharing behind a separate school grant. Report-card summaries remain a later step.
 
 ## The switch
 
@@ -31,7 +31,7 @@ Three additive CREATE TABLE migrations use an `id` primary key, named indexes an
 | `subject_piece_marks` | Unique `(subject_piece_id, group_membership_id)`. Level is nullable 1..4, comment nullable. No row means unmarked. Saving both empty deletes that student's row. Piece and membership hard deletion cascade; retiring the marker sets its user ID NULL. |
 | `subject_notes` | Body about one class membership, or a whole-class update when membership is NULL. Plain body replacement and deletion, no history. Membership hard deletion cascades so a child's note cannot become a whole-class update. Withdrawing a student does not delete notes. Retiring the author sets its user ID NULL. |
 
-Every model uses `BelongsToMasjid`. Organisation, subject and membership IDs are derived or resolved on the server. `shared_with_family` defaults to false on notes and marks, is excluded from writable fields and responses, and any teacher write sending true (including string `"true"`, or a mark-row flag) is refused with 422. No sharing reader is implemented.
+Every model uses `BelongsToMasjid`. Organisation, subject and membership IDs are derived or resolved on the server. `shared_with_family` defaults to false on notes and marks, is excluded from writable fields and responses, while sharing is OFF, and any teacher write sending true (including string `"true"`, or a mark-row flag) is refused with 422. The sharing-ON contract is below.
 
 Staging scrub anonymises pieces' `title` and `detail`, marks' `comment` and notes' `body`. It conservatively scrubs every title, including copied source titles, because own titles can name children.
 
@@ -87,7 +87,7 @@ Local evidence and limitations are in `artifacts/subject-work-server-report.md`.
 
 When bootstrap has both `class_subjects_enabled: true` and `class_subject_work_enabled: true`, teacher and office subject pages render the four work blocks below the existing tool. Work OFF keeps the existing no-tool sentence and sends no new bootstrap/page requests. `resources/vue-app/views/teacher/subject/` contains the shared components; office uses `readonly` and the admin GET routes only.
 
-Teachers choose the server's numbered curriculum entries for each grade, open linked plans or own pieces, and save one entry's levels/comments together. Pressing a selected level clears it. Drafts remain until saved or explicitly discarded when changing entry or class line. Note/piece forms preserve text on failed saves. Piece deletion includes the server count and asks again after a 409 count change. Family sharing is not offered.
+Teachers choose the server's numbered curriculum entries for each grade, open linked plans or own pieces, and save one entry's levels/comments together. Pressing a selected level clears it. Drafts remain until saved or explicitly discarded when changing entry or class line. Note/piece forms preserve text on failed saves. Piece deletion includes the server count and asks again after a 409 count change. Family sharing is offered only when the separate sharing grant is effective.
 
 The work payload serves `wording_changed` and `marked_against_date` for marked guide entries, comparing copied words against the current guide. Removed or unfollowed entries keep their copied words and date.
 
@@ -122,3 +122,40 @@ Deleting the note or own piece currently being corrected names that correction i
 Validation messages for mark levels/comments, note body/student and own-piece title/detail sit beside their controls, with `aria-invalid` and message IDs referenced by `aria-describedby`. Mark request indices map through the submitted rows to membership IDs. Both this application's `data` validation envelope and Laravel's `errors` envelope are supported. Errors with no matching field retain a general alert. Subject controls have component-scoped 44px minimum phone targets; shared performance help owns its summary target, including Grades and Reports while work is off. Copied wording comparisons trim title, detail and standard code and treat NULL as empty text.
 
 Evidence, rewritten ON tests and verification limits: `artifacts/build-d-report.md`.
+
+
+## Family sharing (step 4)
+
+`class_subject_sharing` is a new grant in the school group, false by default for every organisation type and hidden while ineffective. `SchoolSettings::classSubjectSharing()` requires all three grants: `class_subjects`, `class_subject_work`, and `class_subject_sharing`. The audited single and bulk capability writers refuse explicit sharing enables without both dependencies. Disabling a dependency preserves the stored sharing grant and records; re-enabling the dependency restores effective sharing. Disable sharing separately when that is not desired.
+
+Enable using the existing audited PATCH `/api/admin/masjids/{school_id}/capabilities/class_subject_sharing` with `{"enabled":true}`, after the two dependencies are on. The ordinary capability map, raw overrides, catalogue, Studio and switch history hide it while off. Production execution remains a separate owner-approved action.
+
+The reader reuses the complete organisation row already held by `ClassSubjectMode` for the request. Sharing OFF keeps the existing work projections, mark-save SQL, teacher/office screens and family/child payloads. `ClassSubjectSharingOffTest` pins literal SQL and JSON from 8b6d8f09 with work ON/sharing OFF and both OFF, using `tests/fixtures/subject-sharing-off-8b6d8f09.json`; existing OFF tests and fixtures are unchanged. Its middleware probe also proves the sharing decision adds no query to teacher, family or child requests.
+
+Sharing ON: every mark row and note has its own **Share with the family** choice. New records start unticked. Beside the choice: **This student's family can read this.**, or **Every family in this class can read this.** for a whole-class note. No share-all control exists. Mark saves send only changed students, including a sharing-only change, with the same `updated_at` conflict check. The flag travels in that atomic save. A level or comment edit without a flag preserves existing sharing; an empty mark is deleted, and its next draft starts unticked. Note body corrections likewise preserve sharing when the flag is omitted. Browser string booleans are validated and normalized; invalid values are refused. Staff work reads serve the boolean only when sharing is effective; office views show **Shared with the family**.
+
+### Family routes and disclosure
+
+All new routes are GETs below `/api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/subjects`, inside the existing parent-token stack, with `capability:class_subject_sharing`:
+
+| Suffix | Response |
+|---|---|
+| `/` | Visible subjects with shared marks and notes for this child |
+| `/{subject_id}/marks/{mark_id}` | One already-shared mark, or 404 |
+| `/{subject_id}/notes/{note_id}` | One already-shared note, or 404 |
+
+The organisation is bound from the authenticated guardian's credential; a foreign organisation URL is 403, and a foreign group/child/subject/item ID is 404. Child membership resolution stays inside the named class. The per-child read reuses `GroupAudience::mayReceiveThread()` with a resolved participant target. Bulk reads reuse the same participant contact target set as conversations and the existing child-record query fence. Whole-class notes use exactly `GroupAudience::mayReceive(..., DISCLOSURE_FEED)`, including consent, provenance and leaving-date rules. Hidden subjects and unshared records never enter the shared projection; item lookup happens only inside that projection.
+
+The family class-detail payload adds `children[].subjects` only when sharing is effective. Its class-list and student-mode payloads remain unchanged. Under each child the portal shows each shared subject's name, copied piece title, localized report-card level, teacher comment, dates and notes. No roster or staff author details are added. Three bulk record reads plus fixed audience checks cost the same number of queries regardless of child or item count. Cold authenticated class detail is pinned at **20 queries** for 1/3 children and 1/30 subjects with shared marks and notes; each measurement includes the token's last-used update.
+
+Withdrawal and class moves preserve the old membership and confirmed guardian edges. Report cards remain readable there through `FamilyController::subject()`, so shared marks and child notes do too. A real roster-move test verifies both published report cards and shared work stay under the old class. Class-wide notes follow the current Class Story entitlement and stop when that entitlement ends.
+
+No subject disclosure is stored in a family store, localStorage, service worker or server response cache. New routes and the sharing-ON class detail use `private, no-store`. The Subjects projection is cleared and re-read when the parent returns to the child tab or foregrounds the page; failed revalidation keeps the old disclosure cleared. The class list does not carry subject work. An already-open screen learns a remote change on its next read/revalidation; this feature adds no push channel.
+
+### Translation and localization
+
+Shared note bodies and mark comments are offered on the existing family class **Translate** button, through `useContentTranslation` and `/translations`. Existing availability checks, per-item/request limits, batching, notices, throttles and tenant/source-hash `content_translations` caching apply unchanged. Copied piece titles and subject names are never sent. Translation keys include the child, item kind and ID; mark versions use the saved date and notes use a SHA-256 of the disclosed body so same-second corrections cannot keep an earlier translation. Cached translations do not cache subject entitlement or cause an item absent from the latest payload to render.
+
+The only new family locale key is `subject_work_heading`, in all six languages. Spanish, Urdu, Pashto and Dari entries carry the existing MACHINE-DRAFTED warning and require human review. Existing report-card level keys and date locales are reused. The Subjects layout wraps text, uses logical alignment and keeps source text `dir="auto"`; actual 320/390px browser geometry remains unverified locally.
+
+Evidence, route references, all six strings and printed gate totals: `artifacts/subject-sharing-report.md`. No schema migration or free-text column was added.
