@@ -6676,6 +6676,9 @@ const saveReportCard = async (): Promise<boolean> => {
 
     savingCard.value = true;
     reportsError.value = '';
+    // A new Save starts clean: the note about a closed line belongs to the save that met it, and a
+    // refusal below sets it again.
+    closedLineNotice.value = false;
     try {
         // Only the rows that MOVED, and each one whole: sending {id, level}
         // alone would wipe that row's stored comment.

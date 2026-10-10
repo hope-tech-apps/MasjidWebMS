@@ -2067,6 +2067,8 @@ test('walk fix: a report-card save refused because a line closed re-reads the ca
     // Staging the office moving a teacher mid-edit is beyond the mounted harness; pin the rule the walk found missing.
     const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
     assert.match(source, /if \(e\?\.response\?\.status === 422 \|\| e\?\.response\?\.status === 403\) await reloadOpenCard\(true\);/);
+    // The note about a closed line is cleared when the next Save starts, so it never sits beside a later "Saved".
+    assert.ok(source.indexOf('closedLineNotice.value = false;\n    try {') > source.indexOf('const saveReportCard = async'));
     const office = readFileSync(new URL('../views/dashboard/groups/GroupReportsTab.vue', import.meta.url), 'utf8');
     assert.equal((office.match(/>Reports</g) ?? []).length, 0, 'the office page does not repeat the heading its menu line already gives');
 });
