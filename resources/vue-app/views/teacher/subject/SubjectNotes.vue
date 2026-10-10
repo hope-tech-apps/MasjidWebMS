@@ -66,7 +66,10 @@ const start = async (note?: WorkNote) => {
     if (props.readonly || busy.value || dirty.value && !await props.confirmDiscard()) return;
     form.value = { id: note?.id ?? null, about: note?.group_membership_id ? 'student' : 'class', student: note?.group_membership_id ?? null, body: note?.body ?? '', studentName: note?.student_name ?? '', ...(sharing.value ? { shared_with_family: note?.shared_with_family === true } : {}) };
     baseline.value = JSON.stringify(form.value); error.value = ''; fieldErrors.value = {}; removeId.value = null;
+    editingVersion.value = note?.version;
 };
+// The version of the note as it was when its form opened; a later list refresh must not replace it.
+const editingVersion = ref<string | undefined>(undefined);
 const cancel = async () => { if (!dirty.value || await props.confirmDiscard()) { form.value = null; error.value = ''; } };
 const save = async () => {
     if (props.readonly || busy.value || !form.value) return;
@@ -76,7 +79,11 @@ const save = async () => {
     busy.value = true; error.value = ''; fieldErrors.value = {};
     try {
         const shared = sharing.value ? { shared_with_family: f.shared_with_family === true } : {};
-        if (f.id !== null) await props.api.put(`${props.base}/notes/${f.id}`, { body: f.body, ...shared });
+        // An edit sends the tick only when the teacher changed it, and the version it was loaded with:
+        // a tab left open must never share a note again after someone un-shared it.
+        const opened = JSON.parse(baseline.value) as { shared_with_family?: boolean };
+        const tick = sharing.value && (opened.shared_with_family === true) !== (f.shared_with_family === true) ? { shared_with_family: f.shared_with_family === true } : {};
+        if (f.id !== null) await props.api.put(`${props.base}/notes/${f.id}`, { body: f.body, ...tick, ...(sharing.value ? { version: editingVersion.value } : {}) });
         else await props.api.post(`${props.base}/notes`, { group_membership_id: f.about === 'student' ? f.student : null, body: f.body, ...shared });
         if (alive) { form.value = null; emit('dirty', false); await props.refresh(); }
     } catch (failure) { if (alive) { const errors = workFieldErrors(failure, ['body', 'group_membership_id', ...(sharing.value ? ['shared_with_family'] : [])]); fieldErrors.value = errors.fields; error.value = errors.general; } }

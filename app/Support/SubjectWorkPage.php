@@ -31,7 +31,7 @@ final class SubjectWorkPage
                 'student_name' => $note->group_membership_id === null ? 'Whole class' : (trim($note->first_name.' '.$note->last_name) ?: 'Former student'),
                 'author_name' => $note->author_name ?? 'Former staff', 'body' => $note->body,
                 'created_at' => $note->created_at, 'updated_at' => $note->updated_at,
-            ] + ($sharing ? ['shared_with_family' => (bool) $note->shared_with_family] : []))->all();
+            ] + ($sharing ? ['shared_with_family' => (bool) $note->shared_with_family, 'version' => SubjectNote::versionOf($note->body, $note->shared_with_family)] : []))->all();
     }
 
     public static function data(Group $group, ClassSubject $subject, Request $request): array

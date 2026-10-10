@@ -82,7 +82,7 @@ it('walk 23 unticking removes marks and notes at once including warm family read
     ($this->saveMark)()->assertOk(); $note = ($this->note)(true, $this->one)->assertCreated()->json('data.id');
     ($this->asToken)($this->familyToken)->getJson($this->familyBase)->assertOk()->assertJsonCount(1, 'data.children.0.subjects');
     $mark = SubjectPieceMark::firstOrFail(); ($this->saveMark)(false)->assertOk();
-    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$note, ['body' => 'Practice note', 'shared_with_family' => false])->assertOk();
+    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$note, ['body' => 'Practice note', 'shared_with_family' => false, 'version' => \App\Models\SubjectNote::versionOf(\App\Models\SubjectNote::findOrFail($note)->body, \App\Models\SubjectNote::findOrFail($note)->shared_with_family)])->assertOk();
     ($this->asToken)($this->familyToken)->getJson($this->familyBase)->assertOk()->assertJsonCount(0, 'data.children.0.subjects');
     foreach (['marks/'.$mark->id, 'notes/'.$note] as $suffix) ($this->asToken)($this->familyToken)->getJson(($this->subjectsUrl)().'/'.$this->subject->id.'/'.$suffix)->assertNotFound();
 });
@@ -119,7 +119,7 @@ it('tick only changes conflict at 409 and edits preserve sharing while empty mar
     ($this->saveMark)()->assertOk();
     ($this->asToken)($this->teacherToken)->putJson($this->base.'/marks', ['source' => 'own', 'piece_id' => $this->piece->id, 'marks' => [['group_membership_id' => $this->one->id, 'level' => 4, 'comment' => 'Edited', 'updated_at' => SubjectPieceMark::firstOrFail()->updated_at->toISOString()]]])->assertOk();
     $note = ($this->note)(true, $this->one)->assertCreated()->json('data.id');
-    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$note, ['body' => 'Edited note'])->assertOk()->assertJsonPath('data.shared_with_family', true);
+    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$note, ['body' => 'Edited note', 'version' => \App\Models\SubjectNote::versionOf(\App\Models\SubjectNote::findOrFail($note)->body, \App\Models\SubjectNote::findOrFail($note)->shared_with_family)])->assertOk()->assertJsonPath('data.shared_with_family', true);
     ($this->asToken)($this->officeToken)->getJson(str_replace('/teacher/', '/admin/', $this->base).'/work')->assertOk()->assertJsonPath('data.own_pieces.0.marks.0.shared_with_family', true)->assertJsonPath('data.notes.0.shared_with_family', true);
     ($this->saveMark)(true, 'loaded', null, null)->assertOk(); expect(SubjectPieceMark::count())->toBe(0);
 });
@@ -214,7 +214,35 @@ it('pending guardian provenance with stored consent grants no shared records', f
 it('an edited shared note gets a new translation source version even within the same second', function () {
     $id = ($this->note)(true, $this->one)->assertCreated()->json('data.id');
     $before = ($this->asToken)($this->familyToken)->getJson(($this->subjectsUrl)())->assertOk()->json('data.0.notes.0.translation_version');
-    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$id, ['body' => 'Corrected note'])->assertOk();
+    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$id, ['body' => 'Corrected note', 'version' => \App\Models\SubjectNote::versionOf(\App\Models\SubjectNote::findOrFail($id)->body, \App\Models\SubjectNote::findOrFail($id)->shared_with_family)])->assertOk();
     $after = ($this->asToken)($this->familyToken)->getJson(($this->subjectsUrl)())->assertOk()->json('data.0.notes.0.translation_version');
     expect($before)->toBe(hash('sha256', 'Practice note')); expect($after)->toBe(hash('sha256', 'Corrected note'));
+});
+
+it('review refuses a note edit made against an older version, so a stale tab cannot share it again', function () {
+    $list = fn () => collect(($this->asToken)($this->teacherToken)->getJson($this->base.'/notes')->assertOk()->json('data'));
+    $created = ($this->asToken)($this->teacherToken)->postJson($this->base.'/notes', ['body' => 'Practice note', 'group_membership_id' => $this->one->id, 'shared_with_family' => true])->assertSuccessful()->json('data');
+    $stale = $list()->firstWhere('id', $created['id'])['version'];
+    expect($stale)->toBeString();
+
+    // Tab A un-shares it.
+    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$created['id'], ['body' => 'Practice note', 'shared_with_family' => false, 'version' => $stale])->assertOk();
+    expect(SubjectNote::findOrFail($created['id'])->shared_with_family)->toBeFalse();
+
+    // Tab B, still holding the shared version, edits the words: refused, whatever it says about sharing.
+    foreach ([['shared_with_family' => true], []] as $extra) {
+        ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$created['id'], ['body' => 'Edited in a stale tab', 'version' => $stale] + $extra)
+            ->assertStatus(409)->assertJsonPath('message', 'Someone else changed this note. Reload to see it.');
+    }
+    $note = SubjectNote::findOrFail($created['id']);
+    expect($note->shared_with_family)->toBeFalse();
+    expect($note->body)->toBe('Practice note');
+
+    // An edit with no version at all is refused too, and one made against the current version is accepted without touching the tick.
+    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$created['id'], ['body' => 'No version'])->assertStatus(422);
+    $current = $list()->firstWhere('id', $created['id'])['version'];
+    ($this->asToken)($this->teacherToken)->putJson($this->base.'/notes/'.$created['id'], ['body' => 'Corrected', 'version' => $current])->assertOk();
+    $note = SubjectNote::findOrFail($created['id']);
+    expect($note->body)->toBe('Corrected');
+    expect($note->shared_with_family)->toBeFalse();
 });

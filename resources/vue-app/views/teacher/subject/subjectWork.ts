@@ -9,7 +9,7 @@ export type WorkPiece = {
     wording_changed?: boolean; marked_against_date?: string; moved_to?: string | null; moved_elsewhere?: boolean; no_longer_followed?: boolean;
 };
 export type WorkBlock = { grade_key: string; grade_label: string; students: WorkStudent[]; entries: WorkPiece[]; opening_week_no: number; selected_week_no: number; opening_guide_subject?: string; selected_guide_subject?: string };
-export type WorkNote = { id: number; group_membership_id: number | null; student_name: string; body: string; author_name: string; created_at: string; shared_with_family?: boolean };
+export type WorkNote = { id: number; group_membership_id: number | null; student_name: string; body: string; author_name: string; created_at: string; shared_with_family?: boolean; version?: string };
 export type WorkPage = { sharing_enabled?: boolean; curriculum_empty_message?: string; levels: WorkLevel[]; students: WorkStudent[]; curriculum: WorkBlock[]; lesson_plans: WorkPiece[]; own_pieces: WorkPiece[]; notes: WorkNote[] };
 export type WorkApi = { get(url: string): Promise<any>; post(url: string, body: unknown): Promise<any>; put(url: string, body: unknown): Promise<any>; delete(url: string, body?: unknown): Promise<any> };
 /** Reads general failures from the application data envelope or a Laravel errors bag. */

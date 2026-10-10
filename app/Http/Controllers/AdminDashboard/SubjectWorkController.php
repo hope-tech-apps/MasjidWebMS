@@ -59,8 +59,9 @@ class SubjectWorkController extends Controller
     private function noteResponse(SubjectNote $note, bool $sharing)
     {
         $fresh = $note->fresh();
-        if ($sharing) $fresh->makeVisible('shared_with_family');
-        return $fresh;
+        if (! $sharing) return $fresh;
+        $fresh->makeVisible('shared_with_family');
+        return $fresh->toArray() + ['version' => SubjectNote::versionOf($fresh->body, $fresh->shared_with_family)];
     }
 
     public function page(Request $request, $masjid_id, $group_id, $subject_id)
@@ -99,6 +100,15 @@ class SubjectWorkController extends Controller
             $note = SubjectNote::where('class_subject_id', $subject->id)->lockForUpdate()->findOrFail($note_id);
             $this->sharing($request, $sharing);
             $fields = $request->validate(['body' => 'required|string']);
+            if ($sharing) {
+                // Where a note can reach a family, an edit must be made against the note as it now stands.
+                $loaded = $request->validate(['version' => 'required|string'])['version'];
+                if (! hash_equals(SubjectNote::versionOf($note->body, $note->shared_with_family), $loaded)) {
+                    throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
+                        'status' => 'error', 'message' => 'Someone else changed this note. Reload to see it.',
+                    ], 409));
+                }
+            }
             if ($sharing && $request->exists('shared_with_family')) $note->forceFill(['shared_with_family' => $request->input('shared_with_family')]);
             $note->fill($fields)->save();
             return [$note, $sharing];

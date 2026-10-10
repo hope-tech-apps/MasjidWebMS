@@ -21,4 +21,14 @@ class SubjectNote extends Model
     {
         return ['shared_with_family' => 'boolean', 'class_subject_id' => 'integer', 'group_membership_id' => 'integer'];
     }
+
+    /**
+     * What a teacher's screen loaded, as one string: the words and whether the family can read them.
+     * An edit made against an older one is refused, so a stale tab cannot share a note again after
+     * someone un-shared it (the row's own timestamp is too coarse: two saves can fall in one second).
+     */
+    public static function versionOf(?string $body, mixed $shared): string
+    {
+        return hash('sha256', (string) $body."\n".((bool) $shared ? '1' : '0'));
+    }
 }

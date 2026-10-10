@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as vue from 'vue';
@@ -123,4 +124,12 @@ test('saving an empty mark clears its sharing choice so the next new mark starts
         type(screen.all((n: any) => n.props['aria-label'] === 'Comment for Practice student')[0], 'New private comment'); await flush(); click(screen.button('Save')); await flush(12);
         assert.equal(writes[1].body.marks[0].shared_with_family, false);
     } finally { screen.unmount(); }
+});
+
+test('review: a note edit sends the version it was opened with, and the tick only when the teacher changed it', () => {
+    const notes = readFileSync(new URL('../views/teacher/subject/SubjectNotes.vue', import.meta.url), 'utf8');
+    // Mounted tests cannot open two tabs. Pin the two rules that stop a stale tab from sharing a note again.
+    assert.match(notes, /editingVersion\.value = note\?\.version;/);
+    assert.match(notes, /\(opened\.shared_with_family === true\) !== \(f\.shared_with_family === true\) \? \{ shared_with_family: f\.shared_with_family === true \} : \{\}/);
+    assert.match(notes, /\{ body: f\.body, \.\.\.tick, \.\.\.\(sharing\.value \? \{ version: editingVersion\.value \} : \{\}\) \}/);
 });
