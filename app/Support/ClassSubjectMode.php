@@ -87,6 +87,17 @@ final class ClassSubjectMode
         return $org?->deleted_at === null && SchoolSettings::classSubjectSharing($org);
     }
 
+    /** The existing HTTP organisation memo settles OFF without another query. */
+    public static function reportSummaryEnabled(int|string|null $masjidId): bool
+    {
+        if ($masjidId === null) return false;
+        $id = (int) $masjidId;
+        if (! self::enabled($id)) return false;
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::withTrashed()->select(['id', 'org_type', 'capability_overrides', 'deleted_at'])->find($id);
+        return $org?->deleted_at === null && SchoolSettings::classSubjectReportSummary($org);
+    }
+
     public static function responseEnabled(int|string|null $masjidId): bool
     {
         return self::enabled($masjidId);

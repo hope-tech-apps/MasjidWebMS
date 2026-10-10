@@ -128,6 +128,9 @@
                          is about the lesson, never about a named child, which is
                          why the teacher's own form refuses to hold a follow-up
                          list. -->
+                    <GroupReportsTab
+                        v-else-if="activeTab === 'reports' && group.class_subject_report_summary_enabled === true"
+                        :key="subjectBase" :base="subjectBase" />
                     <GroupLessonPlansTab
                         v-else-if="activeTab === 'lessons'"
                         :groupId="groupId"
@@ -182,6 +185,7 @@ import GroupPointsTab from './groups/GroupPointsTab.vue';
 import GroupLettersTab from './groups/GroupLettersTab.vue';
 import GroupLessonPlansTab from './groups/GroupLessonPlansTab.vue';
 import { classTeacherLines } from '@/core/helpers/classTeachers';
+import GroupReportsTab from './groups/GroupReportsTab.vue';
 import GroupGradesTab from './groups/GroupGradesTab.vue';
 import GroupHifzTab from './groups/GroupHifzTab.vue';
 import GroupThreadsTab from './groups/GroupThreadsTab.vue';
@@ -215,7 +219,7 @@ import { afterOpening, unreadNumber, unreadPill, unreadSpoken } from '@/core/hel
  */
 
 type TabKey = 'roster' | 'story' | 'points' | 'letters' | 'grades' | 'lessons' | 'hifz'
-    | 'threads' | 'files' | 'subject';
+    | 'threads' | 'files' | 'subject' | 'reports';
 
 // Routing
 const route = useRoute();

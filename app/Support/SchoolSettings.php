@@ -150,6 +150,12 @@ final class SchoolSettings
         return self::classSubjectWork($school) && (bool) $school?->hasCapability('class_subject_sharing');
     }
 
+    /** Staff references and report-line limits depend on subject work. */
+    public static function classSubjectReportSummary(?Masjid $school): bool
+    {
+        return self::classSubjectWork($school) && (bool) $school?->hasCapability('class_subject_report_summary');
+    }
+
     /** Evaluate the intended map under the organisation mutex, before any writes. */
     public static function assertSubjectWorkChange(Masjid $school, array $changes): void
     {
@@ -160,6 +166,15 @@ final class SchoolSettings
                 'capability' => ['Switch on class subjects and subject notes and marks before enabling family sharing.'],
             ]);
         }
+
+        if (($changes['class_subject_report_summary'] ?? false) === true
+            && (! ($changes['class_subjects'] ?? self::classSubjects($school))
+                || ! ($changes['class_subject_work'] ?? (bool) $school->hasCapability('class_subject_work')))) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'capability' => ['Switch on subject notes and marks before enabling report-card subject summaries.'],
+            ]);
+        }
+
         if (($changes['class_subject_work'] ?? false) === true
             && ! ($changes['class_subjects'] ?? self::classSubjects($school))) {
             throw \Illuminate\Validation\ValidationException::withMessages([

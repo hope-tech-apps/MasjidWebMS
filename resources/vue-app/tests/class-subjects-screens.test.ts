@@ -2002,3 +2002,53 @@ test('final review: source pins for the conflict reload, the unfollowed line and
     // Renaming alone sends no curriculum choice; a changed tick keeps the saved order.
     assert.match(manager, /if \(guideTouched\.value\) \{\s*payload\.guide_subjects = form\.value\.guide_subjects\.filter/);
 });
+
+for (const empty of [false, true]) for (const link of [false, true]) test(`report summary mounted reference empty=${empty} link=${link} and closed lines never submit`, async () => {
+    const summary = { class_subject_id: 102, name: 'Arabic', heading: 'This term in Arabic', counts: { 4: empty ? 0 : 3, 3: empty ? 0 : 5, 2: empty ? 0 : 1, 1: 0 }, can_open: link };
+    const card = { id: 7, student, type: 'report_card', type_label: 'Report Card', school_year: '2026-2027', term: 1, period_label: 'Quarter 1', published: false, subjects: [
+        { subject: 'Arabic Language', can_fill: true, work_summary: summary, criteria: [{ id: 21, criterion: 'Reading', level: null, comment: null }] },
+        { subject: 'Science', can_fill: false, criteria: [{ id: 22, criterion: 'Inquiry', level: 2, comment: 'Saved science note' }] },
+    ], learning_behaviours: [{ id: 23, criterion: 'Effort', level: null }], attendance: {}, teacher_comment: null };
+    const levels = [{ level: 4, short_label: 'Exceeds' }, { level: 3, short_label: 'Meets' }, { level: 2, short_label: 'Approaching' }, { level: 1, short_label: 'Needs Support' }];
+    const r = await setup('teacher', { read: (url: string) => {
+        if (url.includes('/report-cards?')) return ok({ period: { type: 'report_card', school_year: '2026-2027', term: 1 }, students: [student] });
+        if (url.includes('/report-card?')) return { data: { ...ok(card).data, performance_levels: levels } };
+    }, write: (method: string, url: string, body: any) => {
+        if (url.includes('/report-card?')) { for (const row of body.marks) Object.assign(card.subjects[0].criteria[0], row); return ok(card); }
+    } });
+    const s = r.screen;
+    try {
+        await pick(s, 'Reports'); click(s.button('Practice student')); await flush(10);
+        assert.match(s.text(), /This term in Arabic/);
+        if (empty) assert.match(s.text(), /Nothing marked yet in Arabic\./);
+        else assert.match(s.text(), /4 Exceeds: 3 · 3 Meets: 5 · 2 Approaching: 1 · 1 Needs Support: 0/);
+        const links = s.all(n => n.tag === 'a' && n.textContent === 'Open Arabic');
+        assert.equal(links.length, link ? 1 : 0);
+        if (link) assert.match(links[0].props.href, /subject=102/);
+        assert.match(s.text(), /Filled in by this subject's teacher\./);
+        const line = (criterion: string) => s.all(n => String(n.props.class).includes('list-group-item') && n.textContent.includes(criterion))[0];
+        const scienceLine = line('Inquiry');
+        for (const n of scienceLine.children.flatMap((n: Node) => n.tag === 'div' ? n.children : [n]).filter((n: Node) => n.tag === 'button' || n.tag === 'input')) assert.equal(n.disabled, true);
+        const arabicLine = line('Reading'); const buttons = arabicLine.children.flatMap(n => n.children).filter(n => n.tag === 'button');
+        assert.equal(buttons[0].disabled, false); click(buttons[0]); await flush();
+        click(s.button('Save')); await flush(10);
+        assert.deepEqual(r.calls.find(c => c.method === 'put' && c.url.includes('/report-card?')).body, { marks: [{ id: 21, level: 4, comment: null }] });
+    } finally { s.unmount(); }
+});
+
+test('office report summary ON opens an existing card with its own subject link and no write controls', async () => {
+    const card = { id: 7, student, type_label: 'Report Card', period_label: 'Quarter 1', published: true, attendance: {}, subjects: [{ subject: 'Science', work_summary: { class_subject_id: 104, name: 'Science', heading: 'So far this year in Science', counts: { 4: 1, 3: 0, 2: 0, 1: 0 }, can_open: true }, criteria: [{ id: 21, criterion: 'Inquiry', level: 4, level_label: 'Exceeds', comment: 'Saved note' }] }], learning_behaviours: [], teacher_comment: 'Saved comment' };
+    const r = await setup('office', { data: { class_subject_report_summary_enabled: true }, read: (url: string) => {
+        if (url.includes('/report-cards?')) return ok({ period: { type: 'report_card', school_year: '2026-2027', term: 1 }, students: [{ ...student, started: true, published: true, assessed: 1, criteria: 1 }] });
+        if (url.includes('/report-card?')) return { data: { ...ok(card).data, performance_levels: [{ level: 4, short_label: 'Exceeds' }, { level: 3, short_label: 'Meets' }, { level: 2, short_label: 'Approaching' }, { level: 1, short_label: 'Needs Support' }] } };
+    } });
+    try {
+        await pick(r.screen, 'Reports'); click(r.screen.button('Practice student')); await flush(10);
+        assert.match(r.screen.text(), /So far this year in Science.*4 Exceeds: 1 · 3 Meets: 0 · 2 Approaching: 0 · 1 Needs Support: 0/);
+        assert.match(r.screen.text(), /Saved note.*Saved comment/);
+        const a = r.screen.all(n => n.tag === 'a' && n.textContent === 'Open Science')[0]; assert.ok(a); assert.match(a.props.href, /subject=104/);
+        assert.equal(r.screen.all(n => n.tag === 'input' || n.tag === 'textarea').length, 0);
+        assert.equal(r.calls.filter(c => c.method !== 'get').length, 0);
+        assert.doesNotMatch(r.screen.text(), /Send to the family|Take it back|\bSave\b/);
+    } finally { r.screen.unmount(); }
+});

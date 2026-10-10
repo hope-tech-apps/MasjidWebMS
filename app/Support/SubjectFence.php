@@ -153,6 +153,33 @@ final class SubjectFence
             || ($classSubjectId !== null && in_array($classSubjectId, $limits['class_subject_ids'] ?? [], true));
     }
 
+    /** Report subjects absent from the class stay shared; hidden ones require unlimited authority. */
+    public static function allowsReportSubject(?array $limits, ?\App\Models\ClassSubject $subject): bool
+    {
+        return $limits === null || $subject === null
+            || ($subject->hidden_at === null && self::allowsWork($limits, (int) $subject->id));
+    }
+
+    /** Refuse the whole report save before any line or overall comment is written. */
+    public static function assertReportLines(\App\Models\Group $group, \Illuminate\Support\Collection $rows, array $submitted, ?User $user): void
+    {
+        $limits = self::limitsForWithClassSubjects($user, (int) $group->id);
+        if ($limits === null) return;
+        $subjects = \App\Models\ClassSubject::where('masjid_id', $group->masjid_id)->where('group_id', $group->id)->get();
+        $names = $subjects->whereIn('id', $limits['class_subject_ids'])->pluck('name')->implode(', ');
+        if ($names === '') $names = 'no subjects';
+        $owned = $rows->keyBy('id');
+        foreach ($submitted as $row) {
+            $line = $owned->get((int) ($row['id'] ?? 0));
+            if ($line === null || $line->kind !== \App\Models\ReportCardMark::KIND_ACADEMIC) continue;
+            if (! self::allowsReportSubject($limits, ReportCardSubjectWork::match($line->subject, $subjects))) {
+                throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
+                    'status' => 'error', 'message' => "You teach {$names} in this class. {$line->subject} is filled in by its own teacher.",
+                ], Response::HTTP_FORBIDDEN));
+            }
+        }
+    }
+
     /** The SQL form of the same predicate, for lists and grade arithmetic. */
     public static function scopeWork($query, ?array $limits, string $column = 'class_subject_id')
     {
@@ -182,6 +209,7 @@ final class SubjectFence
             ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))->orderBy('position')->orderBy('id')->get();
         $payload = ['class_subjects_enabled' => true, 'class_subjects' => $subjects, 'my_class_subject_ids' => $ids];
         if (ClassSubjectMode::workEnabled($group->masjid_id)) $payload['class_subject_work_enabled'] = true;
+        if (ClassSubjectMode::reportSummaryEnabled($group->masjid_id)) $payload['class_subject_report_summary_enabled'] = true;
         return $payload;
     }
 

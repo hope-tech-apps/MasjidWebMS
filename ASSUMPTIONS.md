@@ -388,3 +388,7 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 ## Class subject sharing step 4 (2026-10-09)
 - The named branch/worktree is authorized for writing; tracked files initially clean. No HANDOFF.md; prior STATE.md describes step3 and is stale against actual HEAD8b6d8f09.
 - Output filename unspecified: artifacts/subject-sharing-report.md. Browser geometry remains outside mounted-test evidence.
+
+## 2026-10-09 — Report summary step 5
+- The requested office references authorize a minimal dark office read-only Reports view because base 8b6d8f09 has none. This scope gap was raised in commentary and an optional clarification; no answer arrived before proceeding with the stated assumption. Existing office screens remain unchanged while OFF.
+- If a stored dated-term link cannot resolve in this school, use all retained marks and "So far this year" rather than silently counting an empty term. Existing school-calendar time-zone fallback is authoritative for an unset/invalid zone.

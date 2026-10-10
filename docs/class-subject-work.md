@@ -2,6 +2,8 @@
 
 Steps 2 and 3 provide subject notes, pieces and marks in the teacher and office screens. Step 4 adds optional family sharing behind a separate school grant. Report-card summaries remain a later step.
 
+Steps 2 and 3 provide subject notes, pieces and marks in the teacher and office screens. Report-card references and subject-line limits are provided separately by the dependent step 5 grant below. Family sharing is a separate build.
+
 ## The switch
 
 `class_subject_work` is a per-school grant in the `school` group. Its default is false for every organisation type. It uses the existing `listed_when_off` and `catalogue_when_off` visibility rules: the grant stays out of the capability map, raw serialised overrides, catalogue and switch history while off. Studio does not offer it at creation.
@@ -159,3 +161,17 @@ Shared note bodies and mark comments are offered on the existing family class **
 The only new family locale key is `subject_work_heading`, in all six languages. Spanish, Urdu, Pashto and Dari entries carry the existing MACHINE-DRAFTED warning and require human review. Existing report-card level keys and date locales are reused. The Subjects layout wraps text, uses logical alignment and keeps source text `dir="auto"`; actual 320/390px browser geometry remains unverified locally.
 
 Evidence, route references, all six strings and printed gate totals: `artifacts/subject-sharing-report.md`. No schema migration or free-text column was added.
+
+## Report-card references and subject-line limits (step 5)
+
+`class_subject_report_summary` is a school grant, default false and hidden while ineffective. `SchoolSettings::classSubjectReportSummary()` requires both class subjects and subject work. Both audited capability writers refuse enabling it without the intended dependent grants. The request decision reuses the existing organisation memo. Switching work off makes this grant ineffective without deleting its stored value or any marks.
+
+Teachers can still read the whole report card. Staff references appear only beside academic subjects whose frozen report-card name matches a visible class subject's current name through `SubjectKey::for()` and the initializer's two alias pairs (Arabic/Arabic Language and ELA/English Language Arts). Curriculum links and previous names do not match. The reference groups this child's non-null levels by 4/3/2/1 in one SQL read. It never changes report levels or comments. Family serialization and PDF data do not use it.
+
+A card with `school_term_id` and dated terms enabled uses inclusive term dates. Plan pieces use the live plan's session date, or the first ten characters of their copied ISO-date title after plan removal. Guide and own pieces use the mark's `updated_at` day in the school's calendar time zone: local start-day midnight inclusive to midnight after the end day exclusive, converted to UTC. Other cards count all retained levels, including withdrawn students' marks. A missing linked term falls back to the year-to-date heading and all marks.
+
+A limited teacher can save only matching visible subjects allowed by `SubjectFence`'s immutable ID predicate. A matching hidden subject requires unlimited authority. Unmatched subjects, learning behaviours and the overall comment remain class-wide. One closed submitted line refuses the entire request with its subject sentence, including comments and preparation's template writes. ON saving runs inside preparation's existing transaction; OFF retains the original separate preparation/save transactions and SQL. Publishing and unpublishing remain class-wide. The teacher screen already submitted changed rows only; closed controls and keyboard editing are disabled and closed rows are excluded from dirty saves.
+
+The base worktree had no office report-card surface. Step 5 adds only a dark office read-only Reports line and GET `/api/admin/masjids/{school}/groups/{class}/report-cards` and `/members/{membership}/report-card`. These require the new effective grant, CRM and `view contacts`. They read existing cards only, including drafts and started withdrawn students' cards; they create no template rows and add no marking or publishing routes. Subject links stay in each viewer's own class view with `?subject=<id>`.
+
+Evidence, the office scope assumption, literal OFF comparisons and verification limits: `artifacts/subject-report-summary-report.md`.

@@ -248,6 +248,16 @@ return [
         'catalogue_when_off' => false,
     ],
 
+    'class_subject_report_summary' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Report-card subject summaries',
+        'description' => 'Show subject marks beside staff report cards and limit report lines to each subject teacher.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'class_subject_work' => [
         'kind' => 'grant',
         'group' => 'school',

@@ -25,18 +25,24 @@ beforeEach(function () {
 
 afterEach(fn () => app(TenantContext::class)->forgetTenant());
 
-it('keeps report cards class staff wide in both states', function (bool $on) {
+it('keeps report cards wide with summary OFF in both states and limited with summary ON', function (bool $on, bool $summary) {
     if ($on) { ($this->activate)(); $this->staff->fresh()->update(['class_subject_ids' => []]); }
+    if ($summary) CapabilityWriter::apply($this->org->fresh(), ['class_subject_work' => true, 'class_subject_report_summary' => true], $this->office->id);
     $contact = \App\Models\Contact::factory()->create(['masjid_id' => $this->org->id, 'email' => null]);
     $member = \App\Models\GroupMembership::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'contact_id' => $contact->id, 'role' => 'member', 'grade_label' => 'Grade 1']);
     Sanctum::actingAs($this->teacher, ['staff']);
     $url = $this->base.'/members/'.$member->id.'/report-card?school_year=2026-2027&term=1';
     $subjects = $this->getJson($url)->assertOk()->json('data.subjects');
     foreach ($subjects as $subject) foreach ($subject['criteria'] as $criterion) {
-        $this->putJson($url, ['marks' => [['id' => $criterion['id'], 'level' => 4]]])->assertOk();
-        expect(\App\Models\ReportCardMark::findOrFail($criterion['id'])->level)->toBe(4);
+        if ($summary && $subject['can_fill'] === false) {
+            $this->putJson($url, ['marks' => [['id' => $criterion['id'], 'level' => 4]]])->assertForbidden();
+            expect(\App\Models\ReportCardMark::findOrFail($criterion['id'])->level)->toBeNull();
+        } else {
+            $this->putJson($url, ['marks' => [['id' => $criterion['id'], 'level' => 4]]])->assertOk();
+            expect(\App\Models\ReportCardMark::findOrFail($criterion['id'])->level)->toBe(4);
+        }
     }
-})->with([false, true]);
+})->with([[false, false], [true, false], [true, true]]);
 
 it('never translates known ids again even if holders and legacy values change off', function () {
     ($this->activate)(); $arabic = ClassSubject::where('name', 'Arabic')->firstOrFail(); $science = ClassSubject::where('name', 'Science')->firstOrFail();

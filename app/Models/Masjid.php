@@ -541,6 +541,8 @@ class Masjid extends Model implements HasMedia
         if (! \App\Support\SchoolSettings::classSubjectWork($this)) unset($out['class_subject_work']);
         if (! \App\Support\SchoolSettings::classSubjectSharing($this)) unset($out['class_subject_sharing']);
 
+        if (! \App\Support\SchoolSettings::classSubjectReportSummary($this)) unset($out['class_subject_report_summary']);
+
         return $out;
     }
 
@@ -592,6 +594,9 @@ class Masjid extends Model implements HasMedia
         }
         if (! \App\Support\SchoolSettings::classSubjectSharing($this) && is_array($attributes['capability_overrides'] ?? null)) {
             unset($attributes['capability_overrides']['class_subject_sharing']);
+        }
+        if (! \App\Support\SchoolSettings::classSubjectReportSummary($this) && is_array($attributes['capability_overrides'] ?? null)) {
+            unset($attributes['capability_overrides']['class_subject_report_summary']);
         }
         return $attributes;
     }

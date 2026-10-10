@@ -1,0 +1,1339 @@
+{
+    "teacher-list": {
+        "sql": [
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select \"report_cards\".*, (select count(*) from \"report_card_marks\" where \"report_cards\".\"id\" = \"report_card_marks\".\"report_card_id\" and \"report_card_marks\".\"masjid_id\" = ?) as \"marks_count\", (select count(*) from \"report_card_marks\" where \"report_cards\".\"id\" = \"report_card_marks\".\"report_card_id\" and \"level\" is not null and \"report_card_marks\".\"masjid_id\" = ?) as \"assessed_count\" from \"report_cards\" where \"group_id\" = ? and \"school_year\" = ? and \"term\" = ? and \"type\" = ? and \"report_cards\".\"masjid_id\" = ?",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and (\"left_on\" is null or \"id\" in (?)) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "period": {
+                    "type": "report_card",
+                    "school_year": "2026-2027",
+                    "term": 1
+                },
+                "students": [
+                    {
+                        "membership_id": 1,
+                        "grade_label": "1st",
+                        "contact": {
+                            "id": 1,
+                            "first_name": "Practice",
+                            "last_name": "Student",
+                            "avatar": null
+                        },
+                        "left_on": null,
+                        "report_card_id": 1,
+                        "started": true,
+                        "published": true,
+                        "published_at": "2026-10-09T16:00:00+00:00",
+                        "assessed": 0,
+                        "criteria": 23
+                    }
+                ]
+            },
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        }
+    },
+    "teacher-open": {
+        "sql": [
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"group_memberships\".\"id\" = ? and \"group_memberships\".\"masjid_id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"report_cards\" where (\"group_membership_id\" = ? and \"school_year\" = ? and \"term\" = ? and \"type\" = ?) and \"report_cards\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" in (1) and \"report_card_marks\".\"masjid_id\" = ? order by \"position\" asc",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" = ? and \"report_card_marks\".\"report_card_id\" is not null and \"report_card_marks\".\"masjid_id\" = ? order by \"position\" asc",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "student": {
+                    "membership_id": 1,
+                    "grade_label": "1st",
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Practice",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "type": "report_card",
+                "type_label": "Report Card",
+                "school_year": "2026-2027",
+                "term": 1,
+                "period_label": "Quarter 1, 2026-2027",
+                "grade_label": "1st",
+                "teacher_comment": null,
+                "published": true,
+                "published_at": "2026-10-09T16:00:00+00:00",
+                "attendance": {
+                    "present": null,
+                    "absent": null,
+                    "late": null
+                },
+                "subjects": [
+                    {
+                        "subject": "Qur'an",
+                        "criteria": [
+                            {
+                                "id": 1,
+                                "criterion": "Recitation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 2,
+                                "criterion": "Memorisation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 3,
+                                "criterion": "Tajweed",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Islamic Studies",
+                        "criteria": [
+                            {
+                                "id": 4,
+                                "criterion": "Understanding of concepts",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 5,
+                                "criterion": "Applies manners (adab) independently",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 6,
+                                "criterion": "Participation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Arabic Language",
+                        "criteria": [
+                            {
+                                "id": 7,
+                                "criterion": "Reading Accuracy",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 8,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 9,
+                                "criterion": "Vocabulary Use",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 10,
+                                "criterion": "Grammar",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "English Language Arts",
+                        "criteria": [
+                            {
+                                "id": 11,
+                                "criterion": "Reading Fluency",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 12,
+                                "criterion": "Reading Comprehension",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 13,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Mathematics",
+                        "criteria": [
+                            {
+                                "id": 14,
+                                "criterion": "Number Sense",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 15,
+                                "criterion": "Problem Solving",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 16,
+                                "criterion": "Math Skills",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Science",
+                        "criteria": [
+                            {
+                                "id": 17,
+                                "criterion": "Scientific Knowledge",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 18,
+                                "criterion": "Inquiry & Investigation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 19,
+                                "criterion": "Explanation & Reasoning",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    }
+                ],
+                "learning_behaviours": [
+                    {
+                        "id": 20,
+                        "criterion": "Follows classroom expectations",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 21,
+                        "criterion": "Completes work on time",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 22,
+                        "criterion": "Works well with others",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 23,
+                        "criterion": "Shows respect and good adab",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    }
+                ]
+            },
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        }
+    },
+    "teacher-save": {
+        "sql": [
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"group_memberships\".\"id\" = ? and \"group_memberships\".\"masjid_id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"report_cards\" where (\"group_membership_id\" = ? and \"school_year\" = ? and \"term\" = ? and \"type\" = ?) and \"report_cards\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where (\"report_card_id\" = ? and \"subject\" = ? and \"criterion\" = ?) and \"report_card_marks\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" in (1) and \"report_card_marks\".\"masjid_id\" = ? order by \"position\" asc",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" = ? and \"report_card_marks\".\"report_card_id\" is not null and \"report_card_marks\".\"masjid_id\" = ?",
+            "update \"report_card_marks\" set \"level\" = ?, \"comment\" = ?, \"updated_at\" = ? where \"id\" = ?",
+            "update \"report_cards\" set \"teacher_comment\" = ?, \"updated_at\" = ? where \"id\" = ?",
+            "select * from \"report_cards\" where \"id\" = ? limit 1",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" in (1) and \"report_card_marks\".\"masjid_id\" = ?",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" = ? and \"report_card_marks\".\"report_card_id\" is not null and \"report_card_marks\".\"masjid_id\" = ? order by \"position\" asc",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "student": {
+                    "membership_id": 1,
+                    "grade_label": "1st",
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Practice",
+                        "last_name": "Student",
+                        "avatar": null
+                    }
+                },
+                "type": "report_card",
+                "type_label": "Report Card",
+                "school_year": "2026-2027",
+                "term": 1,
+                "period_label": "Quarter 1, 2026-2027",
+                "grade_label": "1st",
+                "teacher_comment": "Practice",
+                "published": false,
+                "published_at": null,
+                "attendance": {
+                    "present": null,
+                    "absent": null,
+                    "late": null
+                },
+                "subjects": [
+                    {
+                        "subject": "Qur'an",
+                        "criteria": [
+                            {
+                                "id": 1,
+                                "criterion": "Recitation",
+                                "level": 3,
+                                "level_label": "Meets Expectations",
+                                "comment": "Practice"
+                            },
+                            {
+                                "id": 2,
+                                "criterion": "Memorisation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 3,
+                                "criterion": "Tajweed",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Islamic Studies",
+                        "criteria": [
+                            {
+                                "id": 4,
+                                "criterion": "Understanding of concepts",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 5,
+                                "criterion": "Applies manners (adab) independently",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 6,
+                                "criterion": "Participation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Arabic Language",
+                        "criteria": [
+                            {
+                                "id": 7,
+                                "criterion": "Reading Accuracy",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 8,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 9,
+                                "criterion": "Vocabulary Use",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 10,
+                                "criterion": "Grammar",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "English Language Arts",
+                        "criteria": [
+                            {
+                                "id": 11,
+                                "criterion": "Reading Fluency",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 12,
+                                "criterion": "Reading Comprehension",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 13,
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Mathematics",
+                        "criteria": [
+                            {
+                                "id": 14,
+                                "criterion": "Number Sense",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 15,
+                                "criterion": "Problem Solving",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 16,
+                                "criterion": "Math Skills",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Science",
+                        "criteria": [
+                            {
+                                "id": 17,
+                                "criterion": "Scientific Knowledge",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 18,
+                                "criterion": "Inquiry & Investigation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "id": 19,
+                                "criterion": "Explanation & Reasoning",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    }
+                ],
+                "learning_behaviours": [
+                    {
+                        "id": 20,
+                        "criterion": "Follows classroom expectations",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 21,
+                        "criterion": "Completes work on time",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 22,
+                        "criterion": "Works well with others",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "id": 23,
+                        "criterion": "Shows respect and good adab",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    }
+                ]
+            }
+        }
+    },
+    "office-card-serializer": {
+        "sql": [
+            "select * from \"report_cards\" where \"id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" = ? and \"report_card_marks\".\"report_card_id\" is not null and \"report_card_marks\".\"masjid_id\" = ? order by \"position\" asc",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+        ],
+        "payload": {
+            "id": 1,
+            "student": {
+                "membership_id": 1,
+                "grade_label": "1st",
+                "contact": {
+                    "id": 1,
+                    "first_name": "Practice",
+                    "last_name": "Student",
+                    "avatar": null
+                }
+            },
+            "type": "report_card",
+            "type_label": "Report Card",
+            "school_year": "2026-2027",
+            "term": 1,
+            "period_label": "Quarter 1, 2026-2027",
+            "grade_label": "1st",
+            "teacher_comment": "Practice",
+            "published": false,
+            "published_at": null,
+            "attendance": {
+                "present": null,
+                "absent": null,
+                "late": null
+            },
+            "subjects": [
+                {
+                    "subject": "Qur'an",
+                    "criteria": [
+                        {
+                            "id": 1,
+                            "criterion": "Recitation",
+                            "level": 3,
+                            "level_label": "Meets Expectations",
+                            "comment": "Practice"
+                        },
+                        {
+                            "id": 2,
+                            "criterion": "Memorisation",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 3,
+                            "criterion": "Tajweed",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "Islamic Studies",
+                    "criteria": [
+                        {
+                            "id": 4,
+                            "criterion": "Understanding of concepts",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 5,
+                            "criterion": "Applies manners (adab) independently",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 6,
+                            "criterion": "Participation",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "Arabic Language",
+                    "criteria": [
+                        {
+                            "id": 7,
+                            "criterion": "Reading Accuracy",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 8,
+                            "criterion": "Writing",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 9,
+                            "criterion": "Vocabulary Use",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 10,
+                            "criterion": "Grammar",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "English Language Arts",
+                    "criteria": [
+                        {
+                            "id": 11,
+                            "criterion": "Reading Fluency",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 12,
+                            "criterion": "Reading Comprehension",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 13,
+                            "criterion": "Writing",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "Mathematics",
+                    "criteria": [
+                        {
+                            "id": 14,
+                            "criterion": "Number Sense",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 15,
+                            "criterion": "Problem Solving",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 16,
+                            "criterion": "Math Skills",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "Science",
+                    "criteria": [
+                        {
+                            "id": 17,
+                            "criterion": "Scientific Knowledge",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 18,
+                            "criterion": "Inquiry & Investigation",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        },
+                        {
+                            "id": 19,
+                            "criterion": "Explanation & Reasoning",
+                            "level": null,
+                            "level_label": null,
+                            "comment": null
+                        }
+                    ]
+                }
+            ],
+            "learning_behaviours": [
+                {
+                    "id": 20,
+                    "criterion": "Follows classroom expectations",
+                    "level": null,
+                    "level_label": null,
+                    "comment": null
+                },
+                {
+                    "id": 21,
+                    "criterion": "Completes work on time",
+                    "level": null,
+                    "level_label": null,
+                    "comment": null
+                },
+                {
+                    "id": 22,
+                    "criterion": "Works well with others",
+                    "level": null,
+                    "level_label": null,
+                    "comment": null
+                },
+                {
+                    "id": 23,
+                    "criterion": "Shows respect and good adab",
+                    "level": null,
+                    "level_label": null,
+                    "comment": null
+                }
+            ]
+        }
+    },
+    "family-published": {
+        "sql": [
+            "select * from \"personal_access_tokens\" where \"personal_access_tokens\".\"id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ? limit 1",
+            "update \"personal_access_tokens\" set \"last_used_at\" = ?, \"updated_at\" = ? where \"id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"group_memberships\".\"id\" = ? and \"group_memberships\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"provenance\" = ? and \"contact_id\" in (?) and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"report_cards\" where \"group_membership_id\" = ? and \"published_at\" is not null and \"report_cards\".\"id\" = ? and \"report_cards\".\"masjid_id\" = ? limit 1",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" = ? and \"report_card_marks\".\"report_card_id\" is not null and \"report_card_marks\".\"masjid_id\" = ? order by \"position\" asc"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "type": "report_card",
+                "type_label": "Report Card",
+                "period_label": "Quarter 1, 2026-2027",
+                "grade_label": "1st",
+                "published_at": "2026-10-09T16:00:00+00:00",
+                "teacher_comment": "Practice",
+                "attendance": {
+                    "present": null,
+                    "absent": null,
+                    "late": null
+                },
+                "subjects": [
+                    {
+                        "subject": "Qur'an",
+                        "criteria": [
+                            {
+                                "criterion": "Recitation",
+                                "level": 3,
+                                "level_label": "Meets Expectations",
+                                "comment": "Practice"
+                            },
+                            {
+                                "criterion": "Memorisation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Tajweed",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Islamic Studies",
+                        "criteria": [
+                            {
+                                "criterion": "Understanding of concepts",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Applies manners (adab) independently",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Participation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Arabic Language",
+                        "criteria": [
+                            {
+                                "criterion": "Reading Accuracy",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Vocabulary Use",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Grammar",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "English Language Arts",
+                        "criteria": [
+                            {
+                                "criterion": "Reading Fluency",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Reading Comprehension",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Writing",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Mathematics",
+                        "criteria": [
+                            {
+                                "criterion": "Number Sense",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Problem Solving",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Math Skills",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    },
+                    {
+                        "subject": "Science",
+                        "criteria": [
+                            {
+                                "criterion": "Scientific Knowledge",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Inquiry & Investigation",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            },
+                            {
+                                "criterion": "Explanation & Reasoning",
+                                "level": null,
+                                "level_label": null,
+                                "comment": null
+                            }
+                        ]
+                    }
+                ],
+                "learning_behaviours": [
+                    {
+                        "criterion": "Follows classroom expectations",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "criterion": "Completes work on time",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "criterion": "Works well with others",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    },
+                    {
+                        "criterion": "Shows respect and good adab",
+                        "level": null,
+                        "level_label": null,
+                        "comment": null
+                    }
+                ]
+            },
+            "performance_levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        }
+    },
+    "pdf-data": {
+        "sql": [
+            "select * from \"report_cards\" where \"id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"report_card_marks\" where \"report_card_marks\".\"report_card_id\" = ? and \"report_card_marks\".\"report_card_id\" is not null and \"report_card_marks\".\"masjid_id\" = ? order by \"position\" asc",
+            "select * from \"media\" where \"media\".\"model_id\" in (1) and \"media\".\"model_type\" = ?",
+            "select * from \"theme_settings\" where \"theme_settings\".\"masjid_id\" = ? and \"theme_settings\".\"masjid_id\" is not null limit 1"
+        ],
+        "payload": {
+            "schoolName": "Practice School",
+            "logo": null,
+            "palette": {
+                "color": {
+                    "primary": "#01B151",
+                    "secondary": "#0B7A3B",
+                    "accent": "#F2B705",
+                    "background": "#FFFFFF",
+                    "surface": "#FFFFFF",
+                    "text": "#111827",
+                    "textMuted": "#6B7280",
+                    "border": "#E5E7EB",
+                    "onPrimary": "#FFFFFF",
+                    "onSecondary": "#FFFFFF",
+                    "onAccent": "#FFFFFF",
+                    "success": "#16A34A",
+                    "warning": "#D97706",
+                    "error": "#DC2626"
+                },
+                "typography": {
+                    "fontFamily": "system",
+                    "scale": {
+                        "display": 32,
+                        "title": 24,
+                        "heading": 20,
+                        "body": 16,
+                        "caption": 12
+                    },
+                    "weight": {
+                        "regular": 400,
+                        "medium": 500,
+                        "semibold": 600,
+                        "bold": 700
+                    }
+                },
+                "shape": {
+                    "radius": {
+                        "sm": 8,
+                        "md": 12,
+                        "lg": 16,
+                        "pill": 999
+                    },
+                    "borderWidth": 1
+                },
+                "spacing": {
+                    "unit": 4,
+                    "scale": [
+                        0,
+                        4,
+                        8,
+                        12,
+                        16,
+                        24,
+                        32,
+                        48
+                    ]
+                }
+            },
+            "childName": "Practice Student",
+            "gradeLabel": "1st",
+            "typeLabel": "Report Card",
+            "periodLabel": "Quarter 1, 2026-2027",
+            "publishedAt": "October 9, 2026",
+            "attendance": null,
+            "subjects": [
+                {
+                    "subject": "Qur'an",
+                    "criteria": [
+                        {
+                            "criterion": "Recitation",
+                            "level": 3,
+                            "levelLabel": "Meets Expectations",
+                            "comment": "Practice"
+                        },
+                        {
+                            "criterion": "Memorisation",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Tajweed",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "Islamic Studies",
+                    "criteria": [
+                        {
+                            "criterion": "Understanding of concepts",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Applies manners (adab) independently",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Participation",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "Arabic Language",
+                    "criteria": [
+                        {
+                            "criterion": "Reading Accuracy",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Writing",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Vocabulary Use",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Grammar",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "English Language Arts",
+                    "criteria": [
+                        {
+                            "criterion": "Reading Fluency",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Reading Comprehension",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Writing",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "Mathematics",
+                    "criteria": [
+                        {
+                            "criterion": "Number Sense",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Problem Solving",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Math Skills",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        }
+                    ]
+                },
+                {
+                    "subject": "Science",
+                    "criteria": [
+                        {
+                            "criterion": "Scientific Knowledge",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Inquiry & Investigation",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        },
+                        {
+                            "criterion": "Explanation & Reasoning",
+                            "level": null,
+                            "levelLabel": "Not assessed",
+                            "comment": null
+                        }
+                    ]
+                }
+            ],
+            "behaviours": [
+                {
+                    "criterion": "Follows classroom expectations",
+                    "level": null,
+                    "levelLabel": "Not assessed",
+                    "comment": null
+                },
+                {
+                    "criterion": "Completes work on time",
+                    "level": null,
+                    "levelLabel": "Not assessed",
+                    "comment": null
+                },
+                {
+                    "criterion": "Works well with others",
+                    "level": null,
+                    "levelLabel": "Not assessed",
+                    "comment": null
+                },
+                {
+                    "criterion": "Shows respect and good adab",
+                    "level": null,
+                    "levelLabel": "Not assessed",
+                    "comment": null
+                }
+            ],
+            "teacherComment": "Practice",
+            "levels": [
+                {
+                    "level": 4,
+                    "label": "Exceeds Expectations",
+                    "short_label": "Exceeds",
+                    "description": "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence."
+                },
+                {
+                    "level": 3,
+                    "label": "Meets Expectations",
+                    "short_label": "Meets",
+                    "description": "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding."
+                },
+                {
+                    "level": 2,
+                    "label": "Approaching Expectations",
+                    "short_label": "Approaching",
+                    "description": "Partial understanding; needs support or reminders; inconsistent performance."
+                },
+                {
+                    "level": 1,
+                    "label": "Needs Support",
+                    "short_label": "Needs Support",
+                    "description": "Limited understanding; requires significant guidance; skills not yet developed."
+                }
+            ]
+        }
+    }
+}

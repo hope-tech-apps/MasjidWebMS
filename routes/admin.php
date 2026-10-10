@@ -1303,6 +1303,15 @@ Route::prefix('admin')->group(function () {
                         Route::get('/members/{membership_id}/grades', 'forMember')->middleware('permission:view contacts');
                     });
 
+                // Staff-only report references; no office marking or publication route.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->middleware(['permission:view contacts', 'capability:class_subject_report_summary'])
+                    ->controller(\App\Http\Controllers\Teacher\ReportCardController::class)
+                    ->group(function () {
+                        Route::get('/report-cards', 'index');
+                        Route::get('/members/{membership_id}/report-card', 'officeShow');
+                    });
+
                 // THE CLASS'S GRADE WEIGHTS — the office's one gradebook write.
                 //
                 // How much each type of work counts is one policy for the whole

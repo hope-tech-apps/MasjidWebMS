@@ -48,16 +48,21 @@ class ReportCardService
      * Idempotent: calling it twice returns the same card with the same rows, and
      * never duplicates or resets a mark a teacher has already entered. That is
      * what makes it safe to call on every page load, which is how the teacher's
-     * screen uses it.
+     * screen uses it. An optional save callback joins preparation only with
+     * the subject-summary grant ON; callers perform the legacy save separately.
      */
     public function prepare(
         GroupMembership $membership,
         string $type,
         string $schoolYear,
         int $term,
+        ?\Closure $save = null,
     ): ReportCard {
         if (\App\Support\SchoolCalendarRequestMode::enabled((int) $membership->masjid_id)) {
-            return $this->prepareWithTerm($membership, $type, $schoolYear, $term);
+            return $this->prepareWithTerm($membership, $type, $schoolYear, $term, $save);
+        }
+        if ($save !== null && \App\Support\ClassSubjectMode::reportSummaryEnabled($membership->masjid_id)) {
+            return $this->prepareWithSubjectSave($membership, $type, $schoolYear, $term, $save);
         }
         return DB::transaction(function () use ($membership, $type, $schoolYear, $term): ReportCard {
             $card = ReportCard::firstOrNew([
@@ -84,14 +89,28 @@ class ReportCardService
         });
     }
 
-    private function prepareWithTerm(GroupMembership $membership, string $type, string $schoolYear, int $term): ReportCard
+    /** The existing preparation body stays frozen; ON writes share its rollback boundary. */
+    private function prepareWithSubjectSave(GroupMembership $membership, string $type, string $schoolYear, int $term, \Closure $save): ReportCard
     {
-        return DB::transaction(function () use ($membership, $type, $schoolYear, $term) {
+        return DB::transaction(function () use ($membership, $type, $schoolYear, $term, $save) {
+            $org = \App\Models\Masjid::whereKey($membership->masjid_id)->lockForUpdate()->firstOrFail();
+            \App\Models\Group::whereKey($membership->group_id)->lockForUpdate()->firstOrFail();
+            \App\Support\ClassSubjectMode::forget((int) $org->id);
+            \App\Support\ClassSubjectMode::rememberLoaded($org);
+            $card = $this->prepare($membership, $type, $schoolYear, $term);
+            $save($card);
+            return $card;
+        });
+    }
+
+    private function prepareWithTerm(GroupMembership $membership, string $type, string $schoolYear, int $term, ?\Closure $save): ReportCard
+    {
+        return DB::transaction(function () use ($membership, $type, $schoolYear, $term, $save) {
             // Org PRIMARY X record lock first; new term writers take the same mutex.
             $org = \App\Models\Masjid::query()->whereKey($membership->masjid_id)->lockForUpdate()->firstOrFail();
             if (! SchoolSettings::calendarTerms($org)) {
                 \App\Support\SchoolCalendarRequestMode::set((int) $org->id, false);
-                return $this->prepare($membership, $type, $schoolYear, $term);
+                return $this->prepare($membership, $type, $schoolYear, $term, $save);
             }
             $match = \App\Support\SchoolReportCardTermMatcher::match($org->id, $schoolYear, $term, true);
             $card = ReportCard::firstOrNew([
@@ -110,7 +129,8 @@ class ReportCardService
                     'created_by_user_id' => Auth::id(),
                 ])->forceFill(['school_term_id' => $match['term']?->id])->save();
             }
-            $this->ensureRows($card);
+            $this->ensureRows($card, $save !== null);
+            if ($save !== null && ! $card->isPublished() && \App\Support\ClassSubjectMode::reportSummaryEnabled($card->masjid_id)) $save($card);
             return $card->load(['marks' => fn ($q) => $q->orderBy('position')]);
         });
     }
@@ -125,7 +145,7 @@ class ReportCardService
      * card in progress is not the place to lose a teacher's work, and a card
      * already published must never change at all.
      */
-    private function ensureRows(ReportCard $card): void
+    private function ensureRows(ReportCard $card, bool $saving = false): void
     {
         if ($card->isPublished()) {
             return;
@@ -136,7 +156,12 @@ class ReportCardService
         // The organisation's `report_card_core_subjects` setting (BISS): CORE
         // only. Read on every prepare, like the template itself, so a card that
         // already has other rows keeps them — see the docblock above.
-        $coreOnly = SchoolSettings::reportCardCoreOnly(SchoolSettings::org($card->masjid_id));
+        $org = SchoolSettings::org($card->masjid_id);
+        $coreOnly = SchoolSettings::reportCardCoreOnly($org);
+        if ($saving && SchoolSettings::classSubjectReportSummary($org)) {
+            \App\Models\Masjid::whereKey($card->masjid_id)->lockForUpdate()->firstOrFail();
+            \App\Models\Group::whereKey($card->group_id)->lockForUpdate()->firstOrFail();
+        }
 
         foreach (ReportCardTemplate::rowsForGrade($card->grade_label, $coreOnly) as $row) {
             $this->ensureRow($card, ReportCardMark::KIND_ACADEMIC, $row['subject'], $row['criterion'], $position++);
@@ -192,6 +217,25 @@ class ReportCardService
      * @param  array<int, array{id:int, level:int|null, comment:string|null}>  $marks
      */
     public function saveMarks(ReportCard $card, array $marks, bool $updateComment = false, ?string $comment = null): bool
+    {
+        if ($card->isPublished()) return false;
+        if (! \App\Support\ClassSubjectMode::reportSummaryEnabled($card->masjid_id)) {
+            return $this->saveMarksLegacy($card, $marks, $updateComment, $comment);
+        }
+
+        return DB::transaction(function () use ($card, $marks, $updateComment, $comment) {
+            // Same organisation/class mutex as assignment, visibility and subject work writers.
+            $org = \App\Models\Masjid::whereKey($card->masjid_id)->lockForUpdate()->firstOrFail();
+            $group = \App\Models\Group::whereKey($card->group_id)->lockForUpdate()->firstOrFail();
+            $current = ReportCard::whereKey($card->id)->lockForUpdate()->firstOrFail();
+            if (SchoolSettings::classSubjectReportSummary($org)) {
+                \App\Support\SubjectFence::assertReportLines($group, $current->marks()->get(), $marks, Auth::user());
+            }
+            return $this->saveMarksLegacy($current, $marks, $updateComment, $comment);
+        });
+    }
+
+    private function saveMarksLegacy(ReportCard $card, array $marks, bool $updateComment, ?string $comment): bool
     {
         if ($card->isPublished()) {
             return false;

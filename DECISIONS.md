@@ -9512,3 +9512,10 @@ Owner decisions implemented: inclusive today..today+27 ON form offers, collapsed
 - Family disclosure reads are no-store; tab re-entry and foreground revalidate after clearing prior subject data. No push channel is added. An already-open page learns remote changes on its next read.
 - Only subject_work_heading is new; reuse existing six-language report-level keys. Four draft strings remain marked MACHINE-DRAFTED.
 - Report path artifacts/subject-sharing-report.md; local work only, caller commits. Extend Studio's exact school-grant inventory intentionally; existing OFF contracts and fixtures stay unchanged.
+
+## 2026-10-09 — Class subject report references, step 5
+- Report path: artifacts/subject-report-summary-report.md (brief supplied no path). No migration, commit or deployment.
+- The base has no office report-card route/controller/screen. Raised the mismatch before implementation; after an optional clarification window, added a dark read-only office view, gated by the new dependent grant. It reads only existing cards and adds no office write or publication route. Literal base office HTTP-card comparison is inapplicable; the existing staff serializer under an office principal is pinned instead.
+- Match frozen report names against current class names plus the two existing aliases only. Hidden matches remain fenced; previous names and curriculum following do not expand matching. Missing linked terms use all marks. Time zone uses the existing school calendar's fallback rule.
+- An empty teacher ID list says "You teach no subjects in this class." The remaining refusal sentence names the report subject. Return explicit JSON so production debug settings cannot hide it.
+- Teacher dirty-only saves already existed. Closed rows are disabled and filtered, keyboard handlers guard their authority. Whole-card publication remains class-wide; a separate designated-publisher decision is preferable to stranding classes whose teachers are all limited.

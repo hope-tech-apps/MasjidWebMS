@@ -2446,6 +2446,8 @@
 
                     <div v-for="sub in openCard.subjects" :key="sub.subject" class="card border-0 shadow-sm mb-2">
                         <div class="card-header bg-white fw-semibold small">{{ sub.subject }}</div>
+                        <ReportSubjectSummary v-if="sub.work_summary" :summary="sub.work_summary" :levels="levelKey" :href="subjectReportHref(sub.work_summary.class_subject_id)" />
+                        <p v-if="sub.can_fill === false" class="small text-muted px-3 pt-2 mb-0">Filled in by this subject's teacher.</p>
                         <div class="list-group list-group-flush">
                             <div v-for="m in sub.criteria" :key="m.id"
                                  class="list-group-item d-flex align-items-center gap-3 flex-wrap"
@@ -2463,17 +2465,17 @@
                                 <div class="btn-group btn-group-sm flex-shrink-0" @keydown="onLevelKey($event, m.id)">
                                     <button v-for="l in levelKey" :key="l.level" type="button" class="btn"
                                             :class="draft[m.id]?.level === l.level ? 'btn-primary' : 'btn-outline-primary'"
-                                            :disabled="openCard.published" :title="l.description"
+                                            :disabled="openCard.published || sub.can_fill === false" :title="l.description"
                                             @click="setMarkLevel(m.id, l.level)">{{ l.level }}</button>
                                     <button type="button" class="btn"
                                             :class="draft[m.id]?.level === null ? 'btn-secondary' : 'btn-outline-secondary'"
-                                            :disabled="openCard.published" title="Not assessed"
+                                            :disabled="openCard.published || sub.can_fill === false" title="Not assessed"
                                             @click="clearMarkLevel(m.id)">—</button>
                                 </div>
 
                                 <input v-if="draft[m.id]" v-model="draft[m.id].comment" type="text" maxlength="1000"
                                        class="form-control form-control-sm" style="width:18rem"
-                                       :disabled="openCard.published" placeholder="Optional note"
+                                       :disabled="openCard.published || sub.can_fill === false" placeholder="Optional note"
                                        @input="onCardEdited">
                             </div>
                         </div>
@@ -2616,6 +2618,7 @@ import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
 import SubjectWorkPage from './subject/SubjectWorkPage.vue';
+import ReportSubjectSummary from '@/components/classes/ReportSubjectSummary.vue';
 import PerformanceLevelHelp from '@/components/classes/PerformanceLevelHelp.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import EditableMessageBody from '@/components/common/EditableMessageBody.vue';
@@ -2656,7 +2659,7 @@ import {
 } from '@/core/helpers/threadUnread';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import ClassNavigation from '@/components/classes/ClassNavigation.vue';
 import { useClassSubjects } from '@/composables/useClassSubjects';
 import { useToolResponseGuard, useToolSaveContext } from '@/composables/useToolResponseGuard';
@@ -2666,6 +2669,7 @@ type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' 
     | 'lessons' | 'grades' | 'files' | 'reports' | 'store' | 'subject';
 
 const route = useRoute();
+const router = useRouter();
 const authStore = useAuthStore();
 
 const groupId = computed(() => String(route.params.groupId));
@@ -6462,7 +6466,9 @@ const isDirty = (id: number): boolean => {
     return !!a && (!b || a.level !== b.level || a.comment !== b.comment);
 };
 
-const dirtyIds = computed(() => Object.keys(draft.value).map(Number).filter(isDirty));
+const canFillReportLine = (id: number): boolean => !(openCard.value?.subjects ?? []).some((sub: any) => sub.can_fill === false && sub.criteria.some((line: any) => line.id === id));
+const subjectReportHref = (id: number): string => router.resolve({ path: route.path, query: { subject: String(id) } }).href;
+const dirtyIds = computed(() => Object.keys(draft.value).map(Number).filter(id => canFillReportLine(id) && isDirty(id)));
 const commentDirty = computed(() => teacherComment.value !== teacherCommentBaseline.value);
 const unsavedCount = computed(() => dirtyIds.value.length + (commentDirty.value ? 1 : 0));
 const hasUnsaved = computed(() => unsavedCount.value > 0);
@@ -6619,14 +6625,14 @@ const onCardEdited = () => { cardSaved.value = false; };
 /** Tapping the level a child already has CLEARS it — a mis-tap must be one tap to undo. */
 const setMarkLevel = (id: number, level: number) => {
     const cell = draft.value[id];
-    if (!cell) return;
+    if (!cell || !canFillReportLine(id)) return;
     cell.level = cell.level === level ? null : level;
     onCardEdited();
 };
 
 const clearMarkLevel = (id: number) => {
     const cell = draft.value[id];
-    if (!cell) return;
+    if (!cell || !canFillReportLine(id)) return;
     cell.level = null;
     onCardEdited();
 };
@@ -6643,7 +6649,8 @@ const onLevelKey = (e: KeyboardEvent, id: number) => {
 };
 
 const reportErrorFrom = (e: any): string =>
-    e?.response?.data?.data?.marks?.[0]
+    (e?.response?.status === 403 && typeof e?.response?.data?.message === 'string' && e.response.data.message.endsWith(' is filled in by its own teacher.') ? e?.response?.data?.message : undefined)
+    ?? e?.response?.data?.data?.marks?.[0]
     ?? e?.response?.data?.data?.['marks.0.level']?.[0]
     ?? e?.response?.data?.data?.teacher_comment?.[0]
     ?? 'Those marks could not be saved.';

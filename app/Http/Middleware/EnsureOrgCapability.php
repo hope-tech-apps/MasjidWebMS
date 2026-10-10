@@ -50,6 +50,13 @@ class EnsureOrgCapability
             abort_unless(\App\Support\ClassSubjectMode::sharingEnabled($id), 404);
             return $next($request);
         }
+
+        if (in_array('class_subject_report_summary', $capabilities, true)) {
+            $id = $this->tenant->get() ?? $request->route('masjid_id');
+            abort_unless(\App\Support\ClassSubjectMode::reportSummaryEnabled($id), 404);
+            return $next($request);
+        }
+
         if (in_array('class_subject_work', $capabilities, true)) {
             $id = $this->tenant->get() ?? $request->route('masjid_id');
             abort_unless(\App\Support\ClassSubjectMode::workEnabled($id), 404);

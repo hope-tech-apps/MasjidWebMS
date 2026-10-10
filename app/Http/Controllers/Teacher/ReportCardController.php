@@ -143,6 +143,19 @@ class ReportCardController extends TeacherController
         ], Response::HTTP_OK);
     }
 
+    /** Office reads an existing card without creating or updating its template rows. */
+    public function officeShow(Request $request, $masjid_id, $group_id, $membership_id): JsonResponse
+    {
+        $group = Group::findOrFail($group_id);
+        $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
+        [$type, $year, $term] = $this->period($request);
+        $card = ReportCard::where('group_id', $group->id)->where('group_membership_id', $membership->id)
+            ->where('type', $type)->where('school_year', $year)->where('term', $term)->firstOrFail();
+        return response()->json([
+            'status' => 'success', 'data' => $this->card($card, $membership), 'performance_levels' => PerformanceLevel::key(),
+        ]);
+    }
+
     /**
      * Save the teacher's marks and comment.
      *
@@ -156,18 +169,18 @@ class ReportCardController extends TeacherController
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
         [$type, $year, $term] = $this->period($request);
 
-        $card = $this->cards->prepare($membership, $type, $year, $term);
-
-        $saved = $this->cards->saveMarks(
-            $card,
-            $request->validated('marks', []),
-            // has(), not filled(): a teacher who empties the box sends "", which
-            // the global ConvertEmptyStringsToNull turns into null. `has()` still
-            // sees the key, so "clear it" survives; `filled()` would read as
-            // "leave it alone" and the deleted text would come back.
-            $request->has('teacher_comment'),
-            (string) $request->input('teacher_comment'),
-        );
+        $saved = null;
+        $write = function (ReportCard $card) use ($request, &$saved): void {
+            $saved = $this->cards->saveMarks(
+                $card,
+                $request->validated('marks', []),
+                $request->has('teacher_comment'),
+                (string) $request->input('teacher_comment'),
+            );
+        };
+        // ON saves run inside preparation's transaction. OFF keeps the original two transactions.
+        $card = $this->cards->prepare($membership, $type, $year, $term, $write);
+        if ($saved === null) $write($card);
 
         if (! $saved) {
             return response()->json([
@@ -268,9 +281,13 @@ class ReportCardController extends TeacherController
     {
         $marks = $card->marks()->orderBy('position')->get();
 
+        $reference = \App\Support\ClassSubjectMode::reportSummaryEnabled($card->masjid_id)
+            ? \App\Support\ReportCardSubjectWork::forCard($card, $marks, request()->user()) : [];
+
         $subjects = $marks->where('kind', ReportCardMark::KIND_ACADEMIC)
             ->groupBy('subject')
             ->map(fn ($rows, $subject) => [
+                ...($reference[$subject] ?? []),
                 'subject' => $subject,
                 'criteria' => $rows->map(fn (ReportCardMark $m) => $this->mark($m))->values(),
             ])->values();

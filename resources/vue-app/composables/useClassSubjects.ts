@@ -9,7 +9,7 @@ import type { ClassSubject, ClassSubjectFields, ClassSubjectListResponse, ClassS
 export type ClassChoice = { key: string; label: string; query: { tab?: string; subject?: string } };
 /** Ordered heading and its lines, shared by the two class menus. */
 export type ClassSection = { label: string; items: ClassChoice[] };
-type ClassPayload = ClassSubjectFields & { class_store?: boolean };
+type ClassPayload = ClassSubjectFields & { class_store?: boolean; class_subject_report_summary_enabled?: boolean };
 /** Tool bindings keep the legacy panels, state and loaders in their owning view. */
 export const subjectTool = (tool: ClassSubjectTool | null) => tool === 'hifdh'
     ? { tab: 'hifz', alphabet: null }
@@ -71,7 +71,7 @@ export function useClassSubjects<T extends string>(options: {
         { label: 'Subjects', items: visibleSubjects.value.map(s => ({ key: `subject:${s.id}`, label: s.name, query: { subject: String(s.id) } })) },
         { label: 'Families', items: [line('story', 'Class Story'), line(options.realm === 'teacher' ? 'messages' : 'threads', 'Messages')] },
         { label: 'Planning and marks', items: [line('lessons', 'Lesson Plans'), line('grades', 'Grades'),
-            ...(options.realm === 'teacher' ? [line('reports', 'Reports')] : []), line('files', 'Files')] },
+            ...(options.realm === 'teacher' || options.group.value?.class_subject_report_summary_enabled === true ? [line('reports', 'Reports')] : []), line('files', 'Files')] },
     ]);
     const subject = ref<ClassSubject | null>(null);
     const notice = ref('');
