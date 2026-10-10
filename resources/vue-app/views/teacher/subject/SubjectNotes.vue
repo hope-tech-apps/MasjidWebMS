@@ -21,7 +21,7 @@
             <p v-if="fieldErrors.body" :id="`${prefix}-body`" class="text-danger small">{{ fieldErrors.body }}</p>
             <div v-if="sharing" class="mt-2">
                 <label class="share-control"><input v-model="form.shared_with_family" type="checkbox" :disabled="busy" :aria-invalid="fieldErrors.shared_with_family ? 'true' : undefined" :aria-describedby="fieldErrors.shared_with_family ? `${prefix}-sharing` : undefined"> Share with the family</label>
-                <p class="small mb-0">{{ form.about === 'student' ? "This student's family can read this." : 'Every family in this class can read this.' }}</p>
+                <p v-if="form.shared_with_family" class="small mb-0">{{ form.about === 'student' ? "This student's family can read this." : 'Every family in this class can read this.' }}</p>
                 <p v-if="fieldErrors.shared_with_family" :id="`${prefix}-sharing`" class="text-danger small">{{ fieldErrors.shared_with_family }}</p>
             </div>
             <p v-if="error" class="text-danger small mt-2" role="alert">{{ error }}</p>

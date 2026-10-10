@@ -7,11 +7,11 @@
                 <strong class="d-block" dir="auto">{{ mark.title }}</strong>
                 <span v-if="mark.level !== null">{{ mark.level }} {{ t(`level_short_${mark.level}`) }}</span>
                 <p v-if="mark.comment" class="subject-text mb-1" dir="auto">{{ text('mark', mark, mark.comment) }}</p>
-                <time class="small text-muted" :datetime="mark.date">{{ when(mark.date) }}</time>
+                <time class="small text-muted d-block" :datetime="mark.date">{{ when(mark.date) }}</time>
             </div>
             <div v-for="note in subject.notes" :key="note.id" class="mb-2">
                 <p class="subject-text mb-1" dir="auto">{{ text('note', note, note.body) }}</p>
-                <time class="small text-muted" :datetime="note.date">{{ when(note.date) }}</time>
+                <time class="small text-muted d-block" :datetime="note.date">{{ when(note.date) }}</time>
             </div>
         </article>
     </section>

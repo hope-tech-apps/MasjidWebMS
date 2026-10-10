@@ -31,9 +31,10 @@
                     <p v-if="fieldErrors[student.id]?.comment" :id="errorId(student.id, 'comment')" class="text-danger small">{{ fieldErrors[student.id].comment }}</p>
                 </div>
                 <div v-if="sharing" class="mark-sharing">
-                    <label class="share-control"><input v-model="draft[index].shared_with_family" type="checkbox" :disabled="saving" :aria-label="`Share with the family for ${student.name}`"
+                    <label class="share-control"><input v-model="draft[index].shared_with_family" type="checkbox" :disabled="saving || emptyRow(index)" :aria-label="`Share with the family for ${student.name}`"
                         :aria-invalid="fieldErrors[student.id]?.shared_with_family ? 'true' : undefined" :aria-describedby="fieldErrors[student.id]?.shared_with_family ? errorId(student.id, 'shared_with_family') : undefined"> Share with the family</label>
-                    <p class="small mb-0">This student's family can read this.</p>
+                    <p v-if="draft[index].shared_with_family" class="small mb-0">This student's family can read this.</p>
+                    <p v-else-if="emptyRow(index)" class="small text-muted mb-0">Mark or comment first, then you can share it.</p>
                     <p v-if="fieldErrors[student.id]?.shared_with_family" :id="errorId(student.id, 'shared_with_family')" class="text-danger small">{{ fieldErrors[student.id].shared_with_family }}</p>
                 </div>
                 <div v-if="conflicts.includes(student.id)" class="mark-conflict">
@@ -66,6 +67,11 @@ const baseline = ref<WorkMark[]>(makeDraft());
 const shown = ref({ ...props.piece });
 const differs = (mark: WorkMark, index: number) => mark.level !== baseline.value[index].level || (mark.comment ?? '') !== (baseline.value[index].comment ?? '') || (sharing.value && mark.shared_with_family !== baseline.value[index].shared_with_family);
 const dirty = computed(() => draft.value.some(differs));
+// A row with no level and no comment stores nothing, so there is nothing to share: the tick waits for one.
+const emptyRow = (index: number) => draft.value[index].level === null && !(draft.value[index].comment ?? '').trim();
+watch(() => draft.value.map((_, index) => emptyRow(index)), empties => {
+    empties.forEach((empty, index) => { if (empty && draft.value[index].shared_with_family) draft.value[index].shared_with_family = false; });
+});
 const fieldErrors = ref<Record<number, Record<string, string>>>({}); const conflicts = ref<number[]>([]); const conflictPiece = ref<number | null>(null);
 const prefix = useId(); const errorId = (student: number, field: string) => `${prefix}-mark-${student}-${field}`;
 const orderedLevels = computed(() => props.levels.slice().sort((a, b) => b.level - a.level));

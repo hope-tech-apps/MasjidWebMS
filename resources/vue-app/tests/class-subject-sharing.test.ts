@@ -27,9 +27,15 @@ test('teacher row share defaults off, explains the audience, and sends only chan
     try {
         click(screen.button('Practice piece')); await flush();
         assert.equal(ticks(screen).length, 2); assert.ok(ticks(screen).every((n: any) => !n.checked));
-        assert.match(screen.text(), /Share with the family/); assert.match(screen.text(), /This student's family can read this\./);
+        assert.match(screen.text(), /Share with the family/);
+        // Nothing is said to be readable by a family while nothing is ticked, and an empty row cannot be ticked.
+        assert.doesNotMatch(screen.text(), /This student's family can read this\./);
+        assert.match(screen.text(), /Mark or comment first, then you can share it\./);
+        assert.ok(ticks(screen).every((n: any) => n.props.disabled === true));
         const comment = screen.all((n: any) => n.tag === 'textarea' && n.props['aria-label'] === 'Comment for Practice student')[0];
-        type(comment, 'Practice comment'); check(ticks(screen)[0], true); await flush(); click(screen.button('Save')); await flush(12);
+        type(comment, 'Practice comment'); await flush(); assert.equal(!!ticks(screen)[0].props.disabled, false);
+        check(ticks(screen)[0], true); await flush(); assert.match(screen.text(), /This student's family can read this\./);
+        click(screen.button('Save')); await flush(12);
         assert.equal(writes[0].body.marks.length, 1); assert.equal(writes[0].body.marks[0].shared_with_family, true);
         check(ticks(screen)[0], false); await flush(); click(screen.button('Save')); await flush(12);
         assert.equal(writes[1].body.marks.length, 1); assert.equal(writes[1].body.marks[0].shared_with_family, false);
@@ -40,8 +46,9 @@ test('new note share is off and words change between whole class and one student
     const { screen, writes } = await work(false, true, true);
     try {
         click(screen.button('New note')); await flush(); assert.equal(ticks(screen).length, 1); assert.equal(!!ticks(screen)[0].checked, false);
-        assert.match(screen.text(), /Every family in this class can read this\./);
-        type(screen.all((n: any) => n.props['aria-label'] === 'Note text')[0], 'Practice update'); check(ticks(screen)[0], true); submit(screen.all((n: any) => n.tag === 'form')[0]); await flush(12);
+        assert.doesNotMatch(screen.text(), /Every family in this class can read this\./);
+        type(screen.all((n: any) => n.props['aria-label'] === 'Note text')[0], 'Practice update'); check(ticks(screen)[0], true); await flush();
+        assert.match(screen.text(), /Every family in this class can read this\./); submit(screen.all((n: any) => n.tag === 'form')[0]); await flush(12);
         assert.equal(writes[0].body.shared_with_family, true);
         click(screen.all((n: any) => n.props['aria-label'] === 'Edit note: Shared note')[0]); await flush(); assert.equal(ticks(screen)[0].checked, true);
         assert.match(screen.text(), /This student's family can read this\./);
@@ -116,13 +123,18 @@ test('family tab re-entry revalidates shared items instead of retaining an unsha
     } finally { screen.unmount(); }
 });
 
-test('saving an empty mark clears its sharing choice so the next new mark starts unticked', async () => {
+test('an empty row cannot be shared, and clearing a shared row un-ticks it before the save', async () => {
     const { screen, writes } = await work();
     try {
-        click(screen.button('Practice piece')); await flush(); check(ticks(screen)[0], true); await flush(); click(screen.button('Save')); await flush(12);
-        assert.equal(ticks(screen)[0].checked, false);
-        type(screen.all((n: any) => n.props['aria-label'] === 'Comment for Practice student')[0], 'New private comment'); await flush(); click(screen.button('Save')); await flush(12);
-        assert.equal(writes[1].body.marks[0].shared_with_family, false);
+        click(screen.button('Practice piece')); await flush();
+        const comment = () => screen.all((n: any) => n.props['aria-label'] === 'Comment for Practice student')[0];
+        assert.equal(ticks(screen)[0].props.disabled, true); assert.equal(screen.button('Save').props.disabled, true);
+        type(comment(), 'Shared comment'); await flush(); check(ticks(screen)[0], true); await flush(); click(screen.button('Save')); await flush(12);
+        assert.equal(writes[0].body.marks[0].shared_with_family, true);
+        // Emptying the row un-ticks it: nothing is left to share, and the save that clears the row says so.
+        type(comment(), ''); await flush(); assert.equal(!!ticks(screen)[0].checked, false); assert.equal(ticks(screen)[0].props.disabled, true);
+        click(screen.button('Save')); await flush(12);
+        assert.equal(writes[1].body.marks[0].shared_with_family, false); assert.equal(writes[1].body.marks[0].comment, null);
     } finally { screen.unmount(); }
 });
 
