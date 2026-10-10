@@ -115,6 +115,12 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // one: null (no standing in the class at all) and false.
         'readablePrizeLedgerQuery',
         'mayReceiveClassStoreTotals',
+        // The twenty-fourth and twenty-fifth, added for sharing subject marks and notes with a
+        // family: the audience of a child's shared marks (the awards' audience) and of shared
+        // notes (the child's own, plus whole-class updates where the Class Story's feed rule
+        // allows). Both refuse an unrecognized principal with null, never an empty page.
+        'readableSubjectMarksQuery',
+        'readableSubjectNotesQuery',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -326,7 +332,7 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // fourteenth. A new seam must be ADDED to the list above deliberately —
         // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(23, $seen);
+        $this->assertCount(25, $seen);
     }
 
     #[Test]
@@ -393,6 +399,10 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // an unrecognized principal is not even the office.
         $this->assertNull($this->audience->readablePrizeLedgerQuery($this->foreign, $this->group));
         $this->assertFalse($this->audience->mayReceiveClassStoreTotals($this->foreign, $this->group));
+        // Shared subject marks and notes: the same refusal, so a principal the class does not
+        // know can never be handed a query to page through.
+        $this->assertNull($this->audience->readableSubjectMarksQuery($this->foreign, $this->group, \App\Models\SubjectPieceMark::query()));
+        $this->assertNull($this->audience->readableSubjectNotesQuery($this->foreign, $this->group, \App\Models\SubjectNote::query()));
 
         // The teacher seams: an unrecognized principal leads nothing.
         $this->assertFalse($this->audience->isLeaderOf($this->foreign, $this->group));
@@ -489,6 +499,8 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         $this->assertNull($this->audience->readableThreadsQuery(null, $this->group));
         $this->assertNull($this->audience->readableAwardsQuery(null, $this->group));
         $this->assertNull($this->audience->readableHifzQuery(null, $this->group));
+        $this->assertNull($this->audience->readableSubjectMarksQuery(null, $this->group, \App\Models\SubjectPieceMark::query()));
+        $this->assertNull($this->audience->readableSubjectNotesQuery(null, $this->group, \App\Models\SubjectNote::query()));
         $this->assertNull($this->audience->readableResourcesQuery(null, $this->group));
         $this->assertFalse(
             $this->audience->mayReceiveResource(null, $this->group, $this->targetedFile)
