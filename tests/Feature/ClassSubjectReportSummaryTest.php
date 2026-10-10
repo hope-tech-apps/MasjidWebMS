@@ -329,3 +329,14 @@ it('review refuses the office reads for a group that is not a class', function (
     $this->getJson($base.'/report-cards')->assertNotFound();
     $this->getJson($base.'/members/'.$member->id.'/report-card')->assertNotFound();
 });
+
+it('walk fix: the office asking for a card that does not exist is told so in words', function () {
+    ($this->enableSummary)();
+    $contact = Contact::factory()->create(['masjid_id' => $this->org->id]);
+    $fresh = GroupMembership::create(['masjid_id' => $this->org->id, 'group_id' => $this->group->id, 'contact_id' => $contact->id, 'role' => 'member']);
+    app(TenantContext::class)->forgetTenant(); app('auth')->forgetGuards();
+    Sanctum::actingAs($this->office);
+    $response = $this->getJson("/api/admin/masjids/{$this->org->id}/groups/{$this->group->id}/members/{$fresh->id}/report-card")->assertNotFound();
+    expect($response->getContent())->toContain('This student has no report card for that period yet.')->not->toContain('No query results');
+    expect(ReportCard::where('group_membership_id', $fresh->id)->count())->toBe(0);
+});

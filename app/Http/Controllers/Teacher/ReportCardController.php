@@ -154,7 +154,9 @@ class ReportCardController extends TeacherController
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
         [$type, $year, $term] = $this->period($request);
         $card = ReportCard::where('group_id', $group->id)->where('group_membership_id', $membership->id)
-            ->where('type', $type)->where('school_year', $year)->where('term', $term)->firstOrFail();
+            ->where('type', $type)->where('school_year', $year)->where('term', $term)->first();
+        // The office's screen only opens cards that exist; by address, say so in words.
+        abort_if($card === null, Response::HTTP_NOT_FOUND, 'This student has no report card for that period yet.');
         return response()->json([
             'status' => 'success', 'data' => $this->card($card, $membership), 'performance_levels' => PerformanceLevel::key(),
         ]);

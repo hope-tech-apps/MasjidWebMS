@@ -6711,9 +6711,12 @@ const saveReportCard = async (): Promise<boolean> => {
         return true;
     } catch (e: any) {
         reportsError.value = reportErrorFrom(e);
-        // A refusal means the card was published underneath us. Re-read so the
-        // form locks to the truth, keeping what the teacher had typed.
-        if (e?.response?.status === 422) await reloadOpenCard(true);
+        // A refusal means the card was published underneath us (422), or a line
+        // closed because the office changed who teaches its subject (403). Re-read so
+        // the form locks to the truth, keeping what the teacher had typed where she may
+        // still type: without it every later Save is refused too, and the change she IS
+        // allowed to make could not be saved until a reload.
+        if (e?.response?.status === 422 || e?.response?.status === 403) await reloadOpenCard(true);
         return false;
     } finally {
         savingCard.value = false;

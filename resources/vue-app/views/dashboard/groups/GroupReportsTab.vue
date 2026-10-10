@@ -1,6 +1,5 @@
 <template>
     <div>
-        <h3 class="h6">Reports</h3>
         <p v-if="error" class="text-danger small" role="alert">{{ error }}</p>
         <p v-if="loading" class="text-muted small">Loading…</p>
         <div v-if="!card" class="d-flex gap-2 mb-3 flex-wrap">
@@ -36,13 +35,13 @@
             <div v-for="subject in card.subjects" :key="subject.subject" class="card border-0 shadow-sm mb-2">
                 <div class="card-header bg-white small fw-semibold">{{ subject.subject }}</div>
                 <ReportSubjectSummary v-if="subject.work_summary" :summary="subject.work_summary" :levels="levels" :href="subjectHref(subject.work_summary.class_subject_id)" />
-                <div v-for="line in subject.criteria" :key="line.id" class="list-group-item small d-flex gap-3 flex-wrap">
+                <div v-for="line in subject.criteria" :key="line.id" class="list-group-item small d-flex gap-3 flex-wrap px-3 py-2">
                     <span>{{ line.criterion }}</span><span>{{ line.level_label ?? 'Not assessed' }}</span><span v-if="line.comment">{{ line.comment }}</span>
                 </div>
             </div>
             <div v-if="card.learning_behaviours.length" class="card border-0 shadow-sm mb-2">
                 <div class="card-header small fw-semibold">Learning behaviours</div>
-                <div v-for="line in card.learning_behaviours" :key="line.id" class="list-group-item small">{{ line.criterion }} · {{ line.level_label ?? 'Not assessed' }} <span v-if="line.comment">{{ line.comment }}</span></div>
+                <div v-for="line in card.learning_behaviours" :key="line.id" class="list-group-item small px-3 py-2">{{ line.criterion }} · {{ line.level_label ?? 'Not assessed' }} <span v-if="line.comment">{{ line.comment }}</span></div>
             </div>
             <p v-if="card.teacher_comment" class="small">{{ card.teacher_comment }}</p>
             <p v-if="card.published" class="small">Present {{ card.attendance.present }} (includes {{ card.attendance.late }} late) · Absent {{ card.attendance.absent }}</p>

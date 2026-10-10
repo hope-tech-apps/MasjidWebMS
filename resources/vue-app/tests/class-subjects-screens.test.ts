@@ -2062,3 +2062,11 @@ test('review: a report-card line that closes under a teacher drops her pending c
     assert.match(source, /if \(dropped\) \{ closedLineNotice\.value = true; cardSaved\.value = false; \}/);
     assert.match(source, /A line you changed is now filled in by its own teacher\. Your change there was not saved\./);
 });
+
+test('walk fix: a report-card save refused because a line closed re-reads the card, keeping what may still be typed', () => {
+    // Staging the office moving a teacher mid-edit is beyond the mounted harness; pin the rule the walk found missing.
+    const source = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+    assert.match(source, /if \(e\?\.response\?\.status === 422 \|\| e\?\.response\?\.status === 403\) await reloadOpenCard\(true\);/);
+    const office = readFileSync(new URL('../views/dashboard/groups/GroupReportsTab.vue', import.meta.url), 'utf8');
+    assert.equal((office.match(/>Reports</g) ?? []).length, 0, 'the office page does not repeat the heading its menu line already gives');
+});
