@@ -79,6 +79,13 @@ final class TeacherRealmWorld
     public GroupMessageSchedule $schedule;
     /** This class's own prize (T-003.4). */
     public Prize $prize;
+
+    /** Subject notes and marks: a note about the student, an own piece with no marks, and a second piece to mark. */
+    public \App\Models\SubjectNote $subjectNote;
+
+    public \App\Models\SubjectPiece $piece;
+
+    public \App\Models\SubjectPiece $markPiece;
     /** A redemption of it, so the reversal route has a real entry to name. */
     public PrizeLedgerEntry $ledgerEntry;
 
@@ -211,6 +218,20 @@ final class TeacherRealmWorld
             'created_by_user_id' => $teacher->id, 'occurred_at' => now(),
         ]);
 
+        // Subject notes and marks, marked like every other string a response could echo.
+        $w->subjectNote = \App\Models\SubjectNote::create([
+            'masjid_id' => $masjid, 'class_subject_id' => $w->subject->id, 'group_membership_id' => $w->student->id,
+            'body' => "MARK-{$tag}-SUBJECT-NOTE", 'author_user_id' => $teacher->id,
+        ]);
+        $w->piece = \App\Models\SubjectPiece::create([
+            'masjid_id' => $masjid, 'class_subject_id' => $w->subject->id, 'source' => 'own',
+            'title' => "MARK-{$tag}-PIECE", 'detail' => "MARK-{$tag}-PIECE-DETAIL", 'created_by_user_id' => $teacher->id,
+        ]);
+        $w->markPiece = \App\Models\SubjectPiece::create([
+            'masjid_id' => $masjid, 'class_subject_id' => $w->subject->id, 'source' => 'own',
+            'title' => "MARK-{$tag}-MARK-PIECE", 'created_by_user_id' => $teacher->id,
+        ]);
+
         return $w;
     }
 
@@ -227,7 +248,9 @@ final class TeacherRealmWorld
         return match ($placeholder) {
             'group_id' => (string) $this->class->id,
             'membership_id' => (string) $this->student->id,
-            'note_id' => (string) $this->note->id,
+            // `note_id` is an Arabic daily note, except under /subjects/ where it is a subject note.
+            'note_id' => str_contains($uri, '/subjects/') ? (string) $this->subjectNote->id : (string) $this->note->id,
+            'piece_id' => (string) $this->piece->id,
             'award_id' => (string) $this->award->id,
             'plan_id' => (string) $this->plan->id,
             'assignment_id' => (string) $this->assignment->id,

@@ -406,6 +406,9 @@ class TeacherMultiSchoolTest extends TestCase
                 \App\Models\SchoolSubject::withoutMasjidScope()->create(['masjid_id' => $school->id, 'name' => $name]);
             }
             \App\Support\ClassSubjectInitializer::run($school, false, true);
+            // Subject notes and marks are off by default too; swept for real, like the store.
+            $on = $school->fresh();
+            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['class_subject_work' => true])])->save();
             \App\Models\MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $school->id, 'paper_bucks_enabled' => true]);
         }
 
@@ -679,6 +682,25 @@ class TeacherMultiSchoolTest extends TestCase
             'PUT /groups/{group_id}/members/{membership_id}/letters/master-all' => ['body' => fn () => []],
             'PUT /groups/{group_id}/members/{membership_id}/arabic-notes' => ['body' => fn () => ['session_date' => $today, 'note' => 'Sweep note.']],
             'DELETE /groups/{group_id}/members/{membership_id}/arabic-notes/{note_id}' => [],
+
+            // -- subject notes and marks: a foreign student or piece in the body is a refusal; a foreign
+            // subject, note or piece in the URL a 404. The marked piece is a second one, so the piece the
+            // delete names has no marks whatever order the controls run in.
+            'POST /groups/{group_id}/subjects/{subject_id}/notes' => [
+                'body' => fn (TeacherRealmWorld $w) => ['body' => 'Sweep subject note.', 'group_membership_id' => $w->student->id],
+                'refuse' => $bodyRefusal,
+            ],
+            'PUT /groups/{group_id}/subjects/{subject_id}/notes/{note_id}' => ['body' => fn () => ['body' => 'Sweep subject note edited.']],
+            'DELETE /groups/{group_id}/subjects/{subject_id}/notes/{note_id}' => [],
+            'POST /groups/{group_id}/subjects/{subject_id}/pieces' => ['body' => fn () => ['title' => 'Sweep piece']],
+            'PUT /groups/{group_id}/subjects/{subject_id}/pieces/{piece_id}' => ['body' => fn () => ['title' => 'Sweep piece edited']],
+            'DELETE /groups/{group_id}/subjects/{subject_id}/pieces/{piece_id}' => ['body' => fn () => ['mark_count' => 0]],
+            'PUT /groups/{group_id}/subjects/{subject_id}/marks' => [
+                'body' => fn (TeacherRealmWorld $w) => ['source' => 'own', 'piece_id' => $w->markPiece->id, 'marks' => [
+                    ['group_membership_id' => $w->student->id, 'level' => 3, 'comment' => 'Sweep mark.', 'updated_at' => null],
+                ]],
+                'refuse' => $bodyRefusal,
+            ],
 
             // -- behaviour
             'POST /groups/{group_id}/awards' => [
