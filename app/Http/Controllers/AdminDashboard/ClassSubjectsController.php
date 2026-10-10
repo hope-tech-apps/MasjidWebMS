@@ -38,13 +38,15 @@ class ClassSubjectsController extends Controller
             $query->whereNull('hidden_at')->when($ids !== null, fn ($q) => $q->whereIn('id', $ids));
         }
         $subjects = $query->get();
-        if ($request->user()->type !== 'Teacher') $subjects->each->makeVisible('guide_subjects');
+        // Following several curriculum subjects belongs to subject notes and marks: until a school has that,
+        // the office's manager is exactly the one it has today (one picker, no checklist data).
+        $work = \App\Support\ClassSubjectMode::workEnabled($group->masjid_id);
+        if ($work && $request->user()->type !== 'Teacher') $subjects->each->makeVisible('guide_subjects');
         $payload = ['status' => 'success', 'data' => $subjects];
         if ($request->user()->type !== 'Teacher') $payload['meta'] = [
             'guide_subjects' => CurriculumWeek::distinct()->orderBy('subject')->pluck('subject'),
             'tools' => ClassSubject::TOOLS,
-            'guide_subject_grades' => ClassSubjectCurriculum::choices($group),
-        ];
+        ] + ($work ? ['guide_subject_grades' => ClassSubjectCurriculum::choices($group)] : []);
         return response()->json($payload);
     }
 

@@ -56,7 +56,7 @@
                         <label :for="`${id}-name`" class="form-label">Name</label>
                         <input :id="`${id}-name`" ref="nameField" v-model="form.name" data-subject-field="name" class="form-control" maxlength="64" required :disabled="saving">
                     </div>
-                    <div v-if="editing === null" class="col-12 col-md-6">
+                    <div v-if="editing === null || !checklist" class="col-12 col-md-6">
                         <label :for="`${id}-guide`" class="form-label">Follows the curriculum for</label>
                         <select :id="`${id}-guide`" v-model="form.guide_subject" data-subject-field="guide" class="form-select" :disabled="saving">
                             <option v-if="editing === null" :value="undefined">Choose automatically</option>
@@ -64,7 +64,7 @@
                             <option v-for="name in guideChoices" :key="name" :value="name">{{ name }}</option>
                         </select>
                     </div>
-                    <fieldset v-if="editing !== null" class="col-12 curriculum-checklist">
+                    <fieldset v-if="editing !== null && checklist" class="col-12 curriculum-checklist">
                         <legend class="h6">Follows the curriculum for</legend>
                         <label v-for="name in guideSubjects" :key="name" class="d-flex gap-2 align-items-start py-2">
                             <input type="checkbox" class="form-check-input flex-shrink-0" :data-guide-subject="name" :checked="form.guide_subjects.includes(name)" :disabled="saving" @change="toggleGuide(name, $event)">
@@ -114,6 +114,9 @@ const expanded = ref(false);
 const subjects = ref<ClassSubject[]>([]);
 const guideSubjects = ref<string[]>([]);
 const guideGrades = ref<Record<string, string[]>>({});
+// The server sends the checklist's data only where the school has subject notes and marks. Without it the
+// edit form keeps the single curriculum picker it has always had.
+const checklist = ref(false);
 const schoolNames = ref<string[]>([]);
 const loading = ref(true);
 const loaded = ref(false);
@@ -141,6 +144,7 @@ const reload = async () => {
     subjects.value = response.data;
     guideSubjects.value = response.meta.guide_subjects;
     guideGrades.value = response.meta.guide_subject_grades ?? {};
+    checklist.value = response.meta.guide_subject_grades !== undefined;
     loaded.value = true;
     emit('changed', subjects.value);
 };
@@ -197,7 +201,7 @@ const mutate = async (write: () => Promise<unknown>, words: string | ((response:
 const save = () => {
     if (!form.value.name.trim() || saving.value) return;
     const payload: { name: string; guide_subject?: string | null; guide_subjects?: string[]; tool?: ClassSubjectTool | null; attach_saved_work?: boolean } = { name: form.value.name.trim() };
-    if (editing.value !== null) {
+    if (editing.value !== null && checklist.value) {
         // Sent only when the office changed a tick: renaming a subject must never reorder or trim what it follows.
         // Kept in the saved order, new ticks after it, so the first followed subject (which older screens read) does not move.
         if (guideTouched.value) {

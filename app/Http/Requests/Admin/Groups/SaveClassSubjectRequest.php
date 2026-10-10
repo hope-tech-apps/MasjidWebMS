@@ -24,7 +24,7 @@ class SaveClassSubjectRequest extends BaseFormRequest
         return [
             'name' => [$this->isMethod('post') ? 'required' : 'sometimes', 'required', 'string', 'max:64'],
             'guide_subject' => ['sometimes', 'nullable', 'string', 'max:64'],
-            'guide_subjects' => ['sometimes', 'array', 'list'],
+            'guide_subjects' => \App\Support\ClassSubjectMode::workEnabled($this->route('masjid_id')) ? ['sometimes', 'array', 'list'] : ['prohibited'],
             'guide_subjects.*' => ['required', 'string', 'max:64', 'distinct:strict'],
             'attach_saved_work' => [$this->isMethod('post') ? 'sometimes' : 'prohibited', 'boolean'],
             'tool' => ['sometimes', 'nullable', Rule::in(ClassSubject::TOOLS)],

@@ -491,11 +491,13 @@ it('preserves existing Hifdh and both alphabet records and responses when enable
     foreach ($responses as $url => $payload) expect($this->getJson($this->teacherBase.$url)->assertOk()->json())->toBe($payload);
 });
 
-it('Build C office can follow several valid guide subjects while work is off and teachers cannot write', function () {
+it('Build C office can follow several valid guide subjects where work is on and teachers cannot write', function () {
     ($this->catalogue)('Science'); ($this->catalogue)('Arabic');
     ($this->guide)('Science'); ($this->guide)('Joint studies'); ($this->guide)('Joint studies', 'Grade 2'); ($this->guide)('Senior studies', 'Grade 5');
     ($this->child)('1'); ($this->child)('2nd');
-    ($this->enable)(); Sanctum::actingAs($this->office);
+    ($this->enable)();
+    $org = $this->school->fresh(); $org->forceFill(['capability_overrides' => array_merge((array) $org->capability_overrides, ['class_subject_work' => true])])->save();
+    Sanctum::actingAs($this->office);
     $list = $this->getJson($this->base)->assertOk();
     expect($list->json('meta.guide_subjects'))->toBe(['Joint studies', 'Science', 'Senior studies']);
     expect($list->json('meta.guide_subject_grades'))->toBe(['Joint studies' => ['Grade 1', 'Grade 2'], 'Science' => ['Grade 1'], 'Senior studies' => []]);
@@ -536,6 +538,7 @@ it('Build C coverage diagnostics are per-class visible-only and read-only', func
 
 it('Build C office validates following names within its school and preserves choices on every refusal', function () {
     ($this->catalogue)('Science'); ($this->guide)('Science'); ($this->enable)();
+    $org = $this->school->fresh(); $org->forceFill(['capability_overrides' => array_merge((array) $org->capability_overrides, ['class_subject_work' => true])])->save();
     $foreign = Masjid::create(['name' => 'Foreign practice', 'email' => uniqid().'@example.invalid', 'phone' => '+15555550200', 'country_id' => '1', 'city_id' => '1', 'address' => 'Practice', 'latitude' => 0, 'longitude' => 0, 'org_type' => 'school']);
     CurriculumWeek::create(['masjid_id' => $foreign->id, 'subject' => 'Foreign guide', 'grade_label' => 'Grade 1', 'week_no' => 1, 'focus' => 'Practice']);
     Sanctum::actingAs($this->office);
@@ -548,4 +551,18 @@ it('Build C office validates following names within its school and preserves cho
     foreach (['Science', null, [1 => 'Science']] as $badList) $this->putJson($this->base.'/'.$id, ['guide_subjects' => $badList])->assertUnprocessable();
     $this->putJson($this->base.'/'.$id, ['guide_subjects' => ['Science'], 'guide_subject' => null])->assertUnprocessable();
     $this->putJson($this->base.'/'.$id, ['guide_subjects' => ['Science'], 'guide_subject' => 'Science'])->assertOk();
+});
+
+it('keeps the office manager exactly as it is while subject notes and marks are off', function () {
+    ($this->catalogue)('Science'); ($this->guide)('Science'); ($this->guide)('Joint studies'); ($this->child)('1');
+    ($this->enable)(); Sanctum::actingAs($this->office);
+    $list = $this->getJson($this->base)->assertOk();
+    // The picker's list and the tools, as before; no checklist data and no list on any subject.
+    expect(array_keys($list->json('meta')))->toBe(['guide_subjects', 'tools']);
+    foreach ($list->json('data') as $row) expect($row)->not->toHaveKey('guide_subjects');
+    $id = ClassSubject::where('name', 'Science')->firstOrFail()->id;
+    $this->putJson($this->base.'/'.$id, ['guide_subjects' => ['Joint studies']])->assertUnprocessable();
+    expect(ClassSubject::findOrFail($id)->guide_subjects)->toBeNull();
+    // The single picker still saves, as it always has.
+    $this->putJson($this->base.'/'.$id, ['guide_subject' => 'Joint studies'])->assertOk()->assertJsonPath('data.guide_subject', 'Joint studies');
 });

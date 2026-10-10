@@ -233,9 +233,10 @@ test('check 7: rename keeps letters, Holds and curriculum pickers save, each ser
     const { screen, calls } = await setup('office');
     try {
         click(exactButton(screen, 'Rename Arabic')); await flush(); type(field(screen, 'name'), 'Arabic Language');
-        const scienceGuide = screen.all(n => n.props['data-guide-subject'] === 'Science')[0]; scienceGuide.checked = true; scienceGuide.props.onChange({ target: scienceGuide }); await flush(); submit(screen.all((n) => n.props['data-subject-form'] !== undefined)[0]); await flush();
-        assert.deepEqual(calls.filter(c => c.method === 'put').at(-1).body.guide_subjects, ['Science']);
+        chooseOption(field(screen, 'guide'), 'Science'); submit(screen.all((n) => n.props['data-subject-form'] !== undefined)[0]); await flush();
+        // With subject notes and marks off the manager is main's: one picker, and no list is ever sent.
         assert.equal(calls.filter(c => c.method === 'put').at(-1).body.guide_subject, 'Science');
+        assert.equal('guide_subjects' in calls.filter(c => c.method === 'put').at(-1).body, false);
         await pick(screen, 'Arabic Language'); assert.match(screen.text(), /Practice student/);
         assert.ok(calls.some((c) => c.url?.endsWith('/letters?alphabet=arabic')));
         await pick(screen, 'Roster'); click(exactButton(screen, 'Class subjects (4)')); await flush();
@@ -1763,7 +1764,8 @@ test('Build C office checklist saves zero or several names in shown order with g
         assert.equal(r.calls.filter(c => c.method === 'put').at(-1).body.guide_subject, null);
         assert.equal(r.calls.some(c => c.url.endsWith('/work')), false);
     } finally { s.unmount(); }
-    const refused = await setup('office', { refuse: () => ({ status: 'failed', data: { guide_subjects: ["Choose a subject from this school's curriculum."] } }) });
+    const refused = await setup('office', { refuse: () => ({ status: 'failed', data: { guide_subjects: ["Choose a subject from this school's curriculum."] } }),
+        read: (url: string) => url.endsWith('/subjects') ? ok(structuredClone(subjects), { guide_subjects: ['English Language Arts', 'Science'], guide_subject_grades: { 'English Language Arts': ['Grade 1', 'Grade 2'], Science: [] }, tools: [] }) : undefined });
     try {
         click(exactButton(refused.screen, 'Rename Arabic')); await flush();
         const n = refused.screen.all(n => n.props['data-guide-subject'] === 'Science')[0]; n.checked = true; n.props.onChange({ target: n }); await flush();
