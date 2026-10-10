@@ -155,17 +155,20 @@ const load = async () => {
         if (alive) { error.value = apiErrorText(failure, 'The subjects could not be loaded.'); loadFailed.value = true; }
     } finally { if (alive) loading.value = false; }
 };
-const cancel = () => { editing.value = null; form.value = freshForm(); attachSavedWork.value = false; };
+const guideTouched = ref(false);
+const cancel = () => { editing.value = null; form.value = freshForm(); attachSavedWork.value = false; guideTouched.value = false; };
 const edit = (subject: ClassSubject) => {
     if (saving.value) return;
     editing.value = subject.id;
     form.value = { name: subject.name, guide_subject: subject.guide_subject, guide_subjects: [...followed(subject)], tool: subject.tool };
+    guideTouched.value = false;
     error.value = ''; success.value = ''; removing.value = null;
     nextTick(() => nameField.value?.focus());
 };
 const followed = (subject: ClassSubject) => subject.guide_subjects ?? (subject.guide_subject ? [subject.guide_subject] : []);
 const toggleGuide = (name: string, event: Event) => {
     const ticked = (event.target as HTMLInputElement).checked;
+    guideTouched.value = true;
     form.value.guide_subjects = ticked ? [...new Set([...form.value.guide_subjects, name])] : form.value.guide_subjects.filter(value => value !== name);
 };
 const fromList = (event: Event) => { const name = (event.target as HTMLSelectElement).value; if (name) form.value.name = name; };
@@ -195,8 +198,12 @@ const save = () => {
     if (!form.value.name.trim() || saving.value) return;
     const payload: { name: string; guide_subject?: string | null; guide_subjects?: string[]; tool?: ClassSubjectTool | null; attach_saved_work?: boolean } = { name: form.value.name.trim() };
     if (editing.value !== null) {
-        payload.guide_subjects = guideSubjects.value.filter(name => form.value.guide_subjects.includes(name));
-        payload.guide_subject = payload.guide_subjects[0] ?? null;
+        // Sent only when the office changed a tick: renaming a subject must never reorder or trim what it follows.
+        // Kept in the saved order, new ticks after it, so the first followed subject (which older screens read) does not move.
+        if (guideTouched.value) {
+            payload.guide_subjects = form.value.guide_subjects.filter(name => guideSubjects.value.includes(name));
+            payload.guide_subject = payload.guide_subjects[0] ?? null;
+        }
     } else if (form.value.guide_subject !== undefined) payload.guide_subject = form.value.guide_subject;
     if (form.value.tool !== undefined) payload.tool = form.value.tool;
     if (editing.value === null && attachSavedWork.value) payload.attach_saved_work = true;

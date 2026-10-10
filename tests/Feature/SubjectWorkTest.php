@@ -750,3 +750,32 @@ it('Build D never reuses a cleared mark version when it is recreated after an ow
     $this->putJson($this->base.'/marks', $stale)->assertStatus(409);
     expect(SubjectPieceMark::first()->level)->toBe(3);
 });
+
+it('final review does not tell a limited teacher the name of the subject a marked plan moved to', function () {
+    $plan = ($this->plan)();
+    $this->putJson($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)($this->one, 4, 'Kept') + ['updated_at' => null]]])->assertOk();
+    $plan->forceFill(['class_subject_id' => $this->other->id, 'subject' => $this->other->name])->save();
+
+    // Unlimited: told where it went.
+    $piece = $this->getJson($this->base.'/work')->assertOk()->json('data.lesson_plans.0');
+    expect($piece['moved_elsewhere'])->toBeTrue();
+    expect($piece['moved_to'])->toBe($this->other->name);
+
+    // Limited to the subject it was marked under: told it moved, not where.
+    $this->staff->fresh()->update(['class_subject_ids' => [$this->subject->id]]);
+    app(TenantContext::class)->forgetTenant(); app('auth')->forgetGuards(); Sanctum::actingAs($this->teacher->fresh(), ['staff']);
+    $response = $this->getJson($this->base.'/work')->assertOk();
+    $piece = $response->json('data.lesson_plans.0');
+    expect($piece['moved_elsewhere'])->toBeTrue();
+    expect($piece['moved_to'])->toBeNull();
+    expect($response->getContent())->not->toContain('"'.$this->other->name.'"');
+});
+
+it('final review names the piece in a mark conflict so the page can reload it', function () {
+    ($this->saveGuide)([($this->mark)($this->one, 3, 'First')])->assertOk();
+    $piece = SubjectPiece::firstOrFail();
+    $stale = ['group_membership_id' => $this->one->id, 'level' => 2, 'comment' => 'Stale', 'updated_at' => '2020-01-01T00:00:00.000000Z'];
+    $this->putJson($this->base.'/marks', ['source' => 'guide', 'piece_id' => $piece->id, 'marks' => [$stale]])
+        ->assertStatus(409)->assertJsonPath('piece_id', $piece->id);
+    expect(SubjectPieceMark::firstOrFail()->comment)->toBe('First');
+});

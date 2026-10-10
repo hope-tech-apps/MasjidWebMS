@@ -26,7 +26,7 @@ return new class extends Migration
             $table->unique(['subject_piece_id', 'group_membership_id'], 'sw_mark_piece_member_unique');
             $table->foreign('masjid_id', 'sw_mark_org_fk')->references('id')->on('masjids')->cascadeOnDelete();
             $table->foreign('subject_piece_id', 'sw_mark_piece_fk')->references('id')->on('subject_pieces')->cascadeOnDelete();
-            $table->foreign('group_membership_id', 'sw_mark_member_fk')->references('id')->on('group_memberships')->cascadeOnDelete();
+            $table->foreign('group_membership_id', 'sw_mark_member_fk')->references('id')->on('group_memberships')->restrictOnDelete(); // A child's record: never destroyed with the roster row (App\Support\AcademicRecordsHeld).
             $table->foreign('marked_by_user_id', 'sw_mark_marker_fk')->references('id')->on('users')->nullOnDelete();
         });
     }

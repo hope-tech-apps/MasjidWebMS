@@ -109,6 +109,10 @@ final class AcademicRecordsHeld
         'prize_ledger_entries' => ['group_membership_id', 'Manara Bucks', 'restrict', true],
         // CASCADE in the database, and still a teacher's writing about a child.
         'arabic_daily_notes' => ['group_membership_id', 'Arabic daily notes', 'cascade', true],
+        // Class subjects, steps 2 and 3: a level, a comment or a note a teacher wrote about a child in one
+        // subject. RESTRICT from the start, on both engines.
+        'subject_piece_marks' => ['group_membership_id', 'subject marks', 'restrict', true],
+        'subject_notes' => ['group_membership_id', 'subject notes', 'restrict', true],
         'group_resource_recipients' => ['group_membership_id', 'files addressed to them', 'cascade', false],
         'group_threads' => ['about_membership_id', 'conversations', 'set null', false],
         // RAW ON PURPOSE, hence "any state". This table keeps a row after its
@@ -149,6 +153,8 @@ final class AcademicRecordsHeld
         'register marks' => 'register mark',
         'marks' => 'mark',
         'report cards' => 'report card',
+        'subject marks' => 'subject mark',
+        'subject notes' => 'subject note',
         'ḥifẓ entries' => 'ḥifẓ entry',
         'behaviour points' => 'behaviour point',
         'Arabic daily notes' => 'Arabic daily note',

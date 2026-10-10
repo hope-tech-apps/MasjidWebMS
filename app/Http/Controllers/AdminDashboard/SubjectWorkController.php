@@ -191,7 +191,7 @@ class SubjectWorkController extends Controller
                     return ['group_membership_id' => (int) $student->id, 'name' => trim($student->contact?->first_name.' '.$student->contact?->last_name)];
                 })->values()->all();
                 throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
-                    'status' => 'error', 'message' => 'Someone else changed marks for '.implode(', ', array_column($conflicts, 'name')).'. Reload to see them.', 'students' => $conflicts,
+                    'status' => 'error', 'message' => 'Someone else changed marks for '.implode(', ', array_column($conflicts, 'name')).'. Reload to see them.', 'students' => $conflicts, 'piece_id' => (int) $piece->id,
                 ], 409));
             }
             // Bulk writes and reads stay constant in number however many students are submitted.

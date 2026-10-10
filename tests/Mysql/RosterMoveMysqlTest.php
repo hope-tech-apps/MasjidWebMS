@@ -98,7 +98,7 @@ it('lists every foreign key into a roster row, with the rule the database really
     ksort($listed);
 
     expect($keys)->toBe($listed);
-    expect(collect($keys)->where(1, 'restrict'))->toHaveCount(7)
+    expect(collect($keys)->where(1, 'restrict'))->toHaveCount(9)
         ->and(collect($keys)->where(1, 'cascade'))->toHaveCount(2)
         ->and(collect($keys)->where(1, 'set null'))->toHaveCount(2);
 });

@@ -69,6 +69,18 @@ trait PlantsRosterRecords
                     'size_bytes' => 10, 'disk' => 'local', 'path' => 'group-resources/'.Str::random(12).'.pdf',
                 ]),
             ],
+            // These two name their class through the class's subject, not a `group_id` of their own.
+            'subject_piece_marks' => [
+                'masjid_id' => $row->masjid_id, $column => $row->id, 'level' => 3,
+                'subject_piece_id' => DB::table('subject_pieces')->insertGetId([
+                    'masjid_id' => $row->masjid_id, 'class_subject_id' => $this->plantClassSubject($row),
+                    'source' => 'own', 'title' => 'Practice piece', 'created_at' => $now, 'updated_at' => $now,
+                ]),
+            ],
+            'subject_notes' => [
+                'masjid_id' => $row->masjid_id, $column => $row->id, 'body' => 'Practice note',
+                'class_subject_id' => $this->plantClassSubject($row),
+            ],
             'group_threads' => $base + ['subject' => 'About reading', 'scope' => 'participant'],
             'group_message_schedules' => $base + [
                 'scope' => 'participant', 'subject' => 'A reminder', 'body' => 'Please bring the reader.',
@@ -79,9 +91,27 @@ trait PlantsRosterRecords
         return (int) DB::table($table)->insertGetId(array_merge($columns, $with));
     }
 
-    /** The class a record names: its own `group_id`, or its file's for an addressed file. */
+    /** A subject of the roster row's own class, for the records that hang off one. */
+    private function plantClassSubject(GroupMembership $row): int
+    {
+        $name = 'Practice subject '.Str::lower(Str::random(6));
+
+        return (int) DB::table('class_subjects')->insertGetId([
+            'masjid_id' => $row->masjid_id, 'group_id' => $row->group_id, 'name' => $name, 'name_key' => Str::lower($name), 'position' => 0,
+        ]);
+    }
+
+    /** The class a record names: its own `group_id`, its file's for an addressed file, its subject's for subject work. */
     protected function classOfRecord(string $table, int $id): int
     {
+        if ($table === 'subject_notes') {
+            return (int) DB::table('class_subjects')->where('id', DB::table($table)->where('id', $id)->value('class_subject_id'))->value('group_id');
+        }
+        if ($table === 'subject_piece_marks') {
+            return (int) DB::table('class_subjects')->where('id', DB::table('subject_pieces')
+                ->where('id', DB::table($table)->where('id', $id)->value('subject_piece_id'))->value('class_subject_id'))->value('group_id');
+        }
+
         if ($table === 'group_resource_recipients') {
             return (int) DB::table('group_resources')
                 ->where('id', DB::table($table)->where('id', $id)->value('group_resource_id'))

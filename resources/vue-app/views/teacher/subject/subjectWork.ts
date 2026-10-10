@@ -6,7 +6,7 @@ export type WorkPiece = {
     source: 'guide' | 'plan' | 'own'; piece_id: number | null; title: string; detail: string | null;
     marks: WorkMark[]; mark_count: number; grade_label?: string; week_no?: number; guide_subject?: string;
     standard_code?: string | null; lesson_plan_id?: number | null;
-    wording_changed?: boolean; marked_against_date?: string; moved_to?: string | null;
+    wording_changed?: boolean; marked_against_date?: string; moved_to?: string | null; moved_elsewhere?: boolean; no_longer_followed?: boolean;
 };
 export type WorkBlock = { grade_key: string; grade_label: string; students: WorkStudent[]; entries: WorkPiece[]; opening_week_no: number; selected_week_no: number; opening_guide_subject?: string; selected_guide_subject?: string };
 export type WorkNote = { id: number; group_membership_id: number | null; student_name: string; body: string; author_name: string; created_at: string };

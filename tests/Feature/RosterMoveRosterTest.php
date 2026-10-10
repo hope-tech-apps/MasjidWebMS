@@ -101,13 +101,14 @@ class RosterMoveRosterTest extends TestCase
 
         // A twelfth key fails here: say what it is before a roster row holding it is moved or removed.
         $this->assertSame($inSchema, $listed);
-        $this->assertCount(11, AcademicRecordsHeld::KEYS);
+        $this->assertCount(13, AcademicRecordsHeld::KEYS);
 
         // What a delete would destroy: the seven RESTRICT kinds and Arabic daily notes.
         $destroyed = array_keys(array_filter(AcademicRecordsHeld::KEYS, fn (array $key): bool => $key[3]));
         $this->assertSame([
             'attendance_records', 'assignment_scores', 'report_cards', 'hifz_entries', 'behavior_awards',
             'arabic_letter_progress', 'prize_ledger_entries', 'arabic_daily_notes',
+            'subject_piece_marks', 'subject_notes',
         ], $destroyed);
 
         foreach (AcademicRecordsHeld::KEYS as $table => [, , $rule, $isDestroyed]) {
@@ -115,8 +116,8 @@ class RosterMoveRosterTest extends TestCase
             $this->assertSame($isDestroyed, $rule === 'restrict' || $table === 'arabic_daily_notes');
 
             // Records never change class because each one names its class:
-            // ten by their own column, the eleventh through its file.
-            $this->assertSame($table !== 'group_resource_recipients', Schema::hasColumn($table, 'group_id'));
+            // ten by their own column, one through its file, two through their class's subject.
+            $this->assertSame(! in_array($table, ['group_resource_recipients', 'subject_piece_marks', 'subject_notes'], true), Schema::hasColumn($table, 'group_id'));
 
             // The soft-deleting tables are exactly the listed ones.
             $this->assertSame(
@@ -141,7 +142,7 @@ class RosterMoveRosterTest extends TestCase
         $this->assertSame(1, $held['ḥifẓ entries']);
         $this->assertSame(1, $held['behaviour points']);
         $this->assertSame(1, $held['conversations']);
-        $this->assertCount(11, $held);
+        $this->assertCount(13, $held);
         $this->assertTrue(AcademicRecordsHeld::onlyDeleted($student));
 
         $this->assertSame('1 ḥifẓ entry, 1 behaviour point, 1 conversation', AcademicRecordsHeld::describeForPeople($held));

@@ -1752,8 +1752,10 @@ test('Build C office checklist saves zero or several names in shown order with g
         assert.equal(checks().length, 2);
         for (const n of [...checks()].reverse()) { n.checked = true; n.props.onChange({ target: n }); } await flush();
         submit(s.all(n => n.props['data-subject-form'] !== undefined)[0]); await flush(10);
-        assert.deepEqual(r.calls.find(c => c.method === 'put').body.guide_subjects, ['English Language Arts', 'Science']);
-        assert.equal(r.calls.find(c => c.method === 'put').body.guide_subject, 'English Language Arts');
+        // Ticked Science first, then English Language Arts: the saved order is the order chosen, so the first
+        // followed subject (which older screens read) never moves when a later one is added.
+        assert.deepEqual(r.calls.find(c => c.method === 'put').body.guide_subjects, ['Science', 'English Language Arts']);
+        assert.equal(r.calls.find(c => c.method === 'put').body.guide_subject, 'Science');
         click(exactButton(s, 'Rename Arabic')); await flush();
         for (const n of checks()) { n.checked = false; n.props.onChange({ target: n }); } await flush();
         submit(s.all(n => n.props['data-subject-form'] !== undefined)[0]); await flush(10);
@@ -1941,7 +1943,6 @@ test('walk fixes: a pressed level is drawn filled, plan dates and note times rea
     assert.match(editor, /\.mark-levels button\[aria-pressed="true"\] \{[^}]*background-color:[^}]*color: #fff/);
     assert.match(editor, /\.mark-levels \{ display: flex; gap: \.5rem; \}/);
     assert.match(editor, /The guide has since changed\./);
-    assert.match(editor, /This lesson plan is now under \{\{ shown\.moved_to \}\}/);
     const helpers = read('subjectWork.ts');
     assert.doesNotMatch(helpers, /error\?\.message \?\? ''/);
     assert.doesNotMatch(read('SubjectNotes.vue'), /note \$\{note\.id\}/);
@@ -1966,4 +1967,36 @@ test('walk fixes: a save that returns after the teacher moved to another entry u
         assert.equal(comment().value, 'Saved late', 'the saved entry shows what was saved');
         assert.equal(within(workField(s, 'Curriculum grade 1'), n => n.tag === 'button' && n.textContent === 'Save')[0].props.disabled, true);
     } finally { s.unmount(); pending.resolve(ok({ piece_id: 70, marks: [] })); }
+});
+
+test('final review: an entry reopened before its save returns shows what was saved and can be saved again', async () => {
+    const pending = deferred<any>(); let puts = 0;
+    const r = await workSetup('teacher', { write: (method: string, url: string) => { if (method === 'put' && url.endsWith('/marks') && ++puts === 1) return pending.promise; } });
+    const s = r.screen;
+    const block = () => workField(s, 'Curriculum grade 1');
+    const comment = () => within(block(), n => n.props['aria-label'] === 'Comment for Practice student')[0];
+    const saveButton = () => within(block(), n => n.tag === 'button' && n.textContent === 'Save')[0];
+    try {
+        type(comment(), 'Saved late'); await flush(); click(saveButton()); await flush();
+        chooseOption(workField(s, 'Entry for 1st'), 2); await flush(); click(s.button('Discard changes')); await flush(10);
+        // Back on the first entry while its save is still in flight: a fresh editor on the same piece.
+        chooseOption(workField(s, 'Entry for 1st'), 12); await flush(10);
+        pending.resolve(ok({ piece_id: 70, marks: [{ group_membership_id: 9, updated_at: '2026-10-09T16:00:00.000000Z' }] })); await flush(10);
+        assert.equal(comment().value, 'Saved late', 'the reopened editor takes what the page was told');
+        assert.equal(saveButton().props.disabled, true);
+        type(comment(), 'Edited after'); await flush(); click(saveButton()); await flush(10);
+        const second = r.calls.filter(c => c.url.endsWith('/marks'))[1].body;
+        assert.equal(second.piece_id, 70);
+        assert.equal(second.marks[0].updated_at, '2026-10-09T16:00:00.000000Z', 'the next save carries the saved version, not a stale one');
+    } finally { s.unmount(); pending.resolve(ok({ piece_id: 70, marks: [] })); }
+});
+
+test('final review: source pins for the conflict reload, the unfollowed line and the manager payload', () => {
+    const editor = readFileSync(new URL('../views/teacher/subject/SubjectMarkEditor.vue', import.meta.url), 'utf8');
+    assert.match(editor, /readPiece\(shown\.value\.piece_id \?\? conflictPiece\.value\)/);
+    assert.match(editor, /This subject no longer follows \{\{ shown\.guide_subject \}\}\. Its marks stay here\./);
+    assert.match(editor, /shown\.moved_to \?\? 'another subject'/);
+    const manager = readFileSync(new URL('../components/classes/ClassSubjectManager.vue', import.meta.url), 'utf8');
+    // Renaming alone sends no curriculum choice; a changed tick keeps the saved order.
+    assert.match(manager, /if \(guideTouched\.value\) \{\s*payload\.guide_subjects = form\.value\.guide_subjects\.filter/);
 });

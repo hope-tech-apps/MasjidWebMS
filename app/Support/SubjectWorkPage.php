@@ -84,9 +84,14 @@ final class SubjectWorkPage
                 }
             }
             // Removed rows and unfollowed columns retain saved work after the current choices.
-            foreach ($gradePieces as $piece) $entries[$identity($piece->guide_subject, $piece->week_no)] ??= $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
-                'wording_changed' => true, 'marked_against_date' => $piece->created_at?->format('M j, Y'),
-            ];
+            // A row the guide no longer has reads as changed wording; a column the office stopped following says that instead.
+            foreach ($gradePieces as $piece) {
+                $stillFollowed = in_array($piece->guide_subject, $followed, true);
+                $entries[$identity($piece->guide_subject, $piece->week_no)] ??= $pieceData($piece, $gradeStudents->pluck('id')->all()) + [
+                    'wording_changed' => $stillFollowed, 'no_longer_followed' => ! $stillFollowed,
+                    'marked_against_date' => $piece->created_at?->format('M j, Y'),
+                ];
+            }
             // Sort removed entries within a still-followed subject by number too. Unfollowed saved
             // subjects follow current choices, in their first-piece order, then entry number.
             $order = array_values(array_unique([...$followed, ...$gradePieces->sortBy('id')->pluck('guide_subject')->all()]));
@@ -133,11 +138,16 @@ final class SubjectWorkPage
         if ($elsewhere->isNotEmpty()) {
             $subjectOf = LessonPlan::where('group_id', $group->id)->whereIn('id', $elsewhere->pluck('lesson_plan_id'))->pluck('class_subject_id', 'id');
             $names = ClassSubject::where('group_id', $group->id)->whereIn('id', $subjectOf->filter()->unique())->pluck('name', 'id');
-            $movedTo = $subjectOf->map(fn ($id) => $id === null ? null : $names->get($id));
+            $limits = $request->user()->type === 'Teacher' ? SubjectFence::limitsForWithClassSubjects($request->user(), (int) $group->id) : null;
+            $hidden = $request->user()->type === 'Teacher' ? ClassSubject::where('group_id', $group->id)->whereIn('id', $names->keys())->whereNotNull('hidden_at')->pluck('id')->all() : [];
+            // The office is told where the plan went. A teacher is told the name only of a subject they may open.
+            $movedTo = $subjectOf->map(fn ($id) => $id === null || in_array($id, $hidden) || ($request->user()->type === 'Teacher' && ! SubjectFence::allowsWork($limits, (int) $id))
+                ? null : $names->get($id));
         }
         foreach ($pieces->where('source', 'plan') as $piece) {
             if ($piece->lesson_plan_id === null || ! in_array($piece->lesson_plan_id, $listed)) {
-                $planData->push($pieceData($piece) + ['moved_to' => $piece->lesson_plan_id === null ? null : $movedTo->get($piece->lesson_plan_id)]);
+                $planData->push($pieceData($piece) + ['moved_elsewhere' => $piece->lesson_plan_id !== null,
+                    'moved_to' => $piece->lesson_plan_id === null ? null : $movedTo->get($piece->lesson_plan_id)]);
             }
         }
         $planData = $planData->sortByDesc(fn ($p) => substr($p['title'], 0, 10))->values(); // Title begins with the copied ISO date, including deleted plans.

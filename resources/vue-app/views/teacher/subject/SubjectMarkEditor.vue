@@ -4,7 +4,8 @@
         <p v-if="shown.standard_code" class="small mb-1" dir="auto">{{ shown.standard_code }}</p>
         <p v-if="shown.detail" class="small" dir="auto">{{ shown.detail }}</p>
         <p v-if="shown.wording_changed && shown.marked_against_date" class="small text-muted">Marked against the wording of {{ shown.marked_against_date }}. The guide has since changed.</p>
-        <p v-if="shown.moved_to" class="small text-muted">This lesson plan is now under {{ shown.moved_to }}. Its marks stay here.</p>
+        <p v-if="shown.no_longer_followed" class="small text-muted">This subject no longer follows {{ shown.guide_subject }}. Its marks stay here.</p>
+        <p v-if="shown.moved_elsewhere" class="small text-muted">This lesson plan is now under {{ shown.moved_to ?? 'another subject' }}. Its marks stay here.</p>
         <div v-for="(student, index) in students" :key="student.id" class="mark-row" role="group" :aria-label="`Marks for ${student.name}`">
             <strong dir="auto">{{ student.name }}</strong>
             <template v-if="readonly">
@@ -57,13 +58,19 @@ const baseline = ref<WorkMark[]>(makeDraft());
 const shown = ref({ ...props.piece });
 const differs = (mark: WorkMark, index: number) => mark.level !== baseline.value[index].level || (mark.comment ?? '') !== (baseline.value[index].comment ?? '');
 const dirty = computed(() => draft.value.some(differs));
-const fieldErrors = ref<Record<number, Record<string, string>>>({}); const conflicts = ref<number[]>([]);
+const fieldErrors = ref<Record<number, Record<string, string>>>({}); const conflicts = ref<number[]>([]); const conflictPiece = ref<number | null>(null);
 const prefix = useId(); const errorId = (student: number, field: string) => `${prefix}-mark-${student}-${field}`;
 const orderedLevels = computed(() => props.levels.slice().sort((a, b) => b.level - a.level));
 const saving = ref(false); const error = ref(''); const notice = ref(''); let alive = true; let saveGeneration = 0;
 watch(() => props.piece, value => {
     shown.value = { ...value };
     if (!dirty.value && !saving.value) { draft.value = makeDraft(); baseline.value = draft.value.map(m => ({ ...m })); }
+});
+// The page updates a piece IN PLACE when a save lands after this editor was left and reopened: the object is the
+// same, so watch what it holds. Never over a draft being typed or a save in flight.
+watch(() => [props.piece.piece_id, JSON.stringify(props.piece.marks)], () => {
+    if (dirty.value || saving.value) return;
+    shown.value = { ...props.piece }; draft.value = makeDraft(); baseline.value = draft.value.map(m => ({ ...m }));
 });
 watch(() => [props.piece.title, props.piece.detail], () => { shown.value.title = props.piece.title; shown.value.detail = props.piece.detail; });
 watch(dirty, value => { notice.value = ''; emit('dirty', value); }, { flush: 'sync' });
@@ -79,9 +86,11 @@ const reload = async () => {
     if (saving.value) return;
     ++saveGeneration; saving.value = true; error.value = '';
     try {
-        const saved = await readPiece(shown.value.piece_id);
+        // The refusal names the piece: a first mark made by someone else may sit under another spelling of the grade.
+        const saved = await readPiece(shown.value.piece_id ?? conflictPiece.value);
         if (!alive) return;
         if (!saved) { error.value = 'This piece could not be reloaded.'; return; }
+        conflictPiece.value = null;
         shown.value = saved; draft.value = makeDraft(saved); baseline.value = makeDraft(saved);
         fieldErrors.value = {}; conflicts.value = []; publish(saved);
     } catch (failure) { if (alive) error.value = workError(failure, 'These marks could not be reloaded.'); }
@@ -132,6 +141,7 @@ const save = async () => {
         if (!alive) return;
         if (failure?.response?.status === 409 && Array.isArray(failure.response.data.students)) {
             conflicts.value = failure.response.data.students.map((s: any) => s.group_membership_id);
+            conflictPiece.value = Number.isInteger(failure.response.data.piece_id) ? failure.response.data.piece_id : null;
         } else {
             const keys = sent.flatMap((_, i) => [`marks.${i}.level`, `marks.${i}.comment`]);
             const errors = workFieldErrors(failure, keys); error.value = errors.general;
