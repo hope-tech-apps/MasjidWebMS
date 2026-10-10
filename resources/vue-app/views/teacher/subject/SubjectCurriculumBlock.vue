@@ -28,9 +28,17 @@ const dirty = ref(false);
 const setDirty = (value: boolean) => { dirty.value = value; emit('dirty', value); };
 const choose = async (event: Event) => {
     const select = event.target as HTMLSelectElement;
-    const next = choice.value; choice.value = selected.value; select.value = String(selected.value);
+    const next = choice.value;
     if (next === selected.value) return;
-    if (dirty.value && !await props.confirmDiscard()) return;
+    // Nothing unsaved: the list already shows what was picked, so leave it alone. Putting the old entry
+    // back by hand here and then setting the new one in the same tick left the LIST on the old entry
+    // while the page moved to the new one: Vue does not write a list's model back into it during the
+    // update that follows its own change event.
+    if (!dirty.value) { selected.value = next; return; }
+    // Unsaved marks: show the entry still on the page while the question is asked. The answer arrives
+    // in a later tick, when setting the model does reach the list again.
+    choice.value = selected.value; select.value = String(selected.value);
+    if (!await props.confirmDiscard()) return;
     selected.value = next; choice.value = next;
 };
 // By the saved entry's own identity: the teacher may have moved to another entry before the save came back.

@@ -2002,3 +2002,26 @@ test('final review: source pins for the conflict reload, the unfollowed line and
     // Renaming alone sends no curriculum choice; a changed tick keeps the saved order.
     assert.match(manager, /if \(guideTouched\.value\) \{\s*payload\.guide_subjects = form\.value\.guide_subjects\.filter/);
 });
+
+test('live fix: choosing another curriculum entry with nothing unsaved leaves the list on the entry chosen', async () => {
+    // A real browser showed the list snapping back to the old entry while the page moved on. The mounted DOM
+    // here does not reproduce a list's own change-event timing, so pin the rule in the source and the outcome
+    // the harness can see: the page shows the chosen entry and the list's model equals it.
+    const source = readFileSync(new URL('../views/teacher/subject/SubjectCurriculumBlock.vue', import.meta.url), 'utf8');
+    assert.match(source, /if \(!dirty\.value\) \{ selected\.value = next; return; \}/);
+    const revert = source.indexOf('choice.value = selected.value; select.value = String(selected.value);');
+    assert.ok(revert > source.indexOf('if (!dirty.value) { selected.value = next; return; }'), 'the list is put back only on the unsaved path');
+    const r = await workSetup('teacher'); const s = r.screen;
+    try {
+        const list = () => workField(s, 'Entry for 1st');
+        // There and back again: the second pick of the first entry must be heard (the fault made it a no-op).
+        const shown = () => within(workField(s, 'Curriculum grade 1'), n => n.tag === 'p' && String(n.props.class).includes('fw-semibold'))[0].textContent;
+        const first = shown();
+        chooseOption(list(), 2); await flush(10);
+        const second = shown(); assert.notEqual(second, first);
+        chooseOption(list(), 12); await flush(10);
+        assert.equal(shown(), first);
+        chooseOption(list(), 2); await flush(10);
+        assert.equal(shown(), second);
+    } finally { s.unmount(); }
+});
