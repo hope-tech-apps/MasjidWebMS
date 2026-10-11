@@ -657,6 +657,10 @@ Route::prefix('admin')->group(function () {
                         Route::get('/setup', 'setup');
                         Route::get('/week', 'week');
                         Route::get('/clashes', 'clashes');
+                        Route::get('/schedules/teacher/{teacher_id}', 'teacherSchedule')->whereNumber('teacher_id');
+                        Route::get('/schedules/class/{group_id}', 'classSchedule')->whereNumber('group_id');
+                        Route::get('/schedules/location/{room_id}', 'locationSchedule')->whereNumber('room_id');
+                        Route::get('/schedules/school', 'schoolSchedule');
                         Route::post('/sets', 'storeSet');
                         Route::put('/sets/{set_id}', 'updateSet');
                         Route::delete('/sets/{set_id}', 'destroySet');

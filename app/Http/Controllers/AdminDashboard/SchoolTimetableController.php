@@ -4,7 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Models\{ClassSubject, Group, GroupStaff, Masjid, MasjidUser, SchoolYear, TimetableClassDay, TimetableClassRoom, TimetableDay, TimetableMeeting, TimetableMeetingTeacher, TimetablePeriod, TimetablePeriodSet, TimetableRoom, User};
-use App\Support\{SchoolDateAuthority, SchoolSettings, TimetableReader};
+use App\Support\{SchoolDateAuthority, SchoolSettings, TimetableReader, OfficeSchedule, TeacherSchedule};
 use Illuminate\Http\{JsonResponse, Request};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\{Rule, ValidationException};
@@ -48,7 +48,11 @@ class SchoolTimetableController extends Controller
     }
     public function setup($masjid_id, $year_id): JsonResponse
     {
-        $year=$this->year($year_id); $sets=TimetablePeriodSet::where('school_year_id',$year_id)->orderBy('id')->get();
+        return $this->result($this->setupData((int)$masjid_id, $this->year($year_id)));
+    }
+    private function setupData(int $masjid_id, SchoolYear $year): array
+    {
+        $year_id=$year->id; $sets=TimetablePeriodSet::where('school_year_id',$year_id)->orderBy('id')->get();
         $periods=TimetablePeriod::whereIn('period_set_id',$sets->pluck('id'))->orderBy('position')->orderBy('id')->get()->groupBy('period_set_id');
         $staff=GroupStaff::whereIn('group_id',Group::where('kind','class')->select('id'))->get()->groupBy('group_id');
         $subjects=ClassSubject::orderBy('position')->get()->groupBy('group_id');
@@ -59,7 +63,7 @@ class SchoolTimetableController extends Controller
             $gs=($staff[$g->id]??collect())->filter(fn($s)=>in_array($s->user_id,$valid,true));
             return ['id'=>$g->id,'name'=>$g->name,'room_id'=>$usual[$g->id]->room_id??null,'teachers'=>$gs->pluck('user_id')->all(),'subjects'=>($subjects[$g->id]??collect())->filter(fn($s)=>$s->hidden_at===null)->map(fn($s)=>['id'=>$s->id,'name'=>$s->name,'teacher_ids'=>$gs->filter(fn($t)=>$t->class_subject_ids===null||in_array($s->id,$t->class_subject_ids,true))->pluck('user_id')->all()])->values()->all()];
         })->all();
-        return $this->result(['today'=>$this->today((int)$masjid_id),'year'=>['id'=>$year->id,'label'=>$year->label,'first_day'=>$year->first_day->toDateString(),'last_day'=>$year->last_day->toDateString()], 'weekdays'=>$this->weekdays($year),'sets'=>$sets->map(fn($s)=>['id'=>$s->id,'name'=>$s->name,'periods'=>($periods[$s->id]??collect())->map(fn($p)=>$this->period($p))->all()])->all(),'days'=>TimetableDay::where('school_year_id',$year_id)->get()->all(),'class_days'=>TimetableClassDay::where('school_year_id',$year_id)->get()->all(),'rooms'=>TimetableRoom::orderBy('name')->get()->all(),'classes'=>$classes,'teachers'=>$teachers->all(),'class_subjects_enabled'=>SchoolSettings::classSubjects(Masjid::findOrFail($masjid_id))]);
+        return ['today'=>$this->today((int)$masjid_id),'year'=>['id'=>$year->id,'label'=>$year->label,'first_day'=>$year->first_day->toDateString(),'last_day'=>$year->last_day->toDateString()], 'weekdays'=>$this->weekdays($year),'sets'=>$sets->map(fn($s)=>['id'=>$s->id,'name'=>$s->name,'periods'=>($periods[$s->id]??collect())->map(fn($p)=>$this->period($p))->all()])->all(),'days'=>TimetableDay::where('school_year_id',$year_id)->get()->all(),'class_days'=>TimetableClassDay::where('school_year_id',$year_id)->get()->all(),'rooms'=>TimetableRoom::orderBy('name')->get()->all(),'classes'=>$classes,'teachers'=>$teachers->all(),'class_subjects_enabled'=>SchoolSettings::classSubjects(Masjid::findOrFail($masjid_id))];
     }
     private function period(TimetablePeriod $p): array { return ['id'=>$p->id,'name'=>$p->name,'starts_at'=>substr($p->starts_at,0,5),'ends_at'=>substr($p->ends_at,0,5),'kind'=>$p->kind,'position'=>(int)$p->position]; }
     private function setResult(TimetablePeriodSet $s): array { return ['id'=>$s->id,'name'=>$s->name,'periods'=>TimetablePeriod::where('period_set_id',$s->id)->orderBy('position')->get()->map(fn($p)=>$this->period($p))->all()]; }
@@ -201,6 +205,32 @@ class SchoolTimetableController extends Controller
     public function clashes(Request $r,$masjid_id,$year_id): JsonResponse
     {
         $year=$this->year($year_id); return $this->result($this->reader->clashes((int)$masjid_id,(int)$year_id,$this->date($r,'as_of',$year)));
+    }
+    /** Read-only office lenses; selections resolve only from this school's bulk reference data. */
+    public function teacherSchedule(Request $r, $masjid_id, $year_id, $teacher_id): JsonResponse { return $this->schedule($r, $masjid_id, $year_id, 'teacher', (int)$teacher_id); }
+    public function classSchedule(Request $r, $masjid_id, $year_id, $group_id): JsonResponse { return $this->schedule($r, $masjid_id, $year_id, 'class', (int)$group_id); }
+    public function locationSchedule(Request $r, $masjid_id, $year_id, $room_id): JsonResponse { return $this->schedule($r, $masjid_id, $year_id, 'location', (int)$room_id); }
+    public function schoolSchedule(Request $r, $masjid_id, $year_id): JsonResponse { return $this->schedule($r, $masjid_id, $year_id, 'school'); }
+    private function schedule(Request $r, $school, $yearId, string $lens, ?int $id = null): JsonResponse
+    {
+        $year=$this->year($yearId); $date=$this->date($r, 'as_of', $year);
+        $data=$this->setupData((int)$school, $year);
+        $choices=['teacher'=>'teachers', 'class'=>'classes', 'location'=>'rooms'];
+        if ($lens !== 'school') abort_unless(in_array($id, array_column($data[$choices[$lens]], 'id'), true), 404);
+        $input=$r->validate(['weekday'=>'nullable|integer|min:0|max:6']);
+        $meetings=$this->reader->meetings((int)$school, (int)$yearId, $date);
+        $clashes=$lens === 'school' ? $this->reader->compare($meetings, $this->reader->rosters((int)$school, (int)$yearId), $date) : [];
+        $closures=$year->closures->map(fn($c)=>['date'=>$c->closed_on->toDateString(), 'reason'=>$c->reason])->all();
+        $payload=OfficeSchedule::make($data, $meetings, $closures, $clashes, $date, $lens, $id, isset($input['weekday']) ? (int)$input['weekday'] : null);
+        if ($lens === 'teacher') {
+            // Use exactly the teacher portal's dated days, with office read-only cards instead of teacher links.
+            $teacherWeek=app(TeacherSchedule::class)->read((int)$school, $id, $date);
+            $payload['days']=array_map(function ($day) {
+                $day['meetings']=array_map(fn($m)=>array_replace($m, ['href'=>null]), $day['meetings']);
+                return $day;
+            }, array_values(array_filter($teacherWeek['days'], fn($day)=>$day['meeting_day'])));
+        }
+        return $this->result($payload)->header('Cache-Control', 'no-store');
     }
     private function meetingData(Request $r,SchoolYear $year,Masjid $org,?TimetableMeeting $old=null): array
     {

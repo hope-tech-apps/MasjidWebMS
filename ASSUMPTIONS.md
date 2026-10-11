@@ -415,3 +415,7 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - The owner explicitly assigns this isolated tree, authorizing writes here; no inherited tracked edits at start.
 - “Past school day” is an open calendar day before school-local today on the meeting's own weekday, within its effective range. Closures do not create history.
 - As-of keeps its existing recurring-snapshot meaning; the new empty-day wording applies when the snapshot contains no placed meetings.
+
+## Office timetable schedules step 3 — 2026-10-11
+- All current live Teacher accounts with this school's teacher membership belong on the whole-school grid. Teachers with no live placements as of the selected date are separated in the picker/list, including teachers with only future/ended versions.
+- SQLite and mounted controls can prove data/security/request contracts, not browser geometry, print pagination or MySQL behavior. These limits will be explicit in the report.

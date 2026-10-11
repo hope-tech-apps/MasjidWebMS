@@ -9554,3 +9554,8 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Reuse Bootstrap school calendar modal/form conventions, formatSchoolDay and describeSchoolTime; add shared clock range wrapper for suffix elision. No standalone plural helper exists; use the timetable's existing count===1 suffix convention.
 - Office as-of remains a recurring snapshot: empty snapshots on non-meeting days/closures explain their state. Dates commit on blur, bounded within year; teacher dates normalize to a UTC Monday. No per-key HTTP reads. The office requests include_clashes=1 on its week read, combining week and clashes in one HTTP response (15 queries; plain week stays 12).
 - This isolated assigned worktree is the writer; HEAD 1db7cebc unchanged. No commit, capture variables or fixture regeneration.
+
+## Office timetable schedules step 3 — 2026-10-11
+- Work is authorized in this isolated worktree only, without commit. Existing admin/tenant/timetable fences cover all four GET routes, with no new capability or schema.
+- Whole-school time columns split the union of used period rows at every start/end boundary, omitting uncovered gaps. A meeting appears in each interval it overlaps; both overlapping meetings remain visible. Teachers/classes toggle is local and does not refetch.
+- By class, location and whole school retain the editing grid's recurring as-of snapshot semantics. By teacher calls the teacher portal's shared dated-week service: versions apply to their actual displayed day, including year boundaries and midweek changes. Only school meeting days are columns in the office, omitting the portal's extra non-meeting Today column. Meeting cards and week drawing are shared.

@@ -29,19 +29,7 @@
                 <p class="small text-muted mt-2"><bdi>{{ dateLabel(page.week_start) }} – {{ dateLabel(page.week_end) }}</bdi></p>
                 <p v-if="loading" role="status">Loading your schedule…</p>
                 <p v-if="page.days.length === 0">Nothing is placed for you yet.</p>
-                <div v-else class="schedule-week-scroll" tabindex="0" aria-label="Week">
-                    <div class="schedule-week" :style="{ '--schedule-days': page.days.length }">
-                        <section v-for="day in page.days" :key="day.date" class="schedule-day" data-test="week-day">
-                            <h3 class="h6">{{ dateLabel(day.date, true) }}</h3>
-                            <p v-if="day.reason" class="small">No school: {{ day.reason }}</p>
-                            <p v-else-if="day.date === page.today.date && !day.meetings.length" class="small">{{ todayWords(page.today.state, page.today.reason) }}</p>
-                            <div class="day-meetings">
-                                <ScheduleMeeting v-for="meeting in day.meetings" :key="meeting.id" :meeting="meeting"
-                                                 :week-start="page.week_start" :week-end="page.week_end" />
-                            </div>
-                        </section>
-                    </div>
-                </div>
+                <ScheduleWeek v-else :days="page.days" :week-start="page.week_start" :week-end="page.week_end" :empty-words="dayEmptyWords" />
             </section>
         </template>
     </div>
@@ -53,6 +41,7 @@ import TeacherApiService from '@/core/services/TeacherApiService';
 import { useAuthStore } from '@/stores/authStore';
 import { formatSchoolDay, weekdayOfIso } from '@/core/types/data/masjid-related/SchoolCalendar';
 import ScheduleMeeting, { type ScheduleSlot } from './ScheduleMeeting.vue';
+import ScheduleWeek from './ScheduleWeek.vue';
 
 interface ScheduleDay { date: string; weekday: number; reason: string | null; meetings: ScheduleSlot[]; }
 interface SchedulePage { timezone: string; week_start: string; week_end: string; today: ScheduleDay & { state: string }; days: ScheduleDay[]; }
@@ -63,6 +52,7 @@ const page = ref<SchedulePage | null>(null);
 const loading = ref(false); const error = ref(false); const unavailable = ref(false);
 const requestedWeek = ref<string | null>(null);
 const clock = ref(Date.now());
+const dayEmptyWords = (date: string) => date === page.value?.today.date ? todayWords(page.value.today.state, page.value.today.reason) : '';
 let alive = true; let generation = 0; let timer: ReturnType<typeof setInterval> | undefined;
 const schoolClock = computed(() => {
     if (!page.value) return null;
@@ -114,11 +104,8 @@ onBeforeUnmount(() => { alive = false; ++generation; if (timer !== undefined) cl
 <style scoped>
 .teacher-schedule { min-width: 0; max-width: 100%; text-align: start; }
 .schedule-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
-.today-meetings, .day-meetings { display: grid; gap: .5rem; }
+.today-meetings { display: grid; gap: .5rem; }
 .week-picker { display: flex; flex-wrap: wrap; gap: .5rem; }
 .week-picker input { width: auto; min-height: 2.75rem; }
 .week-picker button { min-height: 2.75rem; white-space: normal; }
-.schedule-week-scroll { width: 100%; max-width: 100%; overflow-x: auto; padding-block-end: .5rem; }
-.schedule-week { display: grid; grid-template-columns: repeat(var(--schedule-days), minmax(12rem, 1fr)); gap: .75rem; }
-.schedule-day { min-width: 0; overflow-wrap: anywhere; }
 </style>

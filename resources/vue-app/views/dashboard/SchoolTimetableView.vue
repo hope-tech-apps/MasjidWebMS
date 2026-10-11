@@ -4,16 +4,18 @@
             <h1>Timetable</h1>
             <label for="tt-year">School year</label>
             <select class="form-select" id="tt-year" v-model="yearId" @change="loadYear"><option v-for="y in years" :key="y.id" :value="y.id">{{ y.label }}</option></select>
-            <button class="btn btn-outline-primary" type="button" @click="panel = 'week'">Class week</button>
+            <button class="btn btn-outline-primary" type="button" @click="showPanel('week')">Class week</button>
+            <button class="btn btn-outline-primary" type="button" @click="showPanel('schedules')">Schedules</button>
             <button class="btn btn-outline-primary" type="button" @click="panel = 'setup'">Setup</button>
-            <button class="btn btn-outline-primary" type="button" @click="panel = 'clashes'">Clashes ({{ clashes.length }})</button>
+            <button class="btn btn-outline-primary" type="button" @click="showPanel('clashes')">Clashes{{ loadedDate ? ' (' + clashes.length + ')' : '' }}</button>
         </header>
         <p v-if="error" role="alert">{{ error }}</p>
         <p v-if="loading" role="status">Loading timetable…</p>
         <button class="btn btn-outline-primary" v-if="error && !editor && !outOfYear" type="button" @click="loadYear">Retry</button>
         <p v-if="!loading && !years.length">Add a school year in School Calendar first.</p>
         <div v-if="setup && !loading">
-            <div v-if="panel === 'setup'" class="tt-setup">
+            <OfficeSchedules v-if="panel === 'schedules'" :key="base" :base="base" :setup="setup" @edit-class="editClassWeek" />
+            <div v-else-if="panel === 'setup'" class="tt-setup">
                 <h2>Period sets</h2>
                 <p>This changes the times for the whole year.</p>
                 <button class="btn btn-outline-primary" type="button" @click="editSet()">Add period set</button>
@@ -142,13 +144,14 @@ import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { formatSchoolDay, weekdayOfIso } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { schoolTimeRange } from '@/core/helpers/scheduledSend';
 import ApiService from '@/core/services/ApiService';
+import OfficeSchedules from './OfficeSchedules.vue';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 
 const auth = useAuthStore(); const masjid = useMasjidStore();
 const enabled = computed(() => masjid.masjid?.capabilities?.school_timetable === true);
 const years = ref<any[]>([]); const yearId = ref<number | null>(null); const classId = ref<number | null>(null);
-const asOf = ref(''); const loadedDate = ref(''); const outOfYear = ref(false); const panel = ref('week'); const setup = ref<any>(null); const week = ref<any>({ days: [], meetings: [] }); const clashes = ref<any[]>([]);
+const asOf = ref(''); const loadedDate = ref(''); const outOfYear = ref(false); const panel = ref('schedules'); const setup = ref<any>(null); const week = ref<any>({ days: [], meetings: [] }); const clashes = ref<any[]>([]);
 const weekLoading = ref(false); const loading = ref(false); const saving = ref(false); const error = ref(''); const editor = ref(''); const draft = ref<any>({}); const warnings = ref<any[]>([]); const dialog = ref<HTMLElement | null>(null);
 const warningFingerprint = ref<string | null>(null);
 const warnedRequest = ref<any>(null);
@@ -180,6 +183,8 @@ function clashSentence(c: any): string {
 }
 let lastWeekKey = '';
 const inYear = (date: string) => weekdayOfIso(date) !== null && date >= setup.value.year.first_day && date <= setup.value.year.last_day;
+function showPanel(view: string) { panel.value = view; if (view === 'week' || view === 'clashes') commitAsOf(true); }
+function editClassWeek(id: number, date: string) { classId.value = id; asOf.value = date; showPanel('week'); }
 // A complete in-year date loads as soon as the box reports it; a half-typed year waits for
 // Enter or leaving the box before it is refused, so typing never flashes the refusal.
 function commitAsOf(leaving: boolean) {
@@ -203,13 +208,13 @@ async function load() {
 }
 async function loadYear() {
     if (!enabled.value || !yearId.value) return;
-    const run = ++generation; ++weekGeneration; loading.value = true; error.value = ''; setup.value = null; week.value = { days: [], meetings: [] }; clashes.value = []; closeEditor();
+    const run = ++generation; ++weekGeneration; loading.value = true; error.value = ''; setup.value = null; week.value = { days: [], meetings: [] }; clashes.value = []; loadedDate.value = ''; closeEditor();
     try {
         const r = await ApiService.get(`${base.value}/setup` as any); if (run !== generation || !enabled.value) return;
         setup.value = r.data.data; asOf.value ||= setup.value.today;
         if (asOf.value < setup.value.year.first_day || asOf.value > setup.value.year.last_day) asOf.value = setup.value.year.first_day;
         if (!setup.value.classes.some((g: any) => g.id === Number(classId.value))) classId.value = setup.value.classes[0]?.id ?? null;
-        await loadWeek();
+        if (panel.value !== 'schedules') await loadWeek();
     } catch (e) { if (run === generation) error.value = message(e); }
     finally { if (run === generation) loading.value = false; }
 }

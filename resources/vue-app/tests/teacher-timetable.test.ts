@@ -12,7 +12,8 @@ async function screen(state = 'meetings', code = 'en', location: string | null =
     const api = { get: async (url: string) => { calls.push(url); if(url.includes('week=2026-10-19')) return {data:{data:{...data,week_start:'2026-10-19',week_end:'2026-10-25',days:[{date:'2026-10-19',weekday:1,reason:null,meetings:[slot({label:'Next week duty',effective_from:'2026-10-19'})]}]}}}; return {data:{data}}; } };
     const link = vue.defineComponent({props:['to'], setup: (props:any,{slots}:any)=>()=>vue.h('a',{href:props.to},slots.default?.())});
     const meeting = await compileSfc('views/teacher/ScheduleMeeting.vue',{vue,'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'vue-router':{RouterLink:link}});
-    const s = await mountSfc('views/teacher/TeacherSchedule.vue',{}, {vue,'@/core/services/TeacherApiService':{default:api},'@/stores/authStore':{useAuthStore:()=>({dashboardMasjidId:1})},'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'./ScheduleMeeting.vue':{default:meeting}});
+    const week = await compileSfc('views/teacher/ScheduleWeek.vue', {'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'./ScheduleMeeting.vue':{default:meeting}});
+    const s = await mountSfc('views/teacher/TeacherSchedule.vue',{}, {vue,'@/core/services/TeacherApiService':{default:api},'@/stores/authStore':{useAuthStore:()=>({dashboardMasjidId:1})},'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'./ScheduleMeeting.vue':{default:meeting},'./ScheduleWeek.vue':{default:week}});
     await flush(); return {...s,calls};
 }
 test('teacher schedule today ordered clocks now and next device instant use school timezone; no empty location anywhere', async () => {
@@ -94,7 +95,7 @@ test('teacher schedule week date commits once per week and stale reads cannot ov
     const old=deferred();const calls:string[]=[];
     const data=(week:string)=>({timezone:'America/New_York',week_start:week,week_end:week,today:{date:'2026-10-12',state:'unplaced',meetings:[]},days:[]});
     const api={get:async(url:string)=>{calls.push(url);if(url.includes('week=2026-10-19'))return old.promise;return{data:{data:data(url.includes('2026-10-26')?'2026-10-26':'2026-10-12')}};}};
-    const s=await mountSfc('views/teacher/TeacherSchedule.vue',{}, {vue,'@/core/services/TeacherApiService':{default:api},'@/stores/authStore':{useAuthStore:()=>({dashboardMasjidId:1})},'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'./ScheduleMeeting.vue':{default:vue.defineComponent({render:()=>null})}});
+    const s=await mountSfc('views/teacher/TeacherSchedule.vue',{}, {vue,'@/core/services/TeacherApiService':{default:api},'@/stores/authStore':{useAuthStore:()=>({dashboardMasjidId:1})},'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'./ScheduleWeek.vue':{default:vue.defineComponent({render:()=>null})},'./ScheduleMeeting.vue':{default:vue.defineComponent({render:()=>null})}});
     try {
         await flush();const input=s.all(n=>n.props.id==='schedule-week-date')[0];assert.ok(input);
         for(const value of ['0002-10-19','0020-10-19','0202-10-19','2026-10-19']) {type(input,value);await flush();}assert.equal(calls.length,1);

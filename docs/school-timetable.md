@@ -1,6 +1,6 @@
 # School timetable
 
-Step 1 gives the office period sets, optional locations, a class's week and computed clashes. Step 2 adds the teacher portal's read-only **My schedule**. Families have no timetable routes or screens. No courses, credits, rotating days, automatic placement, printing or exports are included.
+Step 1 gives the office period sets, optional locations, a class's week and computed clashes. Step 2 adds the teacher portal's read-only **My schedule**. Step 3 adds the office's four read-only **Schedules** views and schedule-only printing. Families have no timetable routes or screens. No courses, credits, rotating days, automatic placement or exports are included.
 
 ## Switch and roles
 
@@ -104,3 +104,36 @@ The teacher week input commits on blur and normalizes to Monday using UTC arithm
 Remove/change dialogs name the meeting, class, period and weekday. Removal submits “Remove”. Copy appears only when another configured weekday uses the same period set. New period rows start at the previous end and use its duration; first row is 08:00–08:45. Count refusals use singular for one meeting everywhere. Time ranges reuse `describeSchoolTime` through `schoolTimeRange`, with the scheduled-list 12-hour convention and shared suffix, e.g. `12:45 - 1:30 PM`. Date labels reuse `formatSchoolDay` with the office calendar's en-US convention. Clash lists and warnings use sentences naming both classes/subjects plus weekday and time, followed by formatted date bounds.
 
 An authenticated office's typed timetable route while switched off returns `/auth/404`, as before the route existed. Server endpoint fences and all existing OFF fixtures stay unchanged.
+
+## Office: Schedules (step 3)
+
+The office Timetable page opens **Schedules → Whole school**, including at a one-day school. Its existing Class week, Setup and Clashes areas remain available. Schedules has four GET-only views with the same office roles and `auth:sanctum` → `admin` → `tenant` → `capability:school_timetable` fences. No migration, new switch, teacher/family surface or export is added. OFF still returns 404, including to a SuperAdmin.
+
+Base `/api/admin/masjids/{masjid_id}/timetable/years/{year_id}`:
+
+| Method | Suffix | Purpose |
+|---|---|---|
+| GET | `/schedules/teacher/{teacher_id}?as_of=…` | A school teacher's dated week |
+| GET | `/schedules/class/{group_id}?as_of=…` | Read-only class week, retaining empty periods/blocks |
+| GET | `/schedules/location/{room_id}?as_of=…` | Meetings resolving to this optional location |
+| GET | `/schedules/school?as_of=…&weekday=…` | Whole-school day, all teacher/class rows and computed clashes |
+
+An omitted `as_of` means school-local today; submitted dates must be inside the addressed year. The UI starts at today, clamped to the nearest year bound when viewing another year. Each view change, selection or committed date makes one schedule request. Date typing makes none; blur commits, repeated selections are deduplicated and older answers cannot replace later ones. A refusal clears the previous schedule and uses office wording; a successful retry clears the error. Responses are `no-store`.
+
+Teachers resolve through live Teacher accounts with this school's teacher membership, independent of class assignments. Another school's teacher or an account with no membership is 404; admin/non-teacher accounts are also refused. Classes are active classes of this school, locations are this school's retained reference rows (inactive locations can still be read), and years resolve in the bound school. Foreign route organisations are 403 for their office; a SuperAdmin is still bound to the addressed organisation. Responses disclose schedule names/IDs, not account contact details.
+
+**By teacher** uses `TeacherSchedule::read`, the same dated-week service as My schedule, with the selected teacher instead of the signed-in teacher. Every displayed date resolves its own year, closures and meeting versions, including weeks crossing years. The office omits My schedule's extra non-meeting Today column, so a Sunday school has one column. Empty meeting weekdays are omitted unless they are today or a closure, following My schedule. Meeting links become plain class names: this view does not navigate into the teacher realm. Slots show clocks, class, subject/activity, co-teachers and location only when set. Teachers with no live placements as of the selected date appear in a separate picker group/list and may be selected.
+
+**By class**, **By location** and **Whole school** retain the office editing grid's recurring snapshot as of the chosen date. For example, a Thursday teacher change appears on its actual days in By teacher, and changes the entire recurring snapshot from Thursday in Whole school. By class retains each day's own periods, including empty blocks, without placement/copy/remove controls. “Edit this class's week” opens that same class and date in the editor; all current office roles may edit, so the response's `may_edit` is true. By location is absent when the school has no locations, and appears after a location is created/assigned on a class. No empty location label or required location setup is introduced.
+
+Whole school defaults to the date's weekday, or the next configured meeting weekday with wrapping inside the selected Monday-to-Sunday week. All live teacher accounts appear, including those free that day and those with nothing placed at all. “Classes” switches to all active class rows locally, without a request. An empty cell means free. Unstaffed activities appear on their class row; teacher rows contain only explicitly assigned meetings.
+
+The day's time columns use every teaching row and block from every set resolved by an active class that day (class override, otherwise school set). With no classes, the school set supplies columns. Distinct start/end clock boundaries partition the union into ordered, non-overlapping intervals; uncovered gaps are omitted. Identical clocks collapse regardless of period IDs or names, retaining all contributing names. For sets with 11:00–11:40 and 11:00–11:45, columns start at 11:00, 11:40 and 11:45; the longer meeting occupies both first intervals. Each covered cell repeats the meeting card, so overlapping meetings remain separately visible rather than losing one to a spanning cell. Friday uses only Friday's resolved sets. No single period set supplies the whole-school scale.
+
+Whole school compares the already-loaded snapshot with `TimetableReader::compare` and one bulk roster query. Only the chosen weekday's clashes appear; each affected cell has a “Clash” badge whose title names the other class, subject/activity and clocks. Teacher-clash badges appear on that teacher's row; location/student clashes affect every teacher row of the involved meetings. Class rows mark every involved meeting. Closures/out-of-year days suppress cells and say why; non-meeting as-of dates are explained separately. Week views label their calendar days, closures and outside-year days in words. Shared meeting cards carry “From {date}”/“Until {date}” notes for boundaries inside the shown week, using `formatSchoolDay`; all time ranges use `schoolTimeRange`.
+
+`SchoolTimetableController::setupData` reuses the existing bulk reference payload internally, preserving the editing setup contract and query counts. The new HTTP query-count pins at two/twelve classes and teachers are **29 By teacher, 22 By class, 22 By location, 23 Whole school**. By teacher includes the shared portal service's separate bulk dated-version/subject-authority reads. Whole school has no query per teacher or class. The original two-query reader and three-query clash pins are unchanged.
+
+All four views share **Print**. The button temporarily marks the body `timetable-printing`, calls browser print and removes the mark after print/unmount. A named `@page timetable-schedule` requests landscape and applies only to `.schedule-print`. Its print stylesheet hides chrome/control siblings while preserving the schedule's ancestors, removes internal horizontal scrolling, repeats both the document and grid headers, and allows Whole school to continue across pages. Screen grids scroll within their box with a sticky first column and logical RTL properties. App Bootstrap classes/theme variables supply colors. The source guard includes all touched SFCs; mounted tests prove the print call and CSS contract, not physical printer pagination or browser geometry.
+
+To use it: open Timetable, select a school year, choose a view and teacher/class/location if needed, commit an as-of date by leaving its box, and press Print. On Whole school, choose a day and toggle Teachers/Classes to see staffing or class coverage. The report at `artifacts/school-timetable-step3-report.md` records acceptance, security, SQL and verification evidence.
