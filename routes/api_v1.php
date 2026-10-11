@@ -24,6 +24,8 @@ use App\Http\Controllers\Api\V1\ZakatCalculatorController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
+    Route::post('/schools/{masjid_id}/duty-rotas/{rota_id}/{action}', [\App\Http\Controllers\Api\V1\DutyRotaClaimController::class, 'handle'])
+        ->where('action', 'page|claim|give-back')->middleware('throttle:duty-rota');
     Route::get('/home', [HomeController::class, 'index']);
     Route::get('/settings', [SettingController::class, 'index']);
 

@@ -49,6 +49,7 @@ class Form extends Model
      * assignment — an admin editing a form must never be able to rewrite the count.
      */
     protected $guarded = ['response_count'];
+    protected $hidden = ['has_duty_rota_records','duty_rota_enabled'];
 
     public function masjid()
     {

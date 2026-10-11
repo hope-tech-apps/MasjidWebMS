@@ -151,6 +151,11 @@ Route::get('/', function () {
  */
 Route::get('/storage/{missing}', fn () => abort(404))->where('missing', '.*');
 
+Route::get('/duty/{masjid_id}/{rota_id}', function ($masjid_id, $rota_id) {
+    abort_unless(\App\Support\DutyRotaMode::enabled(\App\Models\Masjid::find($masjid_id)), 404);
+    return response()->view('vue-app-index')->header('Referrer-Policy', 'no-referrer')->header('Cache-Control', 'no-store');
+})->whereNumber('masjid_id')->whereNumber('rota_id')->middleware('throttle:duty-rota');
+
 Route::get('/{any}', function () {
     return view('vue-app-index');
 })->where('any', '^(?!api).*$');

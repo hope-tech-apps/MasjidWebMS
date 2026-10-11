@@ -161,6 +161,7 @@ final class CapabilityWriter
         return DB::transaction(function () use ($org, $changes, $actor, $keys) {
             $locked = Masjid::query()->whereKey($org->getKey())->lockForUpdate()->firstOrFail();
             SchoolSettings::assertSubjectWorkChange($locked, $changes);
+            DutyRotaMode::switchChanged($locked, $changes);
             if (($changes['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($locked);
             if (($changes['class_subjects'] ?? null) === false) ClassSubjectDisabler::assertAllowed($locked);
 
@@ -171,7 +172,7 @@ final class CapabilityWriter
             $unchanged = [];
             foreach ($keys as $key) {
                 // Hidden no-op: do not materialize an override or an audit row.
-                if (in_array($key, ['class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'school_timetable'], true) && ! $locked->hasCapability($key) && $changes[$key] === false) {
+                if (in_array($key, ['class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'school_timetable', 'family_duty_rota'], true) && ! $locked->hasCapability($key) && $changes[$key] === false) {
                     $unchanged[] = $key;
                     continue;
                 }

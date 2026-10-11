@@ -96,6 +96,10 @@ return [
     | The value is the reason, printed by `--dry-run`.
     */
     'drop_rows' => [
+        'duty_rota_mails' => 'Clear private family duty email history and pending delivery records.',
+        'duty_rota_assignments' => 'Clear family duty assignments and their release history.',
+        'duty_rota_families' => 'Clear copied names, emails, phones, identity digests and private claim credentials.',
+        'duty_rotas' => 'Clear rota names and free-text reminder lines along with their families.',
         'guide_ask_counters' => 'Production organisation/period spending counts, no question or person data; staging has its own allowances and starts empty.',
         'guide_unanswered_questions' => 'Unanswered guide questions may contain personal data typed by the reader; platform-wide feedback, cleared in full.',
         // Broadcast send history: targeting lists (`audience_contact_ids` is a

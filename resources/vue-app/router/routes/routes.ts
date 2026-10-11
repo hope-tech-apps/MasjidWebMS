@@ -9,6 +9,7 @@ import lunchRoutes from "@/router/routes/lunchRoutes";
 import jummahLunchRoutes from "@/router/routes/jummahLunchRoutes";
 
 const routes: RouteRecordRaw[] = [
+    { path: '/duty/:masjidId(\\d+)/:rotaId(\\d+)', name: 'dutyClaim', component: () => import('@/views/public/DutyRotaClaim.vue'), meta: { pageTitle: 'Your duty days' } },
     {
         path: '/',
         name: 'home',

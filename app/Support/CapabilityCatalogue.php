@@ -166,7 +166,7 @@ final class CapabilityCatalogue
      */
     public static function visibility(string $key, array $def, string $orgType): string
     {
-        if (in_array($key, ['class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'school_timetable'], true)) {
+        if (in_array($key, ['class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'school_timetable', 'family_duty_rota'], true)) {
             return self::HIDDEN;
         }
 

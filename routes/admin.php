@@ -676,6 +676,20 @@ Route::prefix('admin')->group(function () {
                     });
                 });
 
+            Route::prefix('{masjid_id}/duty-rotas')->middleware('capability:family_duty_rota')
+                ->controller(\App\Http\Controllers\AdminDashboard\DutyRotaController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::post('/', 'store');
+                    Route::get('/{rota_id}', 'show');
+                    Route::put('/{rota_id}', 'update');
+                    Route::post('/{rota_id}/preview', 'preview');
+                    Route::post('/{rota_id}/build', 'build');
+                    Route::post('/{rota_id}/email', 'email');
+                    Route::post('/{rota_id}/families/{family_id}/link', 'link');
+                    Route::post('/{rota_id}/assignments', 'assignment');
+                    Route::get('/{rota_id}/export', 'export');
+                });
+
             Route::prefix('{masjid_id}/school-calendar')->middleware('capability:school_calendar')
                 ->controller(\App\Http\Controllers\AdminDashboard\SchoolCalendarController::class)
                 ->group(function () {

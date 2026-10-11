@@ -108,6 +108,14 @@ final class ClassSubjectMode
         return SchoolSettings::timetable($org);
     }
 
+    /** Reuse the organisation loaded by the existing capability-panel path. */
+    public static function familyDutyRotaEnabled(int $id): bool
+    {
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::withTrashed()->select(['id', 'org_type', 'capability_overrides', 'deleted_at'])->find($id);
+        return SchoolSettings::familyDutyRota($org);
+    }
+
     /** No schema lookup: an old SELECT * row simply has no hint before migration. */
     public static function timetableRecordsHeld(int $id): bool
     {
