@@ -103,10 +103,13 @@ test('teacher schedule week date commits once per week and stale reads cannot ov
         old.resolve({data:{data:data('2026-10-19')}});await flush();assert.match(s.text(),/October 26, 2026/);assert.doesNotMatch(s.text(),/October 19, 2026/);
     }finally{old.resolve({data:{data:data('2026-10-19')}});s.unmount();}
 });
-test('teacher schedule date waits for blur through native date changes while typing',async()=>{
+test('teacher schedule date loads on a complete date or Enter without leaving the box; a half-typed year waits',async()=>{
     const s=await screen();try {
         const input=s.all(n=>n.props.id==='schedule-week-date')[0];const count=s.calls.length;
-        for(const date of ['2026-10-19','2026-10-26','2026-11-02']) {type(input,date);input.props.onChange?.({target:input});await flush();}
-        assert.equal(s.calls.length,count);blur(input);await flush();assert.equal(s.calls.length,count+1);
+        for(const date of ['0002-10-19','0020-10-19','0202-10-19']) {type(input,date);input.props.onChange?.({target:input});await flush();}
+        assert.equal(s.calls.length,count,'years still being typed ask nothing');
+        type(input,'2026-10-19');input.props.onChange?.({target:input});await flush();assert.equal(s.calls.length,count+1,'a complete date loads without leaving the box');
+        input.props.onChange?.({target:input});blur(input);await flush();assert.equal(s.calls.length,count+1,'the same week is not asked for twice');
+        type(input,'2026-11-02');input.props.onKeydown?.({key:'Enter',target:input,preventDefault(){}});await flush();assert.equal(s.calls.length,count+2,'Enter loads');
     }finally{s.unmount();}
 });

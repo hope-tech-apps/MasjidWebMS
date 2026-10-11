@@ -21,7 +21,7 @@
                 <h2 id="schedule-week" class="h5">Week</h2>
                 <div class="week-picker">
                     <label for="schedule-week-date">Week containing</label>
-                    <input id="schedule-week-date" v-model="weekDate" type="date" class="form-control" @blur="commitWeek" />
+                    <input id="schedule-week-date" v-model="weekDate" type="date" class="form-control" @change="commitWeek(false)" @blur="commitWeek(true)" @keydown.enter.prevent="commitWeek(true)" />
                     <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="move(-7)">Previous week</button>
                     <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="load(null)">This week</button>
                     <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="move(7)">Next week</button>
@@ -81,8 +81,11 @@ const status = (meeting: ScheduleSlot): 'now' | 'next' | null => {
 };
 const dateLabel = (date: string, weekday = false) => formatSchoolDay(date, 'en-US',
     { month: 'long', day: 'numeric', year: 'numeric', ...(weekday ? { weekday: 'long' as const } : {}) });
-function commitWeek(): void {
+// A complete date loads as soon as the box reports it. While a year is still being typed the
+// box reports years like 0002 and 0020; those wait for Enter or leaving the box.
+function commitWeek(leaving: boolean): void {
     if (weekdayOfIso(weekDate.value) === null) return;
+    if (!leaving && weekDate.value < '2000-01-01') return;
     const date = new Date(`${weekDate.value}T12:00:00Z`);
     date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
     const week = date.toISOString().slice(0,10);

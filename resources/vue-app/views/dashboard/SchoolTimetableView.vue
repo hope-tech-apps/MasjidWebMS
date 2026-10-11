@@ -10,7 +10,7 @@
         </header>
         <p v-if="error" role="alert">{{ error }}</p>
         <p v-if="loading" role="status">Loading timetable…</p>
-        <button class="btn btn-outline-primary" v-if="error && !editor" type="button" @click="loadYear">Retry</button>
+        <button class="btn btn-outline-primary" v-if="error && !editor && !outOfYear" type="button" @click="loadYear">Retry</button>
         <p v-if="!loading && !years.length">Add a school year in School Calendar first.</p>
         <div v-if="setup && !loading">
             <div v-if="panel === 'setup'" class="tt-setup">
@@ -51,13 +51,13 @@
             <div v-else-if="panel === 'week'">
                 <div class="tt-toolbar">
                     <label for="tt-class">Class</label><select class="form-select" id="tt-class" v-model="classId" @change="loadWeek"><option v-for="g in setup.classes" :key="g.id" :value="g.id">{{ g.name }}</option></select>
-                    <label for="as-of">Showing the timetable as of</label><input class="form-control" id="as-of" v-model="asOf" type="date" :min="setup.year.first_day" :max="setup.year.last_day" @blur="commitAsOf" />
+                    <label for="as-of">Showing the timetable as of</label><input class="form-control" id="as-of" v-model="asOf" type="date" :min="setup.year.first_day" :max="setup.year.last_day" @change="commitAsOf(false)" @blur="commitAsOf(true)" @keydown.enter.prevent="commitAsOf(true)" />
                 </div>
                 <h2 v-if="selectedClass">{{ selectedClass.name }}</h2>
                 <p v-if="!setup.classes.length">Add a class first.</p>
                 <p v-if="weekLoading" role="status">Loading class week…</p>
-                <p v-if="emptyWeekReason" role="status">{{ emptyWeekReason }}</p>
-                <div v-else class="tt-grid-scroll" tabindex="0" aria-label="Class week, scroll to see other weekdays">
+                <p v-if="dayNotice" role="status">{{ dayNotice }}</p>
+                <div v-if="!dayNotice || week.meetings.length" class="tt-grid-scroll" tabindex="0" aria-label="Class week, scroll to see other weekdays">
                     <div class="tt-grid">
                         <section v-for="day in week.days" :key="day.weekday" class="tt-day">
                             <h2>{{ weekdays[day.weekday] }}</h2>
@@ -148,7 +148,7 @@ import { useMasjidStore } from '@/stores/masjidStore';
 const auth = useAuthStore(); const masjid = useMasjidStore();
 const enabled = computed(() => masjid.masjid?.capabilities?.school_timetable === true);
 const years = ref<any[]>([]); const yearId = ref<number | null>(null); const classId = ref<number | null>(null);
-const asOf = ref(''); const loadedDate = ref(''); const panel = ref('week'); const setup = ref<any>(null); const week = ref<any>({ days: [], meetings: [] }); const clashes = ref<any[]>([]);
+const asOf = ref(''); const loadedDate = ref(''); const outOfYear = ref(false); const panel = ref('week'); const setup = ref<any>(null); const week = ref<any>({ days: [], meetings: [] }); const clashes = ref<any[]>([]);
 const weekLoading = ref(false); const loading = ref(false); const saving = ref(false); const error = ref(''); const editor = ref(''); const draft = ref<any>({}); const warnings = ref<any[]>([]); const dialog = ref<HTMLElement | null>(null);
 const warningFingerprint = ref<string | null>(null);
 const warnedRequest = ref<any>(null);
@@ -164,10 +164,12 @@ const targetsFor = (day: number) => week.value.days.filter((d: any) => d.weekday
 const copyTargets = computed(() => targetsFor(draft.value.source_weekday));
 const dateLabel = (date: string) => formatSchoolDay(date, 'en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 const boundsMessage = () => `Pick a date between ${dateLabel(setup.value.year.first_day)} and ${dateLabel(setup.value.year.last_day)}.`;
-const emptyWeekReason = computed(() => {
-    if (week.value.meetings.length) return '';
-    if (week.value.state === 'closure') return `School is closed on ${dateLabel(loadedDate.value)}${week.value.reason ? ': ' + week.value.reason : '.'}`;
-    return week.value.state === 'non_meeting' ? `The school does not meet on ${dateLabel(loadedDate.value)}.` : '';
+// Said whether or not the class has meetings: the grid below is the recurring week as it
+// stands on that date, which would otherwise read as if school were on.
+const dayNotice = computed(() => {
+    const standing = week.value.meetings.length ? ' The week below is the timetable as it stands on that date.' : '';
+    if (week.value.state === 'closure') return `School is closed on ${dateLabel(loadedDate.value)}${week.value.reason ? ': ' + week.value.reason + '.' : '.'}${standing}`;
+    return week.value.state === 'non_meeting' ? `The school does not meet on ${dateLabel(loadedDate.value)}.${standing}` : '';
 });
 function clashSentence(c: any): string {
     const places = c.meetings.map((m: any) => `${m.group_name} (${m.label})`).join(' and ');
@@ -177,7 +179,11 @@ function clashSentence(c: any): string {
     return `${subject}: ${places}, ${weekdays[c.weekday]} ${time}.`;
 }
 let lastWeekKey = '';
-function commitAsOf() {
+const inYear = (date: string) => weekdayOfIso(date) !== null && date >= setup.value.year.first_day && date <= setup.value.year.last_day;
+// A complete in-year date loads as soon as the box reports it; a half-typed year waits for
+// Enter or leaving the box before it is refused, so typing never flashes the refusal.
+function commitAsOf(leaving: boolean) {
+    if (!leaving && !inYear(asOf.value)) return;
     const key = `${base.value}:${classId.value}:${asOf.value}`;
     if (key !== lastWeekKey) void loadWeek();
 }
@@ -211,9 +217,9 @@ async function loadWeek() {
     if (!enabled.value || !yearId.value || !asOf.value) return;
     const run = ++weekGeneration; const scope = base.value; const date = asOf.value;
     lastWeekKey = `${scope}:${classId.value}:${date}`;
-    error.value = ''; loadedDate.value = date;
-    if (weekdayOfIso(date) === null || date < setup.value.year.first_day || date > setup.value.year.last_day) {
-        weekLoading.value = false; week.value = { days: [], meetings: [] }; clashes.value = []; error.value = boundsMessage(); return;
+    error.value = ''; outOfYear.value = false; loadedDate.value = date;
+    if (!inYear(date)) {
+        weekLoading.value = false; week.value = { days: [], meetings: [] }; clashes.value = []; error.value = boundsMessage(); outOfYear.value = true; return;
     }
     weekLoading.value = true; week.value = { days: [], meetings: [] }; clashes.value = [];
     try {
@@ -288,6 +294,8 @@ onBeforeUnmount(() => { ++generation; ++weekGeneration; if (typeof document !== 
 .timetable-page { min-width: 0; max-width: 100%; padding: 1rem; overflow-wrap: anywhere; }
 .tt-toolbar { display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; margin-block-end: 1rem; }
 .tt-toolbar h1 { margin-inline-end: auto; }
+.tt-toolbar label { margin: 0; white-space: nowrap; }
+.tt-toolbar > .form-select, .tt-toolbar > .form-control { width: auto; flex: 0 1 16rem; }
 button, input, select { min-height: 44px; max-width: 100%; border-radius: .4rem; }
 button { margin: .2rem; }
 button:disabled { opacity: .55; }

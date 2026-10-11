@@ -14,7 +14,7 @@ async function screen(on = true, zeroRooms = false, options: any = {}) {
     if (zeroRooms) { data.rooms = []; data.classes[0].room_id = null; week.meetings[0].room_id = null; week.meetings[0].room_name = null; }
     if (options.sameSet) week.days[1].period_set_id = 1;
     if (options.oneDay) week.days.splice(1);
-    if (options.state) Object.assign(week, options.state, { meetings: [] });
+    if (options.state) Object.assign(week, options.state, options.keepMeetings ? {} : { meetings: [] });
     const calls: any[] = []; let conflict = false; let confirmationRound = 0; let hold = false; let release: (() => void) | null = null;
     const api = { get: async (url: string) => { calls.push({ method: 'get', url }); if ((url.includes('/clashes') || url.includes('/week')) && options.read) await options.read(url); if (url.includes('/week') && hold) await new Promise<void>(resolve => { release = resolve; }); return { data: { data: url.includes('/week') ? (options.weekAt?.(url,week) ?? week) : url.includes('/clashes') ? [clash] : data } }; }, post: async (url: string, body: any) => { calls.push({ method: 'post', url, body }); if (conflict && (!body.confirm_clashes || confirmationRound++ === 0)) throw httpError(409, { clashes: body.confirm_clashes ? [{ ...clash, name: 'Practice New Clash' }] : [clash], clash_fingerprint: body.confirm_clashes ? 'b'.repeat(64) : 'a'.repeat(64) }); return { data: { data: {} } }; }, put: async (url: string, body: any) => { calls.push({ method: 'put', url, body }); return { data: { data: {} } }; }, deleteWithBody: async (url: string, body: any) => { calls.push({ method: 'delete', url, body }); return { data: { data: {} } }; }, delete: async (url: string, body: any) => { calls.push({ method: 'delete', url, body }); return { data: { data: {} } }; } };
     const dates = await loadTs('core/types/data/masjid-related/SchoolCalendar.ts', {});
@@ -128,6 +128,24 @@ test('Timetable copy only appears for another day with the same set', async () =
         }finally{s.unmount();}
     }
 });
+test('Timetable re-walk: a closure or non-meeting date is said above a class week that has meetings',async()=>{
+    for(const state of [{state:'non_meeting',reason:null},{state:'closure',reason:'Planning day'}]) {
+        const s=await screen(true,false,{state,keepMeetings:true});try {
+            assert.match(s.text(),state.state==='closure'?/School is closed on .*Planning day\./:/The school does not meet on /);
+            assert.match(s.text(),/The week below is the timetable as it stands on that date\./);assert.match(s.text(),/Science/,'the standing week is still drawn');
+        }finally{s.unmount();}
+    }
+});
+test('Timetable re-walk: a typed in-year date loads on change or Enter, a half-typed year waits, and a bounds refusal offers no Retry',async()=>{
+    const s=await screen();try {
+        const input=s.all(n=>n.props.id==='as-of')[0];const count=s.calls.length;
+        for(const date of ['0002-11-01','0020-11-01','0202-11-01']) {type(input,date);input.props.onChange?.({target:input});await flush();}
+        assert.equal(s.calls.length,count);assert.doesNotMatch(s.text(),/Pick a date/,'typing never flashes the refusal');
+        type(input,'2026-11-02');input.props.onChange?.({target:input});await flush();assert.equal(s.calls.length,count+1);
+        type(input,'2026-11-09');input.props.onKeydown?.({key:'Enter',target:input,preventDefault(){}});await flush();assert.equal(s.calls.length,count+2);
+        type(input,'2030-01-07');blur(input);await flush();assert.equal(s.calls.length,count+2);assert.match(s.text(),/Pick a date between/);assert.doesNotMatch(s.text(),/Retry/);
+    }finally{s.unmount();}
+});
 test('Timetable closed and non-meeting as-of states explain empty week without placement buttons',async()=>{
     for(const state of [{state:'non_meeting',reason:null},{state:'closure',reason:'Planning day'}]) {
         const s=await screen(true,false,{state});try {assert.match(s.text(),state.state==='closure'?/Planning day/:/The school does not meet/);assert.doesNotMatch(s.text(),/Place meeting/);}finally{s.unmount();}
@@ -176,13 +194,13 @@ test('Timetable committed as-of date fetches week and clashes in one HTTP read',
         assert.equal(s.calls.length,count+1);assert.match(s.calls.at(-1).url,/\/week\?.*include_clashes=1/);assert.match(s.text(),/Clashes \(1\)/);
     }finally{s.unmount();}
 });
-test('Timetable date waits for blur even when a native date change fires while typing',async()=>{
+test('Timetable date asks once per complete in-year date and never again on leaving the box',async()=>{
     const s=await screen();try {
         const input=s.all(n=>n.props.id==='as-of')[0];const count=s.calls.length;
         for(const date of ['2026-11-01','2026-11-02','2026-11-22']) {
             type(input,date);input.props.onChange?.({target:input});await flush();
         }
-        assert.equal(s.calls.length,count);blur(input);await flush();assert.equal(s.calls.length,count+1);
+        assert.equal(s.calls.length,count+3);blur(input);await flush();assert.equal(s.calls.length,count+3);
     }finally{s.unmount();}
 });
 
