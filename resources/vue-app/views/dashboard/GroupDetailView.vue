@@ -34,7 +34,15 @@
 
                 <div v-else-if="group">
                     <!-- Header -->
-                    <div class="d-flex flex-wrap align-items-center gap-2 mb-4">
+                    <div v-if="timetableOn" class="d-flex flex-wrap align-items-center gap-2 mb-4">
+                        <span class="badge bg-light text-dark border text-capitalize">{{ group.kind }}</span>
+                        <span v-if="group.is_active" class="badge bg-success-subtle text-success">Active</span>
+                        <span v-else class="badge bg-secondary-subtle text-secondary">Inactive</span>
+                        <span class="text-muted small font-monospace">{{ group.slug }}</span>
+                        <span v-if="group.description" class="text-muted small ms-2">{{ group.description }}</span>
+                        <ClassLocationField :base="subjectBase" />
+                    </div>
+                    <div v-else class="d-flex flex-wrap align-items-center gap-2 mb-4">
                         <span class="badge bg-light text-dark border text-capitalize">{{ group.kind }}</span>
                         <span v-if="group.is_active" class="badge bg-success-subtle text-success">Active</span>
                         <span v-else class="badge bg-secondary-subtle text-secondary">Inactive</span>
@@ -176,6 +184,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onBeforeMount } from 'vue';
+import ClassLocationField from '@/components/classes/ClassLocationField.vue';
 import { useRoute } from 'vue-router';
 import { AxiosError } from 'axios';
 import PageDataContainer from '@/components/PageDataContainer.vue';
@@ -268,6 +277,8 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
 
 // Computed
 const groupsTerm = computed<string>(() => masjidStore.term('groups'));
+
+const timetableOn = computed(() => group.value?.kind === 'class' && masjidStore.masjid?.capabilities?.school_timetable === true);
 
 const pageTitle = computed<string>(() => group.value?.name || groupsTerm.value);
 

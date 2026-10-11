@@ -296,11 +296,13 @@ class MasjidsController extends Controller
 
         $masjid = Masjid::findOrFail($masjid_id);
 
-        CapabilityWriter::apply($masjid, [$capability => $request->boolean('enabled')], (int) Auth::id());
+        $outcome = CapabilityWriter::apply($masjid, [$capability => $request->boolean('enabled')], (int) Auth::id());
 
+        $data = $masjid->fresh()->append(Masjid::ADMIN_APPENDS);
+        if (array_key_exists('timetable_ended_meetings', $outcome)) $data->setAttribute('timetable_ended_meetings', $outcome['timetable_ended_meetings']);
         return response()->json([
             'status' => 'success',
-            'data' => $masjid->fresh()->append(Masjid::ADMIN_APPENDS),
+            'data' => $data,
         ], Response::HTTP_OK);
     }
 

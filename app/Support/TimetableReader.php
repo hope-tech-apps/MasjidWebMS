@@ -33,7 +33,7 @@ final class TimetableReader
             foreach (['room_id','resolved_room_id','class_subject_id'] as $key) $m[$key]=$m[$key]===null?null:(int)$m[$key];
             foreach (['effective_from','effective_until','year_last_day'] as $key) if ($m[$key]!==null) $m[$key]=substr($m[$key],0,10);
             foreach (['starts_at','ends_at'] as $key) $m[$key]=substr($m[$key],0,5);
-            $m['label']=$m['kind']==='subject'?$m['subject_name']:($m['kind']==='activity'?$m['activity_name']:'Whole class');
+            $m['label']=$m['kind']==='subject'?$m['subject_name']:($m['kind']==='activity'?$m['activity_name']:$m['group_name']);
             $m['teachers']=($teachers[$m['id']]??collect())->map(fn($t)=>['id'=>(int)$t->id,'name'=>$t->name])->all();
             unset($m['created_at'],$m['updated_at'],$m['masjid_id']);
             return $m;
@@ -44,7 +44,7 @@ final class TimetableReader
     {
         return DB::table('group_memberships as gm')->join('groups as g','g.id','=','gm.group_id')
             ->join('contacts as c','c.id','=','gm.contact_id')->where('gm.masjid_id',$school)->where('g.masjid_id',$school)->where('c.masjid_id',$school)
-            ->where('gm.role','member')->select(['gm.group_id','gm.contact_id','gm.created_at','gm.moved_on','gm.moved_from_group_id','gm.left_on','c.first_name','c.last_name'])->get()
+            ->where('gm.role','member')->select(['gm.group_id','gm.contact_id','gm.created_at','gm.joined_at','gm.moved_on','gm.moved_from_group_id','gm.left_on','c.first_name','c.last_name'])->get()
             ->map(fn($r)=>(array)$r)->all();
     }
 
@@ -70,8 +70,8 @@ final class TimetableReader
             if ($a['resolved_room_id']!==null && $a['resolved_room_id']===$b['resolved_room_id']) $add('room',$a['resolved_room_id'],$a['room_name'],$first,$last);
             foreach ($students[$a['group_id']]??[] as $ra) foreach ($students[$b['group_id']]??[] as $rb) {
                 if ((int)$ra['contact_id']!==(int)$rb['contact_id']) continue;
-                $startA=substr(($ra['moved_from_group_id']!==null?$ra['moved_on']:null)??$ra['created_at'],0,10);
-                $startB=substr(($rb['moved_from_group_id']!==null?$rb['moved_on']:null)??$rb['created_at'],0,10);
+                $startA=\App\Models\GroupMembership::membershipStart($ra);
+                $startB=\App\Models\GroupMembership::membershipStart($rb);
                 $sf=max($first,$startA,$startB); $sl=$last;
                 foreach ([$ra,$rb] as $r) if ($r['left_on']!==null) $sl=min($sl,\Carbon\CarbonImmutable::parse($r['left_on'])->subDay()->toDateString());
                 if ($asOf!==null && ($asOf<$sf || $asOf>$sl)) continue;

@@ -164,6 +164,7 @@ final class CapabilityWriter
             if (($changes['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($locked);
             if (($changes['class_subjects'] ?? null) === false) ClassSubjectDisabler::assertAllowed($locked);
 
+            $timetableEnded = TimetableReenable::reconcile($locked, $changes);
             $overrides = is_array($locked->capability_overrides) ? $locked->capability_overrides : [];
             $flips = [];
 
@@ -206,7 +207,7 @@ final class CapabilityWriter
             // rebuild the entry from rows that are about to vanish.
             DB::afterCommit(fn () => MobileCache::flushFamily($locked));
 
-            return ['changed' => $changed, 'unchanged' => $unchanged];
+            return ['changed' => $changed, 'unchanged' => $unchanged]+($timetableEnded === null ? [] : ['timetable_ended_meetings'=>$timetableEnded]);
         });
     }
 

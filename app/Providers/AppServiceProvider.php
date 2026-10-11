@@ -84,15 +84,28 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->registerFamilyGuard();
 
+        foreach ([\App\Models\TimetablePeriodSet::class, \App\Models\TimetablePeriod::class, \App\Models\TimetableDay::class,
+            \App\Models\TimetableClassDay::class, \App\Models\TimetableRoom::class, \App\Models\TimetableClassRoom::class,
+            \App\Models\TimetableMeeting::class, \App\Models\TimetableMeetingTeacher::class] as $model) {
+            $model::deleted(fn ($row) => \App\Support\TimetableRetention::instance()->refreshSchool((int) $row->masjid_id));
+            $model::created(fn ($row) => \App\Support\TimetableRetention::instance()->mark((int) $row->masjid_id, $row instanceof \App\Models\TimetableMeetingTeacher ? (int) $row->user_id : null));
+        }
+        \App\Models\TimetableMeetingTeacher::deleted(fn ($row) => \App\Support\TimetableRetention::instance()->refreshAccounts([(int) $row->user_id]));
+        \App\Models\TimetableMeeting::deleting(function ($row) {
+            $row->setAttribute('removed_teacher_ids', \Illuminate\Support\Facades\DB::table('timetable_meeting_teachers')->where('meeting_id', $row->id)->pluck('user_id')->all());
+        });
+        \App\Models\TimetableMeeting::deleted(fn ($row) => \App\Support\TimetableRetention::instance()->refreshAccounts($row->getAttribute('removed_teacher_ids') ?? []));
+        \App\Models\TimetableRoom::deleting(fn ($row) => \App\Support\TimetableDeletion::refuseRoom($row->id, $row->masjid_id));
+
         // Model deletes retain timetable history; bulk school removal is also fenced at its controller.
         \App\Models\Group::deleting(fn ($row) => \App\Support\TimetableDeletion::refuse('group_id', $row->id, $row->masjid_id));
         \App\Models\ClassSubject::deleting(fn ($row) => \App\Support\TimetableDeletion::refuse('class_subject_id', $row->id, $row->masjid_id));
         \App\Models\User::updating(function ($row) {
             if ($row->isDirty('type') && $row->getOriginal('type') === 'Teacher' && $row->type !== 'Teacher') {
-                \App\Support\TimetableDeletion::refuseAccount($row->id);
+                \App\Support\TimetableDeletion::refuseAccount($row);
             }
         });
-        \App\Models\User::deleting(fn ($row) => \App\Support\TimetableDeletion::refuseAccount($row->id));
+        \App\Models\User::deleting(fn ($row) => \App\Support\TimetableDeletion::refuseAccount($row));
         \App\Models\MasjidUser::deleting(fn ($row) => \App\Support\TimetableDeletion::refuse('user_id', $row->user_id, $row->masjid_id));
 
         \App\Models\ClassSubject::updating(function ($row) {
@@ -108,7 +121,7 @@ class AppServiceProvider extends ServiceProvider
             }
         });
         \App\Models\SchoolYear::deleting(function ($row) {
-            if (\App\Support\ClassSubjectMode::timetableEnabled($row->masjid_id) && \App\Models\TimetablePeriodSet::where('school_year_id', $row->id)->exists()) {
+            if (\App\Support\TimetableRetention::instance()->school($row->masjid_id) && \App\Models\TimetablePeriodSet::where('school_year_id', $row->id)->exists()) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['year' => ['Keep this school year while it has timetable period sets.']]);
             }
         });

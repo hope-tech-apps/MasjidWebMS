@@ -9530,3 +9530,12 @@ Owner decisions implemented: inclusive today..today+27 ON form offers, collapsed
 - School timetable office roles follow the calendar (MasjidAdmin and SuperAdmin); no extra contact permission. Office words follow existing English-only screens.
 
 Timetable final review: account delete/access guards return without timetable SQL in a bound OFF school; in enabled schools or unbound global account operations they check references across schools, because users.type is global. School membership removal stays scoped to that school. Red/green evidence: artifacts/timetable-off-account-{red,green}.log.
+
+## Timetable review fixes — 2026-10-11
+- Supersedes the step-one unbound-account query and roster-date decisions: hidden durable school/account retention hints provide query-free unused OFF paths even before migration; model writers/backfill maintain them. Data protection survives switch-off. Raw database comparisons assert additive flags are zero and project only those columns away; existing fixtures stay unchanged.
+- Removal only shortens a range. A change after the addressed row's end refuses in words and asks the office to choose the live row; never silently retarget.
+- Clash confirmation binds the normalized reviewed request and canonical warning list by HMAC. Changed or vanished warnings return a fresh 409. Copies bind the whole batch and roll back tentative inserts.
+- Roster joining day reuses GroupMembership's existing joined_at date cast; arrival move day then creation day are fallbacks, leaving remains exclusive. Protected legacy attendance and teacher OFF method bodies stay verbatim. Timetable ON teacher removal reuses the organisation-locked removal branch.
+- Re-enable under the organisation lock ends invalid ongoing/future meetings from today for hidden/missing subjects, archived/inactive classes, absent teachers, removed weekdays and missing/mismatched period sets. Keep earlier history and report the count; do not reopen on restore.
+- Optional Location in the class header picks or creates a school location and assigns it in one organisation-locked save without a school year. Clearing keeps the location. Slots identify classes; all office room wording is Location.
+- Delete the renderer-only phone-width test; actual browser layout remains unverified.

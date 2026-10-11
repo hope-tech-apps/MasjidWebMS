@@ -134,6 +134,20 @@ class GroupMembership extends Model
      * says a consent was copied by a move and from which class, and only
      * `carriedFrom()` sets it. See THE MARKER below.
      */
+    /** The office's recorded joining day is authoritative, as in the attendance clip. */
+    public static function joiningDate(array $attributes): ?string
+    {
+        // Use the existing joined_at date cast read by the attendance clip and roster moves.
+        return (new self())->setRawAttributes($attributes)->joined_at?->toDateString();
+    }
+
+    /** A missing joining day falls back to arriving on a move, then the roster row's creation. */
+    public static function membershipStart(array $attributes): string
+    {
+        return self::joiningDate($attributes) ?? substr((string) (($attributes['moved_from_group_id'] ?? null) !== null
+            ? ($attributes['moved_on'] ?? $attributes['created_at']) : $attributes['created_at']), 0, 10);
+    }
+
     protected $fillable = [
         'masjid_id',
         'group_id',

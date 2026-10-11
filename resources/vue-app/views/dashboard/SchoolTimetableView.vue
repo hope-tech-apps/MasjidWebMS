@@ -29,18 +29,19 @@
                     <label :for="'school-day-' + day">{{ weekdays[day] }}</label>
                     <select :id="'school-day-' + day" :value="schoolSet(day)" @change="saveDay(day, numberValue($event))"><option value="">Choose a set</option><option v-for="s in setup.sets" :key="s.id" :value="s.id">{{ s.name }}</option></select>
                 </div>
-                <h2>Rooms</h2>
-                <button type="button" @click="editRoom()">Add room</button>
+                <h2>Locations</h2>
+                <p>Locations are optional. The timetable uses class names; you can add a location later on the class page.</p>
+                <button type="button" @click="editRoom()">Add location</button>
                 <article v-for="room in setup.rooms" :key="room.id">
                     <p>{{ room.name }}<span v-if="room.capacity"> · Capacity {{ room.capacity }}</span> · {{ room.active ? 'Active' : 'Inactive' }}</p>
                     <button type="button" @click="editRoom(room)">Edit {{ room.name }}</button>
                     <button type="button" @click="removeRoom(room)">Remove {{ room.name }}</button>
                 </article>
-                <h2>Class rooms and period sets</h2>
+                <h2>Class locations and period sets</h2>
                 <article v-for="g in setup.classes" :key="g.id">
                     <h3>{{ g.name }}</h3>
-                    <label :for="'usual-room-' + g.id">Usual room</label>
-                    <select :id="'usual-room-' + g.id" :value="g.room_id ?? ''" @change="saveUsualRoom(g.id, numberValue($event))"><option value="">No usual room</option><option v-for="r in activeRooms" :key="r.id" :value="r.id">{{ r.name }}</option></select>
+                    <label :for="'usual-room-' + g.id">Location (optional)</label>
+                    <select :id="'usual-room-' + g.id" :value="g.room_id ?? ''" @change="saveUsualRoom(g.id, numberValue($event))"><option value="">No location</option><option v-for="r in activeRooms" :key="r.id" :value="r.id">{{ r.name }}</option></select>
                     <div v-for="day in setup.weekdays" :key="day" class="tt-field">
                         <label :for="'class-day-' + g.id + '-' + day">{{ weekdays[day] }} period set</label>
                         <select :id="'class-day-' + g.id + '-' + day" :value="classSet(g.id, day) ?? ''" @change="saveDay(day, numberValue($event), g.id)"><option value="">School's set</option><option v-for="s in setup.sets" :key="s.id" :value="s.id">{{ s.name }}</option></select>
@@ -52,6 +53,7 @@
                     <label for="tt-class">Class</label><select id="tt-class" v-model="classId" @change="loadWeek"><option v-for="g in setup.classes" :key="g.id" :value="g.id">{{ g.name }}</option></select>
                     <label for="as-of">Showing the timetable as of</label><input id="as-of" v-model="asOf" type="date" />
                 </div>
+                <h2 v-if="selectedClass">{{ selectedClass.name }}</h2>
                 <p v-if="!setup.classes.length">Add a class first.</p>
                 <p v-if="weekLoading" role="status">Loading class week…</p>
                 <div class="tt-grid-scroll" tabindex="0" aria-label="Class week, scroll to see other weekdays">
@@ -64,7 +66,7 @@
                                 <div v-if="cell(day.weekday, p.id)">
                                     <button type="button" @click="editMeeting(day.weekday, p, cell(day.weekday, p.id))">{{ cell(day.weekday, p.id).label }}</button>
                                     <p>{{ cell(day.weekday, p.id).teachers.map((t: any) => t.name).join(', ') || 'No teachers' }}</p>
-                                    <p>{{ cell(day.weekday, p.id).room_name || 'No room' }}</p>
+                                    <p v-if="cell(day.weekday, p.id).room_name">{{ cell(day.weekday, p.id).room_name }}</p>
                                 </div>
                                 <button v-else type="button" @click="editMeeting(day.weekday, p)">Place meeting</button>
                             </article>
@@ -76,16 +78,17 @@
             <div v-else>
                 <h2>Clashes</h2><p>Showing clashes as of {{ asOf }}. The office can save a meeting after reviewing its clashes.</p>
                 <p v-if="!clashes.length">No clashes.</p>
-                <ul class="tt-clash-list"><li v-for="(c, i) in clashes" :key="i"><strong>{{ c.kind }}: {{ c.name }}</strong><p>{{ weekdays[c.weekday] }} · {{ c.effective_from }} to {{ c.effective_until }}</p><p v-for="(m, j) in c.meetings" :key="j">{{ m.group_name }} · {{ m.label }} · <bdi dir="ltr">{{ m.starts_at }}–{{ m.ends_at }}</bdi></p></li></ul>
+                <ul class="tt-clash-list"><li v-for="(c, i) in clashes" :key="i"><strong>{{ c.kind === 'room' ? 'Location' : c.kind }}: {{ c.name }}</strong><p>{{ weekdays[c.weekday] }} · {{ c.effective_from }} to {{ c.effective_until }}</p><p v-for="(m, j) in c.meetings" :key="j">{{ m.group_name }} · {{ m.label }} · <bdi dir="ltr">{{ m.starts_at }}–{{ m.ends_at }}</bdi></p></li></ul>
             </div>
         </div>
         <div v-if="editor" class="tt-dialog-backdrop">
             <section class="tt-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-editor-title" tabindex="-1" ref="dialog">
                 <h2 id="tt-editor-title">{{ editorTitle }}</h2>
+                <p v-if="selectedClass && ['meeting', 'copy', 'remove-meeting'].includes(editor)">{{ selectedClass.name }}</p>
                 <p v-if="error" role="alert">{{ error }}</p>
                 <div v-if="warnings.length">
                     <h3>Review these clashes</h3>
-                    <ul class="tt-clash-list"><li v-for="(c, i) in warnings" :key="i"><strong>{{ c.kind }}: {{ c.name }}</strong><p>{{ weekdays[c.weekday] }} · {{ c.effective_from }} to {{ c.effective_until }}</p><p v-for="(m, j) in c.meetings" :key="j">{{ m.group_name }} · {{ m.label }} · <bdi dir="ltr">{{ m.starts_at }}–{{ m.ends_at }}</bdi></p></li></ul>
+                    <ul class="tt-clash-list"><li v-for="(c, i) in warnings" :key="i"><strong>{{ c.kind === 'room' ? 'Location' : c.kind }}: {{ c.name }}</strong><p>{{ weekdays[c.weekday] }} · {{ c.effective_from }} to {{ c.effective_until }}</p><p v-for="(m, j) in c.meetings" :key="j">{{ m.group_name }} · {{ m.label }} · <bdi dir="ltr">{{ m.starts_at }}–{{ m.ends_at }}</bdi></p></li></ul>
                     <button type="button" :disabled="saving" @click="save(true)">Save anyway</button><button type="button" :disabled="saving" @click="warnings = []">Go back</button>
                 </div>
                 <form v-else @submit.prevent="save(false)">
@@ -103,17 +106,17 @@
                         <button type="button" @click="draft.periods.push({ name: '', starts_at: '08:00', ends_at: '09:00', kind: 'teaching' })">Add period</button>
                     </div>
                     <div v-else-if="editor === 'room'">
-                        <label for="room-name">Room name</label><input id="room-name" v-model="draft.name" maxlength="60" required />
+                        <label for="room-name">Location name</label><input id="room-name" v-model="draft.name" maxlength="60" required />
                         <label for="room-capacity">Capacity (optional)</label><input id="room-capacity" v-model="draft.capacity" type="number" min="1" max="100000" />
                         <label><input v-model="draft.active" type="checkbox" /> Active</label>
                     </div>
                     <div v-else-if="editor === 'meeting'">
-                        <label for="meeting-kind">Meeting</label><select id="meeting-kind" v-model="draft.kind" @change="defaultTeachers"><option v-if="setup.class_subjects_enabled && draft.periodKind === 'teaching'" value="subject">Subject</option><option value="activity">Activity</option><option v-if="!setup.class_subjects_enabled" value="class">Whole class</option></select>
+                        <label for="meeting-kind">Meeting</label><select id="meeting-kind" v-model="draft.kind" @change="defaultTeachers"><option v-if="setup.class_subjects_enabled && draft.periodKind === 'teaching'" value="subject">Subject</option><option value="activity">Activity</option><option v-if="!setup.class_subjects_enabled" value="class">{{ selectedClass?.name }}</option></select>
                         <div v-if="draft.kind === 'subject'"><label for="meeting-subject">Subject</label><select id="meeting-subject" v-model="draft.class_subject_id" @change="defaultTeachers"><option v-for="s in selectedClass?.subjects ?? []" :key="s.id" :value="s.id">{{ s.name }}</option></select></div>
                         <div v-if="draft.kind === 'activity'"><label for="activity-name">Activity name</label><input id="activity-name" v-model="draft.activity_name" maxlength="60" required /></div>
                         <fieldset><legend>Teachers</legend><label v-for="t in setup.teachers" :key="t.id" class="tt-check"><input v-model="draft.teacher_ids" type="checkbox" :value="t.id" /> {{ t.name }}</label></fieldset>
                         <p v-if="draft.kind === 'activity'">An activity may have no teachers.</p>
-                        <label for="meeting-room">Room</label><select id="meeting-room" v-model="draft.room_id"><option :value="null">Class's usual room{{ usualRoomName ? ': ' + usualRoomName : '' }}</option><option v-for="r in activeRooms" :key="r.id" :value="r.id">{{ r.name }}</option></select>
+                        <label for="meeting-room">Location (optional)</label><select id="meeting-room" v-model="draft.room_id"><option :value="null">Class's location{{ usualRoomName ? ': ' + usualRoomName : '' }}</option><option v-for="r in activeRooms" :key="r.id" :value="r.id">{{ r.name }}</option></select>
                     </div>
                     <div v-else-if="editor === 'copy'">
                         <p>Copy {{ weekdays[draft.source_weekday] }} to other weekdays with the same period set.</p>
@@ -141,13 +144,15 @@ const enabled = computed(() => masjid.masjid?.capabilities?.school_timetable ===
 const years = ref<any[]>([]); const yearId = ref<number | null>(null); const classId = ref<number | null>(null);
 const asOf = ref(''); const panel = ref('week'); const setup = ref<any>(null); const week = ref<any>({ days: [], meetings: [] }); const clashes = ref<any[]>([]);
 const weekLoading = ref(false); const loading = ref(false); const saving = ref(false); const error = ref(''); const editor = ref(''); const draft = ref<any>({}); const warnings = ref<any[]>([]); const dialog = ref<HTMLElement | null>(null);
+const warningFingerprint = ref<string | null>(null);
+const warnedRequest = ref<any>(null);
 const weekdays = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const root = computed(() => `/api/admin/masjids/${auth.dashboardMasjidId}/timetable`);
 const base = computed(() => `${root.value}/years/${yearId.value}`);
 const selectedClass = computed(() => setup.value?.classes.find((g: any) => g.id === Number(classId.value)));
 const activeRooms = computed(() => setup.value?.rooms.filter((r: any) => r.active) ?? []);
 const usualRoomName = computed(() => setup.value?.rooms.find((r: any) => r.id === selectedClass.value?.room_id)?.name);
-const editorTitle = computed(() => ({ set: 'Period set', room: 'Room', meeting: draft.value.id ? 'Change meeting' : 'Place meeting', copy: 'Copy this day', 'remove-meeting': 'Remove meeting', 'remove-set': 'Remove period set', 'remove-room': 'Remove room' }[editor.value] ?? 'Timetable'));
+const editorTitle = computed(() => ({ set: 'Period set', room: 'Location', meeting: draft.value.id ? 'Change meeting' : 'Place meeting', copy: 'Copy this day', 'remove-meeting': 'Remove meeting', 'remove-set': 'Remove period set', 'remove-room': 'Remove location' }[editor.value] ?? 'Timetable'));
 const copyTargets = computed(() => week.value.days.filter((d: any) => d.weekday !== draft.value.source_weekday && d.period_set_id === week.value.days.find((s: any) => s.weekday === draft.value.source_weekday)?.period_set_id).map((d: any) => d.weekday));
 let generation = 0; let weekGeneration = 0; let restoreFocus: HTMLElement | null = null;
 function message(e: any): string { const body = e?.response?.data; return Object.values(body?.data ?? {}).flat().filter(v => typeof v === 'string').join(' ') || body?.message || 'The timetable could not be saved or loaded. Try again.'; }
@@ -184,8 +189,8 @@ async function loadWeek() {
     } catch (e) { if (run === weekGeneration) { week.value = { days: [], meetings: [] }; error.value = message(e); } }
     finally { if (run === weekGeneration) weekLoading.value = false; }
 }
-function openEditor(kind: string, data: any) { restoreFocus = typeof document !== 'undefined' ? document.activeElement as HTMLElement : null; error.value = ''; warnings.value = []; editor.value = kind; draft.value = data; nextTick(() => dialog.value?.focus?.()); }
-function closeEditor() { editor.value = ''; warnings.value = []; restoreFocus?.focus?.(); }
+function openEditor(kind: string, data: any) { restoreFocus = typeof document !== 'undefined' ? document.activeElement as HTMLElement : null; error.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; editor.value = kind; draft.value = data; nextTick(() => dialog.value?.focus?.()); }
+function closeEditor() { editor.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; restoreFocus?.focus?.(); }
 function fromDate() { return [setup.value?.today ?? asOf.value, setup.value?.year?.first_day ?? ''].sort().at(-1); }
 function editSet(set?: any) { openEditor('set', set ? JSON.parse(JSON.stringify(set)) : { name: '', periods: [] }); }
 function editRoom(room?: any) { openEditor('room', room ? { ...room } : { name: '', capacity: '', active: true }); }
@@ -197,7 +202,7 @@ function editMeeting(day: number, period: any, meeting?: any) {
 }
 function editCopy(day: number) { openEditor('copy', { group_id: Number(classId.value), source_weekday: day, target_weekdays: [], as_of: asOf.value, effective_from: fromDate() }); }
 function removeSet(s: any) { openEditor('remove-set', { id: s.id, confirmText: `Remove ${s.name}? Period sets with meetings are kept.` }); }
-function removeRoom(r: any) { openEditor('remove-room', { id: r.id, confirmText: `Remove ${r.name}? Rooms with meetings are kept.` }); }
+function removeRoom(r: any) { openEditor('remove-room', { id: r.id, confirmText: `Remove ${r.name}? Locations with meetings are kept.` }); }
 async function simpleWrite(url: string, data: any) { saving.value = true; error.value = ''; try { await ApiService.put(url as any,data); await loadYear(); } catch(e) { error.value = message(e); } finally { saving.value = false; } }
 function saveDay(day: number, id: number | null, group?: number) { return simpleWrite(`${base.value}/days`, { group_id: group ?? null, days: [{ weekday: day, period_set_id: id }] }); }
 function saveUsualRoom(group: number, room: number | null) { return simpleWrite(`${base.value}/classes/${group}/room`, { room_id: room }); }
@@ -211,12 +216,13 @@ async function save(confirm: boolean) {
     else if (editor.value === 'copy') { url = `${base.value}/copy-day`; method = 'post'; body = { ...d, confirm_clashes: confirm }; }
     else if (editor.value === 'meeting') { url = `${base.value}/meetings${d.id ? '/' + d.id : ''}`; body = { group_id: d.group_id, weekday: d.weekday, period_id: d.period_id, kind: d.kind, class_subject_id: d.kind === 'subject' ? Number(d.class_subject_id) : null, activity_name: d.kind === 'activity' ? d.activity_name : null, room_id: d.room_id === null || d.room_id === '' ? null : Number(d.room_id), teacher_ids: d.teacher_ids.map(Number), effective_from: d.effective_from, confirm_clashes: confirm }; }
     else { method = 'delete'; url = `${base.value}/${editor.value === 'remove-set' ? 'sets' : editor.value === 'remove-room' ? 'rooms' : 'meetings'}/${d.id}`; body = editor.value === 'remove-meeting' ? { effective_from: d.effective_from } : null; }
+    if (confirm && warnedRequest.value) { body = { ...warnedRequest.value.body, confirm_clashes: true, clash_fingerprint: warningFingerprint.value }; url = warnedRequest.value.url; method = warnedRequest.value.method; }
     try {
         if (method === 'delete') { if (body) await ApiService.deleteWithBody(url as any,body); else await ApiService.delete(url as any); }
         else if (method === 'put') await ApiService.put(url as any,body); else await ApiService.post(url as any,body);
         if (scope !== base.value || run !== generation || !enabled.value) return;
         closeEditor(); await loadYear();
-    } catch(e: any) { if (scope !== base.value || run !== generation || !enabled.value) return; if (e?.response?.status === 409 && Array.isArray(e.response.data?.clashes)) { warnings.value = e.response.data.clashes; nextTick(() => dialog.value?.focus?.()); } else error.value = message(e); }
+    } catch(e: any) { if (scope !== base.value || run !== generation || !enabled.value) return; if (e?.response?.status === 409 && Array.isArray(e.response.data?.clashes)) { warnings.value = e.response.data.clashes; if (body?.confirm_clashes) error.value = warnings.value.length ? 'The clashes have changed. Review the updated list before saving.' : 'There are no clashes now. Review the meeting and save again.'; warningFingerprint.value = e.response.data.clash_fingerprint; warnedRequest.value = { body: JSON.parse(JSON.stringify(body)), url, method }; nextTick(() => dialog.value?.focus?.()); } else error.value = message(e); }
     finally { saving.value = false; }
 }
 function keydown(e: KeyboardEvent) {

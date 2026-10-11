@@ -108,6 +108,7 @@ class User extends Authenticatable implements HasMedia
      * @var list<string>
      */
     protected $hidden = [
+        'has_timetable_records',
         'password',
         'remember_token',
         // Never expose the raw TOTP secret in API payloads (the login/user

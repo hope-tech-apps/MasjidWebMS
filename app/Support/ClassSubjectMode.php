@@ -108,6 +108,14 @@ final class ClassSubjectMode
         return SchoolSettings::timetable($org);
     }
 
+    /** No schema lookup: an old SELECT * row simply has no hint before migration. */
+    public static function timetableRecordsHeld(int $id): bool
+    {
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::withTrashed()->find($id);
+        return (bool) $org?->getAttribute('has_timetable_records');
+    }
+
     public static function responseEnabled(int|string|null $masjidId): bool
     {
         return self::enabled($masjidId);

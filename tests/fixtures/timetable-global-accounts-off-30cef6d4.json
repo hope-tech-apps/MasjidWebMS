@@ -1,0 +1,234 @@
+{
+    "after": {
+        "MasjidAdmin-archive": {
+            "sql": [
+                "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (2) order by \"created_at\" desc, \"created_at\" desc",
+                "update \"users\" set \"deleted_at\" = ?, \"updated_at\" = ? where \"id\" = ?"
+            ],
+            "payload": {
+                "status": "success",
+                "data": {
+                    "id": 2,
+                    "name": "Practice Account",
+                    "email": "misael.schoen@example.net",
+                    "email_verified_at": "2026-10-10T16:00:00.000000Z",
+                    "created_at": "2026-10-10T16:00:00.000000Z",
+                    "updated_at": "2026-10-10T16:00:00.000000Z",
+                    "phone": "+15555550601",
+                    "phone_verified_at": null,
+                    "type": "MasjidAdmin",
+                    "deleted_at": "2026-10-10T16:00:00.000000Z",
+                    "two_factor_confirmed_at": null,
+                    "two_factor_last_used_at": null,
+                    "two_factor_failed_attempts": 0,
+                    "two_factor_locked_until": null,
+                    "avatar": null
+                }
+            }
+        },
+        "MasjidAdmin-delete": {
+            "sql": [
+                "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (3) order by \"created_at\" desc, \"created_at\" desc",
+                "delete from \"model_has_roles\" where \"model_has_roles\".\"model_id\" = ? and \"model_type\" = ?",
+                "delete from \"model_has_permissions\" where \"model_has_permissions\".\"model_id\" = ? and \"model_type\" = ?",
+                "select * from \"media\" where \"media\".\"model_type\" = ? and \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null",
+                "delete from \"users\" where \"id\" = ?"
+            ],
+            "payload": {
+                "status": "success",
+                "data": {
+                    "id": 3,
+                    "name": "Practice Account",
+                    "email": "adeline.gibson@example.net",
+                    "email_verified_at": "2026-10-10T16:00:00.000000Z",
+                    "created_at": "2026-10-10T16:00:00.000000Z",
+                    "updated_at": "2026-10-10T16:00:00.000000Z",
+                    "phone": "+15555550601",
+                    "phone_verified_at": null,
+                    "type": "MasjidAdmin",
+                    "deleted_at": null,
+                    "two_factor_confirmed_at": null,
+                    "two_factor_last_used_at": null,
+                    "two_factor_failed_attempts": 0,
+                    "two_factor_locked_until": null,
+                    "avatar": null
+                }
+            }
+        },
+        "Teacher-archive": {
+            "sql": [
+                "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (4) order by \"created_at\" desc, \"created_at\" desc",
+                "update \"users\" set \"deleted_at\" = ?, \"updated_at\" = ? where \"id\" = ?"
+            ],
+            "payload": {
+                "status": "success",
+                "data": {
+                    "id": 4,
+                    "name": "Practice Account",
+                    "email": "fkub@example.org",
+                    "email_verified_at": "2026-10-10T16:00:00.000000Z",
+                    "created_at": "2026-10-10T16:00:00.000000Z",
+                    "updated_at": "2026-10-10T16:00:00.000000Z",
+                    "phone": "+15555550601",
+                    "phone_verified_at": null,
+                    "type": "Teacher",
+                    "deleted_at": "2026-10-10T16:00:00.000000Z",
+                    "two_factor_confirmed_at": null,
+                    "two_factor_last_used_at": null,
+                    "two_factor_failed_attempts": 0,
+                    "two_factor_locked_until": null,
+                    "avatar": null
+                }
+            }
+        },
+        "Teacher-delete": {
+            "sql": [
+                "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (5) order by \"created_at\" desc, \"created_at\" desc",
+                "delete from \"model_has_roles\" where \"model_has_roles\".\"model_id\" = ? and \"model_type\" = ?",
+                "delete from \"model_has_permissions\" where \"model_has_permissions\".\"model_id\" = ? and \"model_type\" = ?",
+                "select * from \"media\" where \"media\".\"model_type\" = ? and \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null",
+                "delete from \"users\" where \"id\" = ?"
+            ],
+            "payload": {
+                "status": "success",
+                "data": {
+                    "id": 5,
+                    "name": "Practice Account",
+                    "email": "wyman.guadalupe@example.net",
+                    "email_verified_at": "2026-10-10T16:00:00.000000Z",
+                    "created_at": "2026-10-10T16:00:00.000000Z",
+                    "updated_at": "2026-10-10T16:00:00.000000Z",
+                    "phone": "+15555550601",
+                    "phone_verified_at": null,
+                    "type": "Teacher",
+                    "deleted_at": null,
+                    "two_factor_confirmed_at": null,
+                    "two_factor_last_used_at": null,
+                    "two_factor_failed_attempts": 0,
+                    "two_factor_locked_until": null,
+                    "avatar": null
+                }
+            }
+        }
+    },
+    "before": {
+        "MasjidAdmin-archive": {
+            "sql": [
+                "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (6) order by \"created_at\" desc, \"created_at\" desc",
+                "update \"users\" set \"deleted_at\" = ?, \"updated_at\" = ? where \"id\" = ?"
+            ],
+            "payload": {
+                "status": "success",
+                "data": {
+                    "id": 6,
+                    "name": "Practice Account",
+                    "email": "sipes.geovany@example.net",
+                    "email_verified_at": "2026-10-10T16:00:00.000000Z",
+                    "created_at": "2026-10-10T16:00:00.000000Z",
+                    "updated_at": "2026-10-10T16:00:00.000000Z",
+                    "phone": "+15555550601",
+                    "phone_verified_at": null,
+                    "type": "MasjidAdmin",
+                    "deleted_at": "2026-10-10T16:00:00.000000Z",
+                    "two_factor_confirmed_at": null,
+                    "two_factor_last_used_at": null,
+                    "two_factor_failed_attempts": 0,
+                    "two_factor_locked_until": null,
+                    "avatar": null
+                }
+            }
+        },
+        "MasjidAdmin-delete": {
+            "sql": [
+                "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (7) order by \"created_at\" desc, \"created_at\" desc",
+                "delete from \"model_has_roles\" where \"model_has_roles\".\"model_id\" = ? and \"model_type\" = ?",
+                "delete from \"model_has_permissions\" where \"model_has_permissions\".\"model_id\" = ? and \"model_type\" = ?",
+                "select * from \"media\" where \"media\".\"model_type\" = ? and \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null",
+                "delete from \"users\" where \"id\" = ?"
+            ],
+            "payload": {
+                "status": "success",
+                "data": {
+                    "id": 7,
+                    "name": "Practice Account",
+                    "email": "nienow.kelly@example.org",
+                    "email_verified_at": "2026-10-10T16:00:00.000000Z",
+                    "created_at": "2026-10-10T16:00:00.000000Z",
+                    "updated_at": "2026-10-10T16:00:00.000000Z",
+                    "phone": "+15555550601",
+                    "phone_verified_at": null,
+                    "type": "MasjidAdmin",
+                    "deleted_at": null,
+                    "two_factor_confirmed_at": null,
+                    "two_factor_last_used_at": null,
+                    "two_factor_failed_attempts": 0,
+                    "two_factor_locked_until": null,
+                    "avatar": null
+                }
+            }
+        },
+        "Teacher-archive": {
+            "sql": [
+                "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (8) order by \"created_at\" desc, \"created_at\" desc",
+                "update \"users\" set \"deleted_at\" = ?, \"updated_at\" = ? where \"id\" = ?"
+            ],
+            "payload": {
+                "status": "success",
+                "data": {
+                    "id": 8,
+                    "name": "Practice Account",
+                    "email": "ybaumbach@example.com",
+                    "email_verified_at": "2026-10-10T16:00:00.000000Z",
+                    "created_at": "2026-10-10T16:00:00.000000Z",
+                    "updated_at": "2026-10-10T16:00:00.000000Z",
+                    "phone": "+15555550601",
+                    "phone_verified_at": null,
+                    "type": "Teacher",
+                    "deleted_at": "2026-10-10T16:00:00.000000Z",
+                    "two_factor_confirmed_at": null,
+                    "two_factor_last_used_at": null,
+                    "two_factor_failed_attempts": 0,
+                    "two_factor_locked_until": null,
+                    "avatar": null
+                }
+            }
+        },
+        "Teacher-delete": {
+            "sql": [
+                "select * from \"users\" where \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (9) order by \"created_at\" desc, \"created_at\" desc",
+                "delete from \"model_has_roles\" where \"model_has_roles\".\"model_id\" = ? and \"model_type\" = ?",
+                "delete from \"model_has_permissions\" where \"model_has_permissions\".\"model_id\" = ? and \"model_type\" = ?",
+                "select * from \"media\" where \"media\".\"model_type\" = ? and \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null",
+                "delete from \"users\" where \"id\" = ?"
+            ],
+            "payload": {
+                "status": "success",
+                "data": {
+                    "id": 9,
+                    "name": "Practice Account",
+                    "email": "pacocha.braulio@example.com",
+                    "email_verified_at": "2026-10-10T16:00:00.000000Z",
+                    "created_at": "2026-10-10T16:00:00.000000Z",
+                    "updated_at": "2026-10-10T16:00:00.000000Z",
+                    "phone": "+15555550601",
+                    "phone_verified_at": null,
+                    "type": "Teacher",
+                    "deleted_at": null,
+                    "two_factor_confirmed_at": null,
+                    "two_factor_last_used_at": null,
+                    "two_factor_failed_attempts": 0,
+                    "two_factor_locked_until": null,
+                    "avatar": null
+                }
+            }
+        }
+    }
+}

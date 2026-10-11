@@ -59,6 +59,7 @@ final class SchoolCalendarCapabilityWriter
             }
             $keys = array_values(array_diff($keys, $unchangedHidden));
             if (array_key_exists(SchoolSettings::SCHOOL_CALENDAR_TERMS, $changes)) SchoolCalendarSwitch::configure($locked, $changes[SchoolSettings::SCHOOL_CALENDAR_TERMS]);
+            $timetableEnded = TimetableReenable::reconcile($locked, $changes);
             $overrides = is_array($locked->capability_overrides) ? $locked->capability_overrides : [];
             $flips = [];
 
@@ -101,7 +102,7 @@ final class SchoolCalendarCapabilityWriter
                 MobileCache::flushFamily($locked);
             });
 
-            return ['changed' => $changed, 'unchanged' => $unchanged];
+            return ['changed' => $changed, 'unchanged' => $unchanged]+($timetableEnded === null ? [] : ['timetable_ended_meetings'=>$timetableEnded]);
         };
 
         // A deliberate operator switch fails promptly if an office edit holds a lock.

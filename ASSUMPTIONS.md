@@ -397,3 +397,9 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Named isolated worktree authorizes edits. Working notes were stale; actual base is 30cef6d4.
 - Output path: artifacts/school-timetable-report.md. English-only office copy follows SchoolCalendarView.
 - Usual rooms use a side table to keep groups schema/payload pinned. No real-browser geometry claim.
+
+## Timetable review fixes — 2026-10-11
+- Worktree and no-commit scope explicitly authorized by the build brief. No production, deployment, publishing or sending performed.
+- Scratch output filename follows the supplied fix brief's sibling output log: scratchpad/timetable-1-fix.md, outside artifacts.
+- Pre-migration compatibility is proved with both timetable tables and retention columns absent. Re-enable tests use synthetic raw mutations to emulate invalid retained legacy data that current guards otherwise refuse.
+- SQLite and the mounted renderer establish local behavior; actual MySQL interleavings, CI/staging/production and real browser geometry/RTL/assistive technology remain unchecked.

@@ -73,16 +73,20 @@ it('Timetable acceptance B twelve weekend classes finds teacher room student cro
         foreach([0,1,3] as $k=>$row) {
             $ids=$row===0&&in_array($i,[0,11])?[$shared->id]:$teachers;
             $r=($this->place)($g,$rows[$row]['id'],0,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$subjects[($k+$i)%3]->id,'teacher_ids'=>$ids]);
-            if($i===11&&$row===0) { $r->assertConflict(); expect(array_column($r->json('clashes'),'kind'))->toContain('teacher','student'); ($this->place)($g,$rows[$row]['id'],0,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$subjects[$i%3]->id,'teacher_ids'=>$ids,'confirm_clashes'=>true])->assertCreated(); } elseif($i===11) { $r->assertConflict(); ($this->place)($g,$rows[$row]['id'],0,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$subjects[($k+$i)%3]->id,'teacher_ids'=>$ids,'confirm_clashes'=>true])->assertCreated(); } elseif($i===1) { $r->assertConflict(); expect(array_column($r->json('clashes'),'kind'))->toContain('room'); expect(array_column($r->json('clashes.0.meetings'),'group_name'))->toContain('Practice 0','Practice 1'); ($this->place)($g,$rows[$row]['id'],0,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$subjects[($k+$i)%3]->id,'teacher_ids'=>$ids,'confirm_clashes'=>true])->assertCreated(); } else $r->assertCreated();
+            if($i===11&&$row===0) { $r->assertConflict(); expect(array_column($r->json('clashes'),'kind'))->toContain('teacher','student'); ($this->place)($g,$rows[$row]['id'],0,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$subjects[$i%3]->id,'teacher_ids'=>$ids,'confirm_clashes'=>true,'clash_fingerprint'=>$r->json('clash_fingerprint')])->assertCreated(); } elseif($i===11) { $r->assertConflict(); ($this->place)($g,$rows[$row]['id'],0,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$subjects[($k+$i)%3]->id,'teacher_ids'=>$ids,'confirm_clashes'=>true,'clash_fingerprint'=>$r->json('clash_fingerprint')])->assertCreated(); } elseif($i===1) { $r->assertConflict(); expect(array_column($r->json('clashes'),'kind'))->toContain('room'); expect(array_column($r->json('clashes.0.meetings'),'group_name'))->toContain('Practice 0','Practice 1'); ($this->place)($g,$rows[$row]['id'],0,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$subjects[($k+$i)%3]->id,'teacher_ids'=>$ids,'confirm_clashes'=>true,'clash_fingerprint'=>$r->json('clash_fingerprint')])->assertCreated(); } else $r->assertCreated();
         }
-        ($this->place)($g,$rows[2]['id'],0,['activity_name'=>'Break duty','teacher_ids'=>[($this->teacher)()->id],'confirm_clashes'=>true])->assertCreated();
+        $duty=['activity_name'=>'Break duty','teacher_ids'=>[($this->teacher)()->id]]; $warning=($this->place)($g,$rows[2]['id'],0,$duty);
+        if ($warning->status()===409) ($this->place)($g,$rows[2]['id'],0,$duty+['confirm_clashes'=>true,'clash_fingerprint'=>$warning->json('clash_fingerprint')])->assertCreated(); else $warning->assertCreated();
     }
     $usual=DB::table('timetable_class_rooms')->where('group_id',$groups[0]->id)->value('room_id');
     $this->putJson($this->base.'/classes/'.$groups[1]->id.'/room',['room_id'=>$usual])->assertOk();
     $r=$this->getJson($this->base.'/clashes?as_of=2026-10-11')->assertOk(); expect(array_column($r->json('data'),'kind'))->toContain('teacher','room','student');
     expect(count(app(TimetableReader::class)->meetings($this->school->id,$this->year->id,'2026-10-11','room',(int)$usual)))->toBe(8);
     expect(count(app(TimetableReader::class)->meetings($this->school->id,$this->year->id,'2026-10-11','school')))->toBe(48);
-    $this->putJson($this->base.'/meetings/'.DB::table('timetable_meetings')->where('group_id',$groups[2]->id)->where('period_id',$set['periods'][1]['id'])->value('id'),['group_id'=>$groups[2]->id,'weekday'=>0,'period_id'=>$set['periods'][1]['id'],'kind'=>'activity','activity_name'=>'Next duty','teacher_ids'=>[$shared->id],'effective_from'=>'2026-10-10','confirm_clashes'=>true])->assertOk();
+    $nextBody=['group_id'=>$groups[2]->id,'weekday'=>0,'period_id'=>$set['periods'][1]['id'],'kind'=>'activity','activity_name'=>'Next duty','teacher_ids'=>[$shared->id],'effective_from'=>'2026-10-10'];
+    $nextUrl=$this->base.'/meetings/'.DB::table('timetable_meetings')->where('group_id',$groups[2]->id)->where('period_id',$set['periods'][1]['id'])->value('id');
+    $nextWarning=$this->putJson($nextUrl,$nextBody);
+    if ($nextWarning->status()===409) $this->putJson($nextUrl,$nextBody+['confirm_clashes'=>true,'clash_fingerprint'=>$nextWarning->json('clash_fingerprint')])->assertOk(); else $nextWarning->assertOk();
     $clashes=app(TimetableReader::class)->clashes($this->school->id,$this->year->id,'2026-10-11');
     expect(array_filter($clashes,fn($c)=>$c['kind']==='teacher'&&in_array($groups[0]->id,array_column($c['meetings'],'group_id'))&&in_array($groups[2]->id,array_column($c['meetings'],'group_id'))))->toBe([]);
 });
@@ -134,7 +138,8 @@ it('Timetable bulk readers and clash counts are fixed at two and twelve classes 
     $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $t=($this->teacher)(); $g=null;
     $counts=[];
     for($i=1;$i<=12;$i++) {
-        $g=($this->class)(); ($this->place)($g,$set['periods'][0]['id'],1,['teacher_ids'=>[$t->id],'confirm_clashes'=>true])->assertCreated();
+        $g=($this->class)(); $warning=($this->place)($g,$set['periods'][0]['id'],1,['teacher_ids'=>[$t->id]]);
+        if ($warning->status()===409) ($this->place)($g,$set['periods'][0]['id'],1,['teacher_ids'=>[$t->id],'confirm_clashes'=>true,'clash_fingerprint'=>$warning->json('clash_fingerprint')])->assertCreated(); else $warning->assertCreated();
         if(!in_array($i,[2,12])) continue;
         foreach(['teacher','class','room','school','clashes'] as $lens) {
             DB::flushQueryLog(); DB::enableQueryLog(); $reader=app(TimetableReader::class);
@@ -275,4 +280,183 @@ it('Timetable changes before an original start edit its row from the chosen date
     expect(DB::table('timetable_meetings')->count())->toBe(1); expect(DB::table('timetable_meetings')->where('id',$id)->value('effective_from'))->toBe('2026-10-01');
     $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-09-15'])->assertOk();
     expect(DB::table('timetable_meetings')->where('id',$id)->value('effective_until'))->toBe('2026-09-14');
+});
+
+it('Timetable regression closed removal only shortens and change after its end refuses leaving one live slot', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $g=($this->class)();
+    $a=($this->place)($g,$set['periods'][0]['id'],1,['activity_name'=>'A'])->assertCreated()->json('data.id');
+    $body=['group_id'=>$g->id,'period_id'=>$set['periods'][0]['id'],'weekday'=>1,'kind'=>'activity','activity_name'=>'B','teacher_ids'=>[],'effective_from'=>'2026-11-01'];
+    $b=$this->putJson($this->base.'/meetings/'.$a,$body)->assertOk()->json('data.id');
+    $this->deleteJson($this->base.'/meetings/'.$a,['effective_from'=>'2026-12-01'])->assertOk();
+    expect(DB::table('timetable_meetings')->where('id',$a)->value('effective_until'))->toBe('2026-10-31');
+    $this->getJson($this->base.'/week?group_id='.$g->id.'&as_of=2026-11-16')->assertOk()->assertJsonCount(1,'data.meetings')->assertJsonPath('data.meetings.0.id',$b);
+    $this->putJson($this->base.'/meetings/'.$a,array_replace($body,['effective_from'=>'2026-12-01','effective_until'=>'2027-06-25']))->assertUnprocessable()->assertJsonPath('data.effective_from.0','This meeting has already ended before that date. Choose the meeting live on that date.');
+    $this->getJson($this->base.'/week?group_id='.$g->id.'&as_of=2026-12-07')->assertOk()->assertJsonCount(1,'data.meetings')->assertJsonPath('data.meetings.0.id',$b);
+});
+
+it('Timetable regression confirmation fingerprints refuse new clashes and changed submitted bodies', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $t=($this->teacher)();
+    $a=($this->class)('Practice A'); $b=($this->class)('Practice B'); $c=($this->class)('Practice C');
+    ($this->place)($a,$set['periods'][0]['id'],1,['teacher_ids'=>[$t->id]])->assertCreated();
+    $extra=['teacher_ids'=>[$t->id]];
+    $seen=($this->place)($b,$set['periods'][0]['id'],1,$extra)->assertConflict(); expect($seen->json('clash_fingerprint'))->toBeString();
+    $cw=($this->place)($c,$set['periods'][0]['id'],1,$extra)->assertConflict();
+    ($this->place)($c,$set['periods'][0]['id'],1,$extra+['confirm_clashes'=>true,'clash_fingerprint'=>$cw->json('clash_fingerprint')])->assertCreated();
+    $fresh=($this->place)($b,$set['periods'][0]['id'],1,$extra+['confirm_clashes'=>true,'clash_fingerprint'=>$seen->json('clash_fingerprint')])->assertConflict()->assertJsonCount(2,'clashes');
+    expect($fresh->json('clash_fingerprint'))->not->toBe($seen->json('clash_fingerprint'));
+    expect(DB::table('timetable_meetings')->where('group_id',$b->id)->count())->toBe(0);
+    ($this->place)($b,$set['periods'][0]['id'],1,$extra+['confirm_clashes'=>true,'clash_fingerprint'=>$fresh->json('clash_fingerprint'),'activity_name'=>'Changed body'])->assertConflict();
+    ($this->place)($b,$set['periods'][0]['id'],1,$extra+['confirm_clashes'=>true,'clash_fingerprint'=>$fresh->json('clash_fingerprint')])->assertCreated();
+});
+
+it('Timetable regression recorded roster joining dates bound student clashes in both directions with move fallback', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $a=($this->class)('Practice A'); $b=($this->class)('Practice B');
+    $c=Contact::factory()->create(['masjid_id'=>$this->school->id]); $rows=[];
+    foreach([$a,$b] as $g) { $r=GroupMembership::create(['masjid_id'=>$this->school->id,'group_id'=>$g->id,'contact_id'=>$c->id,'role'=>'member','joined_at'=>'2026-11-01']); $r->forceFill(['created_at'=>'2026-10-10','moved_from_group_id'=>$a->id,'moved_on'=>'2026-10-10'])->save(); $rows[]=$r; }
+    ($this->place)($a,$set['periods'][0]['id'],1,['effective_from'=>'2026-09-07'])->assertCreated();
+    $w=($this->place)($b,$set['periods'][0]['id'],1,['effective_from'=>'2026-09-07'])->assertConflict()->assertJsonPath('clashes.0.effective_from','2026-11-01');
+    ($this->place)($b,$set['periods'][0]['id'],1,['effective_from'=>'2026-09-07','confirm_clashes'=>true,'clash_fingerprint'=>$w->json('clash_fingerprint')])->assertCreated();
+    $this->getJson($this->base.'/clashes?as_of=2026-10-12')->assertOk()->assertJsonPath('data',[]);
+    foreach($rows as $r) $r->update(['joined_at'=>'2026-09-07']);
+    $this->getJson($this->base.'/clashes?as_of=2026-09-14')->assertOk()->assertJsonCount(1,'data')->assertJsonPath('data.0.effective_from','2026-09-07');
+    foreach($rows as $r) $r->update(['joined_at'=>null]);
+    $this->getJson($this->base.'/clashes?as_of=2026-09-14')->assertOk()->assertJsonPath('data',[]);
+    $this->getJson($this->base.'/clashes?as_of=2026-10-12')->assertOk()->assertJsonCount(1,'data')->assertJsonPath('data.0.effective_from','2026-10-10');
+});
+
+it('Timetable regression teacher removal locks organisation first with class subjects off', function () {
+    $this->school->forceFill(['capability_overrides'=>['school_calendar'=>true,'school_timetable'=>true]])->save();
+    $t=($this->teacher)();
+    $other=Masjid::create(['name'=>'Other Practice School','email'=>'teacherother@example.invalid','phone'=>'+15555550909','country_id'=>'1','city_id'=>'1','address'=>'Practice','latitude'=>0,'longitude'=>0,'org_type'=>'school']);
+    MasjidUser::create(['masjid_id'=>$other->id,'user_id'=>$t->id,'role'=>'teacher']);
+    $statements=[];
+    DB::listen(function ($q) use (&$statements) { $statements[]=$q->sql; });
+    $transactionFirst=[];
+    \Illuminate\Support\Facades\Event::listen(\Illuminate\Database\Events\TransactionBeginning::class,function () use (&$statements,&$transactionFirst) { $statements=[]; $transactionFirst[]=&$statements; });
+    $this->deleteJson("/api/admin/masjids/{$this->school->id}/teachers/{$t->id}")->assertOk();
+    expect(User::find($t->id))->not->toBeNull();
+    expect($statements[0])->toContain('"masjids"')->not->toContain('"users"');
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $g=($this->class)();
+    ($this->place)($g,$set['periods'][0]['id'],1,['teacher_ids'=>[$t->id]])->assertNotFound();
+});
+
+it('Timetable regression retention follows rows with the switch off for year class subject room and account', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $g=($this->class)(); $s=($this->subject)($g); $t=($this->teacher)();
+    $room=$this->postJson($this->base.'/rooms',['name'=>'Practice Hall'])->assertCreated()->json('data.id');
+    ($this->place)($g,$set['periods'][0]['id'],1,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$s->id,'room_id'=>$room,'teacher_ids'=>[$t->id]])->assertCreated();
+    CapabilityWriter::apply($this->school,['school_timetable'=>false],$this->admin->id);
+    foreach([$this->year,$g,$s,\App\Models\TimetableRoom::findOrFail($room),$t] as $model) {
+        try { $model->fresh()->forceDelete(); $this->fail('Deleted held timetable record'); }
+        catch(\Illuminate\Validation\ValidationException $e) { expect(json_encode($e->errors()))->toContain('timetable'); }
+    }
+});
+
+it('Timetable regression reenable ends invalid subject class teacher weekday and mapping meetings and reports count', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1,2]);
+    $unmapped=($this->set)('Unmapped',[['P1','09:00','10:00']]);
+    $ids=[]; $groups=[]; $subjects=[]; $teachers=[];
+    foreach(['Hidden subject','Archived class','Removed teacher','Removed weekday','Removed mapping','Valid'] as $i=>$name) {
+        $g=$groups[]=($this->class)('Practice '.$name); $t=$teachers[]=($this->teacher)(); $s=$subjects[]=($this->subject)($g);
+        $ids[]=($this->place)($g,$set['periods'][0]['id'],$i===3?2:1,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$s->id,'teacher_ids'=>[$t->id],'effective_from'=>'2026-09-07'])->assertCreated()->json('data.id');
+    }
+    CapabilityWriter::apply($this->school,['school_timetable'=>false],$this->admin->id);
+    $this->deleteJson("/api/admin/masjids/{$this->school->id}/groups/{$groups[0]->id}/subjects/{$subjects[0]->id}")->assertOk();
+    // Other legacy inconsistencies can predate the new retention guards.
+    DB::table('groups')->where('id',$groups[1]->id)->update(['is_active'=>false,'deleted_at'=>now()]);
+    DB::table('masjid_user')->where('masjid_id',$this->school->id)->where('user_id',$teachers[2]->id)->delete();
+    DB::table('school_years')->where('id',$this->year->id)->update(['meeting_weekdays'=>json_encode([1,3,4,5])]);
+    DB::table('timetable_class_days')->insert(['masjid_id'=>$this->school->id,'school_year_id'=>$this->year->id,'group_id'=>$groups[4]->id,'weekday'=>1,'period_set_id'=>$unmapped['id']]);
+    $super=User::factory()->create(['type'=>'SuperAdmin','phone'=>'+15555550800']); Sanctum::actingAs($super,['staff']);
+    $r=$this->patchJson("/api/admin/masjids/{$this->school->id}/capabilities/school_timetable",['enabled'=>true])->assertOk();
+    expect($r->json('data.timetable_ended_meetings'))->toBe(5);
+    expect(DB::table('timetable_meetings')->whereIn('id',array_slice($ids,0,5))->pluck('effective_until')->all())->toBe(array_fill(0,5,'2026-10-09'));
+    expect(DB::table('timetable_meetings')->where('id',$ids[5])->value('effective_until'))->toBeNull();
+    expect(app(TimetableReader::class)->meetings($this->school->id,$this->year->id,'2026-10-12'))->toHaveCount(1);
+    expect(app(TimetableReader::class)->meetings($this->school->id,$this->year->id,'2026-09-14'))->toHaveCount(6);
+});
+
+it('Timetable regression class location creates selects and clears atomically with no setup or year', function () {
+    $this->year->delete();
+    $g=($this->class)(); $url="/api/admin/masjids/{$this->school->id}/groups/{$g->id}/location";
+    $this->getJson($url)->assertOk()->assertJsonPath('data.locations',[])->assertJsonPath('data.location',null);
+    $r=$this->putJson($url,['name'=>'Practice Hall'])->assertOk(); $id=$r->json('data.location.id'); expect($id)->toBeInt();
+    $this->putJson($url,['name'=>'practice HALL'])->assertOk()->assertJsonPath('data.location.id',$id); expect(DB::table('timetable_rooms')->count())->toBe(1);
+    $this->putJson($url,['room_id'=>$id])->assertOk()->assertJsonPath('data.location.name','Practice Hall');
+    $this->putJson($url,['name'=>str_repeat('x',61)])->assertUnprocessable(); expect(DB::table('timetable_class_rooms')->where('group_id',$g->id)->value('room_id'))->toBe($id);
+    $this->putJson($url,['name'=>''])->assertOk()->assertJsonPath('data.location',null); expect(DB::table('timetable_rooms')->count())->toBe(1);
+    CapabilityWriter::apply($this->school,['school_timetable'=>false],$this->admin->id);
+    $this->getJson($url)->assertNotFound(); $this->putJson($url,['name'=>'Hidden'])->assertNotFound();
+});
+
+it('Timetable copy rolls back after an earlier tentative insert before a later duplicate', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00'],['P2','09:00','10:00']]); ($this->days)($set['id'],[1,2]); $g=($this->class)();
+    foreach($set['periods'] as $p) ($this->place)($g,$p['id'],1)->assertCreated();
+    ($this->place)($g,$set['periods'][1]['id'],2)->assertCreated();
+    $tentative=[];
+    \App\Models\TimetableMeeting::created(function ($m) use (&$tentative) { $tentative[]=['weekday'=>(int)$m->weekday,'period_id'=>(int)$m->period_id,'visible'=>DB::table('timetable_meetings')->where('id',$m->id)->exists()]; });
+    $before=DB::table('timetable_meetings')->orderBy('id')->get()->toArray();
+    $this->postJson($this->base.'/copy-day',['group_id'=>$g->id,'source_weekday'=>1,'target_weekdays'=>[2],'as_of'=>'2026-10-10','effective_from'=>'2026-10-10'])->assertUnprocessable();
+    expect($tentative)->toBe([['weekday'=>2,'period_id'=>$set['periods'][0]['id'],'visible'=>true]]);
+    expect(DB::table('timetable_meetings')->orderBy('id')->get()->toArray())->toEqual($before);
+});
+
+it('Timetable reenable handles a missing subject or lost mapping and never extends already ended rows', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]);
+    $g=($this->class)(); $h=($this->class)('Practice Other'); $s=($this->subject)($g); $t=($this->teacher)();
+    ($this->days)($set['id'],[3],$h);
+    $missing=($this->place)($g,$set['periods'][0]['id'],1,['kind'=>'subject','class_subject_id'=>$s->id,'activity_name'=>null,'teacher_ids'=>[$t->id],'effective_from'=>'2026-09-07'])->assertCreated()->json('data.id');
+    $mapping=($this->place)($h,$set['periods'][0]['id'],3,['effective_from'=>'2026-11-01'])->assertCreated()->json('data.id');
+    $ended=($this->place)($h,$set['periods'][0]['id'],1,['effective_from'=>'2026-09-07','effective_until'=>'2026-10-01'])->assertCreated()->json('data.id');
+    CapabilityWriter::apply($this->school,['school_timetable'=>false],$this->admin->id);
+    DB::table('timetable_meetings')->where('id',$missing)->update(['class_subject_id'=>null]);
+    DB::table('timetable_class_days')->where('group_id',$h->id)->delete();
+    $outcome=CapabilityWriter::apply($this->school,['school_timetable'=>true,'school_calendar_terms'=>true],$this->admin->id);
+    expect($outcome['timetable_ended_meetings'])->toBe(2);
+    expect(DB::table('timetable_meetings')->whereIn('id',[$missing,$mapping])->pluck('effective_until')->all())->toBe(['2026-10-09','2026-10-09']);
+    expect(DB::table('timetable_meetings')->where('id',$ended)->value('effective_until'))->toBe('2026-10-01');
+});
+
+it('Timetable class location refuses other school ids teachers families and nonclass groups', function () {
+    $g=($this->class)(); $url="/api/admin/masjids/{$this->school->id}/groups/{$g->id}/location";
+    $other=Masjid::create(['name'=>'Other Practice School','email'=>'otherloc@example.invalid','phone'=>'+15555550809','country_id'=>'1','city_id'=>'1','address'=>'Practice','latitude'=>0,'longitude'=>0,'org_type'=>'school']);
+    [$fg,$room]=app(TenantContext::class)->runWithout(fn()=>[Group::factory()->create(['masjid_id'=>$other->id,'kind'=>'class']),\App\Models\TimetableRoom::create(['masjid_id'=>$other->id,'name'=>'Other Hall','name_key'=>'other hall','active'=>true])]);
+    $this->putJson($url,['room_id'=>$room->id])->assertNotFound();
+    $foreign=str_replace('/groups/'.$g->id,'/groups/'.$fg->id,$url); $this->getJson($foreign)->assertNotFound(); $this->putJson($foreign,['name'=>'New'])->assertNotFound();
+    $general=Group::factory()->create(['masjid_id'=>$this->school->id,'kind'=>'general']); $this->getJson(str_replace('/groups/'.$g->id,'/groups/'.$general->id,$url))->assertNotFound();
+    $t=($this->teacher)(); $family=Contact::factory()->create(['masjid_id'=>$this->school->id,'login_email'=>'familyloc@example.invalid','login_enabled_at'=>now()]);
+    foreach([$t->createToken('practice',['staff'])->plainTextToken,$family->createToken('practice',['family'])->plainTextToken] as $token) {
+        Auth::forgetGuards(); $this->withToken($token);
+        foreach(['GET','PUT'] as $verb) expect($this->json($verb,$url,['name'=>'Foreign'])->status())->toBeIn([401,403]);
+    }
+});
+
+it('Timetable confirmation returns a fresh empty list when the reviewed clashes disappear', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $a=($this->class)('Practice A'); $b=($this->class)('Practice B'); $t=($this->teacher)();
+    $id=($this->place)($a,$set['periods'][0]['id'],1,['teacher_ids'=>[$t->id]])->assertCreated()->json('data.id');
+    $warning=($this->place)($b,$set['periods'][0]['id'],1,['teacher_ids'=>[$t->id]])->assertConflict();
+    $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-10-10'])->assertOk();
+    ($this->place)($b,$set['periods'][0]['id'],1,['teacher_ids'=>[$t->id],'confirm_clashes'=>true,'clash_fingerprint'=>$warning->json('clash_fingerprint')])->assertConflict()->assertJsonPath('clashes',[]);
+    expect(DB::table('timetable_meetings')->where('group_id',$b->id)->count())->toBe(0);
+});
+
+it('Timetable zero location slot payloads name their class including whole class writes and date reads', function () {
+    $this->school->forceFill(['capability_overrides'=>['school_calendar'=>true,'school_timetable'=>true]])->save();
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $g=($this->class)('Practice Class'); $t=($this->teacher)();
+    $this->postJson($this->base.'/meetings',['group_id'=>$g->id,'period_id'=>$set['periods'][0]['id'],'weekday'=>1,'kind'=>'class','teacher_ids'=>[$t->id],'effective_from'=>'2026-10-10'])->assertCreated()->assertJsonPath('data.group_name','Practice Class')->assertJsonPath('data.label','Practice Class');
+    $this->getJson($this->base.'/week?group_id='.$g->id.'&as_of=2026-10-12')->assertOk()->assertJsonPath('data.group_name','Practice Class')->assertJsonPath('data.meetings.0.group_name','Practice Class')->assertJsonPath('data.meetings.0.label','Practice Class')->assertJsonPath('data.meetings.0.room_name',null);
+    expect(DB::table('timetable_rooms')->count())->toBe(0);
+});
+
+it('Timetable retention hints are persisted on a later write after a tentative transaction rolls back', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $g=($this->class)(); $t=($this->teacher)();
+    $m=($this->place)($g,$set['periods'][0]['id'],1)->assertCreated()->json('data.id');
+    try { DB::transaction(function () use ($t,$m) {
+        \App\Models\TimetableMeetingTeacher::create(['masjid_id'=>$this->school->id,'meeting_id'=>$m,'user_id'=>$t->id]);
+        throw new \RuntimeException('tentative');
+    }); } catch (\RuntimeException $e) { expect($e->getMessage())->toBe('tentative'); }
+    expect((int)DB::table('users')->where('id',$t->id)->value('has_timetable_records'))->toBe(0);
+    \App\Models\TimetableMeetingTeacher::create(['masjid_id'=>$this->school->id,'meeting_id'=>$m,'user_id'=>$t->id]);
+    expect((int)DB::table('users')->where('id',$t->id)->value('has_timetable_records'))->toBe(1);
+    expect(array_key_exists('has_timetable_records',$t->fresh()->toArray()))->toBeFalse();
+    expect(array_key_exists('has_timetable_records',$this->school->fresh()->toArray()))->toBeFalse();
 });

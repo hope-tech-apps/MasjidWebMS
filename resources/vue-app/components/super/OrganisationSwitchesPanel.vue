@@ -569,6 +569,7 @@ async function sendFlip(entry: CapabilityEntry, enabled: boolean) {
                 flipNotice.value = `Re-open ${org}'s dashboard to see its sidebar change.`;
                 swalInstance.title = 'Success';
                 swalInstance.text = `${entry.label} switched ${enabled ? 'on' : 'off'}. ${flipNotice.value}`;
+                if (Number.isInteger(saved.timetable_ended_meetings)) swalInstance.text += ` ${saved.timetable_ended_meetings} timetable meetings ended from today; earlier rows were kept.`;
                 swalInstance.icon = 'success';
 
                 // The server's truth: defaults, the override badge and the history row.

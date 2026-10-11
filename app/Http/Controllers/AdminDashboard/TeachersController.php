@@ -987,7 +987,7 @@ class TeachersController extends Controller
      */
     public function destroy($masjid_id, $user_id)
     {
-        if ($this->subjectsOn()) {
+        if ($this->subjectsOn() || \App\Support\ClassSubjectMode::timetableEnabled((int) $this->tenant->get())) {
             return $this->destroyWithClassSubjects($masjid_id, $user_id);
         }
 

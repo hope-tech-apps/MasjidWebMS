@@ -1,0 +1,23 @@
+{
+    "sql": [
+        "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+        "select * from \"permissions\"",
+        "select \"roles\".*, \"role_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"role_has_permissions\".\"role_id\" as \"pivot_role_id\" from \"roles\" inner join \"role_has_permissions\" on \"roles\".\"id\" = \"role_has_permissions\".\"role_id\" where \"role_has_permissions\".\"permission_id\" in (1, 2, 3, 4, 5, 6, 7, 8)",
+        "select \"permissions\".*, \"model_has_permissions\".\"model_id\" as \"pivot_model_id\", \"model_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"model_has_permissions\".\"model_type\" as \"pivot_model_type\" from \"permissions\" inner join \"model_has_permissions\" on \"permissions\".\"id\" = \"model_has_permissions\".\"permission_id\" where \"model_has_permissions\".\"model_id\" in (1) and \"model_has_permissions\".\"model_type\" = ?",
+        "select \"roles\".*, \"model_has_roles\".\"model_id\" as \"pivot_model_id\", \"model_has_roles\".\"role_id\" as \"pivot_role_id\", \"model_has_roles\".\"model_type\" as \"pivot_model_type\" from \"roles\" inner join \"model_has_roles\" on \"roles\".\"id\" = \"model_has_roles\".\"role_id\" where \"model_has_roles\".\"model_id\" in (1) and \"model_has_roles\".\"model_type\" = ?",
+        "select * from \"users\" where \"id\" = ? and \"type\" = ? and \"users\".\"deleted_at\" is null limit 1",
+        "select exists(select * from \"masjid_user\" where \"masjid_id\" = ? and \"user_id\" = ?) as \"exists\"",
+        "select exists(select * from \"masjids\" where \"id\" = ? and \"user_id\" = ?) as \"exists\"",
+        "select * from \"users\" where \"users\".\"id\" = ? limit 1",
+        "delete from \"group_staff\" where \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?",
+        "select * from \"masjid_user\" where \"masjid_id\" = ? and \"user_id\" = ? limit 1",
+        "delete from \"masjid_user\" where \"id\" = ?",
+        "select exists(select * from \"masjid_user\" where \"user_id\" = ?) as \"exists\"",
+        "delete from \"personal_access_tokens\" where \"personal_access_tokens\".\"tokenable_type\" = ? and \"personal_access_tokens\".\"tokenable_id\" = ? and \"personal_access_tokens\".\"tokenable_id\" is not null",
+        "update \"users\" set \"deleted_at\" = ?, \"updated_at\" = ? where \"id\" = ?"
+    ],
+    "payload": {
+        "status": "success",
+        "message": "Teacher removed from this school."
+    }
+}

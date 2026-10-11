@@ -644,6 +644,12 @@ Route::prefix('admin')->group(function () {
             // registration form needs the calendar before any class or contact
             // exists. Teachers and families read it through their own realms,
             // ungated. Every write answers with the whole calendar.
+            Route::prefix('{masjid_id}/groups/{group_id}/location')->middleware('capability:school_timetable')
+                ->controller(\App\Http\Controllers\AdminDashboard\SchoolTimetableController::class)->group(function () {
+                    Route::get('/', 'location');
+                    Route::put('/', 'saveLocation');
+                });
+
             Route::prefix('{masjid_id}/timetable')->middleware('capability:school_timetable')
                 ->controller(\App\Http\Controllers\AdminDashboard\SchoolTimetableController::class)->group(function () {
                     Route::get('/', 'index');

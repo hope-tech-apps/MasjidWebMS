@@ -123,8 +123,8 @@ class SchoolTimetableController extends Controller
         $room=$id===null?null:TimetableRoom::findOrFail($id);
         $data=$r->validate(['name'=>'required|string|max:60','capacity'=>'nullable|integer|min:1|max:100000','active'=>'sometimes|boolean']);
         return $this->write($school,$year,function () use($data,$room,$school) {
-            $key=mb_strtolower(trim($data['name'])); if($key==='') $this->refuse('name','Choose a room name.');
-            if(TimetableRoom::where('name_key',$key)->when($room,fn($q)=>$q->where('id','<>',$room->id))->exists()) $this->refuse('name','This school already has a room with that name.');
+            $key=mb_strtolower(trim($data['name'])); if($key==='') $this->refuse('name','Choose a location name.');
+            if(TimetableRoom::where('name_key',$key)->when($room,fn($q)=>$q->where('id','<>',$room->id))->exists()) $this->refuse('name','This school already has a location with that name.');
             $row=$room??new TimetableRoom(['masjid_id'=>$school]); $row->fill($data+['active'=>true,'capacity'=>null]); $row->name=trim($data['name']); $row->name_key=$key; $row->save(); return $this->result($row,$room===null?201:200);
         });
     }
@@ -133,7 +133,7 @@ class SchoolTimetableController extends Controller
         return $this->write($masjid_id,$year_id,function () use($room_id) {
             $room=TimetableRoom::findOrFail($room_id);
             $count=TimetableMeeting::where('room_id',$room_id)->orWhere(fn($q)=>$q->whereNull('room_id')->whereIn('group_id',TimetableClassRoom::where('room_id',$room_id)->select('group_id')))->count();
-            if($count) $this->refuse('room',"This room has {$count} meetings. Keep it to preserve the timetable.");
+            if($count) $this->refuse('room',"This location has {$count} meetings. Keep it to preserve the timetable.");
             TimetableClassRoom::where('room_id',$room_id)->update(['room_id'=>null]); $room->delete(); return $this->result(null);
         });
     }
@@ -145,6 +145,39 @@ class SchoolTimetableController extends Controller
             TimetableClassRoom::updateOrCreate(['group_id'=>$g->id],['masjid_id'=>$masjid_id,'room_id'=>$d['room_id']]); return $this->result(null);
         });
     }
+    /** The class page uses the same usual-location writer without requiring a year or setup. */
+    public function location($masjid_id, $group_id): JsonResponse
+    {
+        return $this->result($this->locationPayload($this->group($group_id)));
+    }
+    private function locationPayload(Group $g): array
+    {
+        $room = TimetableClassRoom::where('group_id', $g->id)->value('room_id');
+        return ['group_id'=>$g->id,'group_name'=>$g->name,
+            'location'=>$room === null ? null : TimetableRoom::findOrFail($room)->only(['id','name']),
+            'locations'=>TimetableRoom::where('active',true)->orderBy('name')->get(['id','name'])->toArray()];
+    }
+    public function saveLocation(Request $r, $masjid_id, $group_id): JsonResponse
+    {
+        return DB::transaction(function () use ($r, $masjid_id, $group_id) {
+            $org=Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+            abort_unless(SchoolSettings::timetable($org),404);
+            $g=$this->group($group_id);
+            $d=$r->validate(['room_id'=>'sometimes|nullable|integer','name'=>'sometimes|nullable|string|max:60']);
+            if (! array_key_exists('room_id',$d) && ! array_key_exists('name',$d)) $this->refuse('name','Choose a location, type a new name or clear the field.');
+            $room=$d['room_id']??null;
+            if ($room !== null) TimetableRoom::where('active',true)->findOrFail($room);
+            elseif (($name=trim($d['name']??'')) !== '') {
+                $key=mb_strtolower($name);
+                $existing=TimetableRoom::where('name_key',$key)->first();
+                if ($existing && ! $existing->active) $this->refuse('name','This location is inactive. Choose an active location or a new name.');
+                $room=($existing??TimetableRoom::create(['masjid_id'=>$masjid_id,'name'=>$name,'name_key'=>$key,'active'=>true]))->id;
+            }
+            TimetableClassRoom::updateOrCreate(['group_id'=>$g->id],['masjid_id'=>$masjid_id,'room_id'=>$room]);
+            return $this->result($this->locationPayload($g));
+        });
+    }
+
     private function setFor(SchoolYear $year,int $group,int $day): ?int
     {
         return TimetableClassDay::where('school_year_id',$year->id)->where('group_id',$group)->where('weekday',$day)->value('period_set_id')??TimetableDay::where('school_year_id',$year->id)->where('weekday',$day)->value('period_set_id');
@@ -154,7 +187,7 @@ class SchoolTimetableController extends Controller
         $year=$this->year($year_id); $d=$r->validate(['group_id'=>'required|integer']); $g=$this->group($d['group_id']); $date=$this->date($r,'as_of',$year);
         $days=TimetableDay::where('school_year_id',$year_id)->get()->keyBy('weekday'); $overrides=TimetableClassDay::where('school_year_id',$year_id)->where('group_id',$g->id)->get()->keyBy('weekday');
         $periods=TimetablePeriod::whereIn('period_set_id',TimetablePeriodSet::where('school_year_id',$year_id)->select('id'))->orderBy('position')->get()->groupBy('period_set_id');
-        return $this->result(['as_of'=>$date,'group_id'=>$g->id,'days'=>array_map(function ($day) use($days,$overrides,$periods) { $sid=$overrides[$day]->period_set_id??$days[$day]->period_set_id??null; return ['weekday'=>$day,'period_set_id'=>$sid,'periods'=>($periods[$sid]??collect())->map(fn($p)=>$this->period($p))->all()]; },$this->weekdays($year)), 'meetings'=>$this->reader->meetings((int)$masjid_id,(int)$year_id,$date,'class',$g->id)]);
+        return $this->result(['as_of'=>$date,'group_id'=>$g->id,'group_name'=>$g->name,'days'=>array_map(function ($day) use($days,$overrides,$periods) { $sid=$overrides[$day]->period_set_id??$days[$day]->period_set_id??null; return ['weekday'=>$day,'period_set_id'=>$sid,'periods'=>($periods[$sid]??collect())->map(fn($p)=>$this->period($p))->all()]; },$this->weekdays($year)), 'meetings'=>$this->reader->meetings((int)$masjid_id,(int)$year_id,$date,'class',$g->id)]);
     }
     public function clashes(Request $r,$masjid_id,$year_id): JsonResponse
     {
@@ -162,7 +195,8 @@ class SchoolTimetableController extends Controller
     }
     private function meetingData(Request $r,SchoolYear $year,Masjid $org,?TimetableMeeting $old=null): array
     {
-        $data=$r->validate(['group_id'=>'required|integer','weekday'=>'required|integer|min:0|max:6','period_id'=>'required|integer','kind'=>['required',Rule::in(['subject','activity','class'])],'class_subject_id'=>'nullable|integer','activity_name'=>'nullable|string|max:60','room_id'=>'nullable|integer','teacher_ids'=>'present|array','teacher_ids.*'=>'integer|distinct','effective_from'=>'required|date_format:Y-m-d','effective_until'=>'nullable|date_format:Y-m-d','confirm_clashes'=>'sometimes|boolean']);
+        $data=$r->validate(['group_id'=>'required|integer','weekday'=>'required|integer|min:0|max:6','period_id'=>'required|integer','kind'=>['required',Rule::in(['subject','activity','class'])],'class_subject_id'=>'nullable|integer','activity_name'=>'nullable|string|max:60','room_id'=>'nullable|integer','teacher_ids'=>'present|array','teacher_ids.*'=>'integer|distinct','effective_from'=>'required|date_format:Y-m-d','effective_until'=>'nullable|date_format:Y-m-d','confirm_clashes'=>'sometimes|boolean','clash_fingerprint'=>'nullable|string|size:64']);
+        if ($old && $old->effective_until !== null && $data['effective_from'] > $old->effective_until) $this->refuse('effective_from','This meeting has already ended before that date. Choose the meeting live on that date.');
         $g=$this->group($data['group_id']); if($old && $old->group_id!=$g->id) $this->refuse('group_id','Change this meeting within its own class.');
         $p=TimetablePeriod::whereIn('period_set_id',TimetablePeriodSet::where('school_year_id',$year->id)->select('id'))->findOrFail($data['period_id']);
         if(!in_array($data['weekday'],$this->weekdays($year),true)) $this->refuse('weekday','Choose a weekday this school year meets on.');
@@ -185,14 +219,15 @@ class SchoolTimetableController extends Controller
         }
         if($data['kind']!=='activity' && $data['teacher_ids']===[]) $this->refuse('teacher_ids','Choose at least one teacher for this meeting.');
         $room=$data['room_id']??null; if($room!==null) TimetableRoom::where('active',true)->findOrFail($room);
-        return ['masjid_id'=>$org->id,'school_year_id'=>$year->id,'group_id'=>$g->id,'weekday'=>$data['weekday'],'period_id'=>$p->id,'kind'=>$data['kind'],'class_subject_id'=>$data['kind']==='subject'?$sub:null,'activity_name'=>$data['kind']==='activity'?$activity:null,'room_id'=>$room,'effective_from'=>$data['effective_from'],'effective_until'=>$until,'teacher_ids'=>$data['teacher_ids'],'confirm_clashes'=>$data['confirm_clashes']??false];
+        return ['masjid_id'=>$org->id,'school_year_id'=>$year->id,'group_id'=>$g->id,'weekday'=>$data['weekday'],'period_id'=>$p->id,'kind'=>$data['kind'],'class_subject_id'=>$data['kind']==='subject'?$sub:null,'activity_name'=>$data['kind']==='activity'?$activity:null,'room_id'=>$room,'effective_from'=>$data['effective_from'],'effective_until'=>$until,'teacher_ids'=>$data['teacher_ids'],'confirm_clashes'=>$data['confirm_clashes']??false,'clash_fingerprint'=>$data['clash_fingerprint']??null];
     }
     private function candidate(array $data,SchoolYear $year): array
     {
+        unset($data['confirm_clashes'], $data['clash_fingerprint']);
         $p=TimetablePeriod::findOrFail($data['period_id']); $g=$this->group($data['group_id']); $rid=$data['room_id']??TimetableClassRoom::where('group_id',$g->id)->value('room_id');
-        return $data+['id'=>0,'group_name'=>$g->name,'label'=>$data['kind']==='subject'?ClassSubject::findOrFail($data['class_subject_id'])->name:($data['kind']==='activity'?$data['activity_name']:'Whole class'),'starts_at'=>substr($p->starts_at,0,5),'ends_at'=>substr($p->ends_at,0,5),'resolved_room_id'=>$rid===null?null:(int)$rid,'room_name'=>$rid===null?null:TimetableRoom::findOrFail($rid)->name,'year_last_day'=>$year->last_day->toDateString(),'teachers'=>User::whereIn('id',$data['teacher_ids'])->orderBy('name')->get(['id','name'])->toArray()];
+        return $data+['id'=>0,'group_name'=>$g->name,'label'=>$data['kind']==='subject'?ClassSubject::findOrFail($data['class_subject_id'])->name:($data['kind']==='activity'?$data['activity_name']:$g->name),'starts_at'=>substr($p->starts_at,0,5),'ends_at'=>substr($p->ends_at,0,5),'resolved_room_id'=>$rid===null?null:(int)$rid,'room_name'=>$rid===null?null:TimetableRoom::findOrFail($rid)->name,'year_last_day'=>$year->last_day->toDateString(),'teachers'=>User::whereIn('id',$data['teacher_ids'])->orderBy('name')->get(['id','name'])->toArray()];
     }
-    private function saveMeeting(array $data,SchoolYear $year,?TimetableMeeting $old=null): array
+    private function saveMeeting(array $data,SchoolYear $year,?TimetableMeeting $old=null,bool $copy=false): array
     {
         $all=$this->reader->meetings($year->masjid_id,$year->id,null);
         $inPlace=$old!==null && $data['effective_from']<=$old->effective_from;
@@ -204,12 +239,16 @@ class SchoolTimetableController extends Controller
             $others[]=$m;
         }
         $clashes=array_values(array_filter($this->reader->compare([...$others,$candidate],$this->reader->rosters($year->masjid_id,$year->id)),fn($c)=>in_array(0,array_column($c['meetings'],'id'),true)));
-        if($clashes && !$data['confirm_clashes']) return ['clashes'=>$clashes];
-        $teachers=$data['teacher_ids']; unset($data['teacher_ids'],$data['confirm_clashes']);
+        $fingerprint=\App\Support\TimetableClashConfirmation::fingerprint($data+['changed_meeting_id'=>$old?->id],$clashes);
+        if (!$copy && ($clashes || ($data['confirm_clashes'] && $data['clash_fingerprint'] !== null)) && (! $data['confirm_clashes'] || ! hash_equals($fingerprint, $data['clash_fingerprint'] ?? ''))) return ['clashes'=>$clashes,'clash_fingerprint'=>$fingerprint];
+        $previousTeachers=$inPlace?array_column(collect($all)->firstWhere('id',$old->id)['teachers']??[],'id'):[];
+        $teachers=$data['teacher_ids']; unset($data['teacher_ids'],$data['confirm_clashes'],$data['clash_fingerprint']);
         if($old && !$inPlace) { $old->effective_until=\Carbon\CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(); $old->save(); }
         $row=$inPlace?$old:new TimetableMeeting(); $row->fill($data); $row->save();
         TimetableMeetingTeacher::where('meeting_id',$row->id)->delete(); foreach($teachers as $id) TimetableMeetingTeacher::create(['masjid_id'=>$year->masjid_id,'meeting_id'=>$row->id,'user_id'=>$id]);
-        return ['meeting'=>$row];
+        $row->setAttribute('group_name',$candidate['group_name']); $row->setAttribute('label',$candidate['label']);
+        if ($previousTeachers) \App\Support\TimetableRetention::instance()->refreshAccounts($previousTeachers);
+        return ['meeting'=>$row]+($copy?['copy_clashes'=>$clashes]:[]);
     }
     public function storeMeeting(Request $r,$masjid_id,$year_id): JsonResponse { return $this->meeting($r,$masjid_id,$year_id,null); }
     public function updateMeeting(Request $r,$masjid_id,$year_id,$meeting_id): JsonResponse { return $this->meeting($r,$masjid_id,$year_id,$meeting_id); }
@@ -218,7 +257,7 @@ class SchoolTimetableController extends Controller
         return $this->write($school,$year,function($y,$org) use($r,$id) {
             $old=$id===null?null:TimetableMeeting::where('school_year_id',$y->id)->findOrFail($id);
             $saved=$this->saveMeeting($this->meetingData($r,$y,$org,$old),$y,$old);
-            return isset($saved['clashes'])?response()->json(['status'=>'clashes','clashes'=>$saved['clashes']],409):$this->result($saved['meeting'],$id===null?201:200);
+            return isset($saved['clashes'])?response()->json(['status'=>'clashes','clashes'=>$saved['clashes'],'clash_fingerprint'=>$saved['clash_fingerprint']],409):$this->result($saved['meeting'],$id===null?201:200);
         });
     }
     public function destroyMeeting(Request $r,$masjid_id,$year_id,$meeting_id): JsonResponse
@@ -227,14 +266,14 @@ class SchoolTimetableController extends Controller
             $m=TimetableMeeting::where('school_year_id',$year->id)->findOrFail($meeting_id); $data=$r->validate(['effective_from'=>'required|date_format:Y-m-d']); $date=$data['effective_from'];
             if($date<$year->first_day->toDateString() || $date>$year->last_day->toDateString()) $this->refuse('effective_from','Choose a date within this school year.');
             if($date<=$m->effective_from && $m->effective_from>$this->today($year->masjid_id)) $m->delete();
-            else { $m->effective_until=\Carbon\CarbonImmutable::parse($date)->subDay()->toDateString(); $m->save(); }
+            else { $until=\Carbon\CarbonImmutable::parse($date)->subDay()->toDateString(); if ($m->effective_until === null || $until < $m->effective_until) { $m->effective_until=$until; $m->save(); } }
             return $this->result(null);
         });
     }
     public function copyDay(Request $r,$masjid_id,$year_id): JsonResponse
     {
         return $this->write($masjid_id,$year_id,function($year,$org) use($r) {
-            $d=$r->validate(['group_id'=>'required|integer','source_weekday'=>'required|integer|min:0|max:6','target_weekdays'=>'required|array|min:1','target_weekdays.*'=>'integer|min:0|max:6|distinct','as_of'=>'required|date_format:Y-m-d','effective_from'=>'required|date_format:Y-m-d','confirm_clashes'=>'sometimes|boolean']);
+            $d=$r->validate(['group_id'=>'required|integer','source_weekday'=>'required|integer|min:0|max:6','target_weekdays'=>'required|array|min:1','target_weekdays.*'=>'integer|min:0|max:6|distinct','as_of'=>'required|date_format:Y-m-d','effective_from'=>'required|date_format:Y-m-d','confirm_clashes'=>'sometimes|boolean','clash_fingerprint'=>'nullable|string|size:64']);
             $g=$this->group($d['group_id']); $source=$this->reader->meetings($year->masjid_id,$year->id,$d['as_of'],'class',$g->id,$d['source_weekday']);
             $warnings=[];
             // A nested transaction rolls back all tentative copies if any warning needs confirmation.
@@ -244,12 +283,13 @@ class SchoolTimetableController extends Controller
                         if($day===$d['source_weekday'] || $this->setFor($year,$g->id,$day)!==$this->setFor($year,$g->id,$d['source_weekday'])) $this->refuse('target_weekdays','Copy to another weekday using the same period set.');
                         foreach($source as $m) {
                             $draft=new Request(); $draft->replace(['group_id'=>$g->id,'weekday'=>$day,'period_id'=>$m['period_id'],'kind'=>$m['kind'],'class_subject_id'=>$m['class_subject_id'],'activity_name'=>$m['activity_name'],'room_id'=>$m['room_id'],'teacher_ids'=>array_column($m['teachers'],'id'),'effective_from'=>$d['effective_from'],'confirm_clashes'=>$d['confirm_clashes']??false]);
-                            $saved=$this->saveMeeting($this->meetingData($draft,$year,$org),$year); if(isset($saved['clashes'])) $warnings=[...$warnings,...$saved['clashes']];
+                            $saved=$this->saveMeeting($this->meetingData($draft,$year,$org),$year,null,true); $warnings=[...$warnings,...$saved['copy_clashes']];
                         }
                     }
-                    if($warnings) throw new \RuntimeException('timetable-copy-clashes');
+                    $fingerprint=\App\Support\TimetableClashConfirmation::fingerprint($d,$warnings);
+                    if(($warnings || (($d['confirm_clashes']??false) && isset($d['clash_fingerprint']))) && (! ($d['confirm_clashes']??false) || ! hash_equals($fingerprint,$d['clash_fingerprint']??''))) throw new \RuntimeException('timetable-copy-clashes');
                 });
-            } catch(\RuntimeException $e) { if($e->getMessage()!=='timetable-copy-clashes') throw $e; return response()->json(['status'=>'clashes','clashes'=>$warnings],409); }
+            } catch(\RuntimeException $e) { if($e->getMessage()!=='timetable-copy-clashes') throw $e; return response()->json(['status'=>'clashes','clashes'=>$warnings,'clash_fingerprint'=>\App\Support\TimetableClashConfirmation::fingerprint($d,$warnings)],409); }
             return $this->result(null,201);
         });
     }

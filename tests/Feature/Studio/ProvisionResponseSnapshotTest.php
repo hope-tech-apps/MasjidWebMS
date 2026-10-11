@@ -330,7 +330,15 @@ class ProvisionResponseSnapshotTest extends TestCase
 
         $rows = [];
         foreach ($tables as $table) {
-            $rows[$table] = DB::table($table)->get()->map(fn ($row) => (array) $row)->all();
+            $rows[$table] = DB::table($table)->get()->map(function ($row) use ($table) {
+                $row=(array)$row;
+                if (in_array($table,['masjids','users'],true)) {
+                    // New hidden bookkeeping has its own OFF assertion; preserve every legacy column.
+                    $this->assertSame(0,(int)$row['has_timetable_records']);
+                    unset($row['has_timetable_records']);
+                }
+                return $row;
+            })->all();
         }
 
         return $rows;

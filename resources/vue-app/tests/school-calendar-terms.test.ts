@@ -240,6 +240,40 @@ test('capability toggle shows the busy refusal in plain words and leaves its swi
     } finally { s.unmount(); }
 });
 
+test('Timetable reenable shows how many invalid meetings ended in the switch success notice', async () => {
+    const axios = require('axios');
+    const messages = await loadTs('assets/ts/swalMethods.ts', { axios, '@/core/types/config/AxiosCustom': {} });
+    const message = 'The school calendar is being edited. Try again in a few moments.';
+    const error = new axios.AxiosError('Request failed with status code 422');
+    error.response = { status: 422, data: { status: 'failed', data: { capability: [message] } } };
+    const alerts: any[] = []; const writes: any[] = [];
+    const entry = { key: 'school_timetable', label: 'School timetable', description: 'Calendar', kind: 'grant', writer: 'capability', enabled: false, default_for_org_type: false, overridden: false, in_use: null };
+    const s = await mountSfc('components/super/OrganisationSwitchesPanel.vue', { masjid: { id: 1, name: 'Test school', org_type: 'school', capabilities: {} } }, {
+        vue, axios, sweetalert2: {},
+        '@/assets/ts/swalMethods': messages,
+        '@/core/constants/dashboardAsideMenuItems': { MASJID_DASHBOARD_ASIDE_MENU: [] },
+        '@/core/access/orgAccess': { detailsScreenTitle: () => 'School Details', menuItemTitle: () => '' },
+        '@/core/plugins/SweetAlerts2': { QSwal: { fire: async () => ({ isConfirmed: true }) }, MSwal: { fire: (options: any) => alerts.push(options) } },
+        '@/core/services/ApiService': { default: {
+            get: async () => ({ data: { status: 'success', data: { org: { id: 1, name: 'Test school', org_type: 'school' }, groups: [{ key: 'school', label: 'School', entries: [entry] }], history: [] } } }),
+            patch: async (url: string, body: any) => { writes.push({ url, body }); return {data:{status:'success',data:{capabilities:{school_timetable:true},timetable_ended_meetings:3}}}; },
+        } },
+        '@/core/types/config/AsideMenuItem': {}, '@/core/types/config/AxiosCustom': {}, '@/core/types/data/Masjid': {},
+        '@/core/types/data/Capability': { CAPABILITY_LABELS: {} },
+        '@/core/types/data/Vertical': { DEFAULT_ORG_TYPE: 'masjid', MASJID_TERMINOLOGY: {} },
+    });
+    try {
+        await flush();
+        click(s.all(n => n.tag === 'input')[0]); await flush();
+        assert.equal(writes[0].url, '/api/admin/masjids/1/capabilities/school_timetable');
+        assert.equal(writes[0].body.get('enabled'), '1');
+        assert.equal(alerts[0].title, 'Success');
+        assert.match(alerts[0].text, /3 timetable meetings ended from today/);
+        assert.equal(entry.enabled, false);
+        assert.equal(Boolean(s.all(n => n.tag === 'input')[0].props.disabled), false);
+    } finally { s.unmount(); }
+});
+
 test('first ON year starts with no meeting days and Save asks for at least one', async () => {
     const s = await screen(true, {}, undefined, true);
     try {
@@ -254,7 +288,7 @@ test('first ON year starts with no meeting days and Save asks for at least one',
 test('no screen the calendar touches wraps content in a bare <template>, which a browser never displays', () => {
     // Build D: includes every subject child and shared help; their scoped phone controls must render in the browser.
     // A mounted test still finds nodes inside a <template> with no directive; a browser renders an inert element.
-    for (const file of ['views/dashboard/SchoolTimetableView.vue', 'views/dashboard/SchoolCalendarView.vue', 'views/dashboard/GroupDetailView.vue', 'views/dashboard/groups/GroupReportsTab.vue', 'components/classes/PerformanceLevelHelp.vue', 'components/classes/ReportSubjectSummary.vue', 'components/classes/ClassSubjectManager.vue', 'views/teacher/subject/SubjectWorkPage.vue', 'views/teacher/subject/SubjectMarkEditor.vue', 'views/teacher/subject/SubjectCurriculumBlock.vue', 'views/teacher/subject/SubjectOwnPieces.vue', 'views/teacher/subject/SubjectNotes.vue', 'views/teacher/TeacherClass.vue', 'views/teacher/TeacherCalendar.vue', 'views/family/FamilyCalendar.vue', 'views/family/FamilyClass.vue', 'views/family/FamilySubjects.vue', 'components/common/SchoolCalendarList.vue', 'components/forms/FormFieldEditor.vue', 'components/forms/FormBuilder.vue']) {
+    for (const file of ['components/super/OrganisationSwitchesPanel.vue', 'components/classes/ClassLocationField.vue', 'views/dashboard/SchoolTimetableView.vue', 'views/dashboard/SchoolCalendarView.vue', 'views/dashboard/GroupDetailView.vue', 'views/dashboard/groups/GroupReportsTab.vue', 'components/classes/PerformanceLevelHelp.vue', 'components/classes/ReportSubjectSummary.vue', 'components/classes/ClassSubjectManager.vue', 'views/teacher/subject/SubjectWorkPage.vue', 'views/teacher/subject/SubjectMarkEditor.vue', 'views/teacher/subject/SubjectCurriculumBlock.vue', 'views/teacher/subject/SubjectOwnPieces.vue', 'views/teacher/subject/SubjectNotes.vue', 'views/teacher/TeacherClass.vue', 'views/teacher/TeacherCalendar.vue', 'views/family/FamilyCalendar.vue', 'views/family/FamilyClass.vue', 'views/family/FamilySubjects.vue', 'components/common/SchoolCalendarList.vue', 'components/forms/FormFieldEditor.vue', 'components/forms/FormBuilder.vue']) {
         const source = readFileSync(new URL('../' + file, import.meta.url), 'utf8');
         const body = source.slice(source.indexOf('<template>') + '<template>'.length, source.lastIndexOf('</template>'));
         assert.equal((body.match(/<template\s*>/g) ?? []).length, 0, file);

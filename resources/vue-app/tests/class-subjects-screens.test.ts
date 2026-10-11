@@ -2072,3 +2072,36 @@ test('walk fix: a report-card save refused because a line closed re-reads the ca
     const office = readFileSync(new URL('../views/dashboard/groups/GroupReportsTab.vue', import.meta.url), 'utf8');
     assert.equal((office.match(/>Reports</g) ?? []).length, 0, 'the office page does not repeat the heading its menu line already gives');
 });
+
+test('Timetable class header Location picks types creates and clears without opening setup', async () => {
+    let current: any=null; const locations=[{id:4,name:'Practice Hall'}];
+    const on={id:1,capabilities:{school_timetable:true}};
+    const {screen,calls}=await setup('office',{flag:false,
+        modules:{'@/stores/masjidStore':{useMasjidStore:()=>({masjid:on,term:()=> 'Classrooms'})}},
+        read:(url:string)=>url.endsWith('/location')?ok({location:current,locations}):undefined,
+        write:(_method:string,url:string,body:any)=>{if(!url.endsWith('/location')) return undefined; current=body.name?{id:body.name==='Practice Hall'?4:5,name:body.name}:null; return ok({location:current,locations});}
+    });
+    try {
+        const input=()=>screen.all(n=>n.props.id==='class-location')[0]; assert.ok(input()); assert.equal(input().props.list,'class-location-options');
+        type(input(),'Practice Hall'); await flush(); assert.ok(exactButton(screen,'Save location')); submit(input().parent!.parent!); await flush();
+        type(input(),'Practice Library'); await flush(); assert.ok(exactButton(screen,'Save location')); submit(input().parent!.parent!); await flush();
+        type(input(),''); await flush(); assert.ok(exactButton(screen,'Save location')); submit(input().parent!.parent!); await flush();
+        assert.deepEqual(calls.filter(c=>c.method==='put').map(c=>c.body),[{name:'Practice Hall'},{name:'Practice Library'},{name:''}]);
+        assert.ok(calls.every(c=>!c.url.includes('/timetable/')));
+    } finally {screen.unmount();}
+});
+
+test('Timetable OFF class page bytes and requests match literal 30cef6d4 rendering', async () => {
+    const {screen,calls}=await setup('office',{flag:false});
+    try {
+        const html = (node: Node): string => {
+            if (node.kind === 'text') return node.text;
+            if (node.kind === 'comment') return `<!--${node.text}-->`;
+            const attrs=Object.entries(node.props).filter(([key,value])=>!/^on[A-Z]/.test(key) && typeof value!=='function' && key!=='ref')
+                .sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>`${key}=${JSON.stringify(value)}`).join(' ');
+            return `<${node.tag}${attrs?' '+attrs:''}>${node.children.map(html).join('')}</${node.tag}>`;
+        };
+        const actual={html:html(screen.root),calls};
+        assert.deepEqual(actual, JSON.parse(readFileSync('tests/fixtures/timetable-class-page-off-30cef6d4.json','utf8')));
+    } finally {screen.unmount();}
+});

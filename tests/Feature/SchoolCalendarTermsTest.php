@@ -341,7 +341,12 @@ class SchoolCalendarTermsTest extends TestCase
         $responses = [];
         foreach (['organisation'=>'/api/admin/masjids/'.$this->school->id, 'capabilities'=>'/api/admin/masjids/'.$this->school->id.'/capabilities', 'studio'=>'/api/admin/studio/catalogue?org_type=school'] as $key=>$url) {
             $r = $this->getJson($url);
-            $responses[$key] = ['status'=>$r->status(),'body'=>$r->json(),'rows'=>array_map(fn ($row)=>(array)$row,\Illuminate\Support\Facades\DB::table('masjids')->get()->all())];
+            $responses[$key] = ['status'=>$r->status(),'body'=>$r->json(),'rows'=>array_map(function ($row) {
+                $row=(array)$row;
+                // Additive bookkeeping is independently pinned OFF; all legacy columns stay literal.
+                $this->assertSame(0,(int)$row['has_timetable_records']);
+                unset($row['has_timetable_records']); return $row;
+            },\Illuminate\Support\Facades\DB::table('masjids')->get()->all())];
         }
         return $responses;
     }
