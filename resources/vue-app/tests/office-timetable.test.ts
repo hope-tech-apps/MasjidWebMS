@@ -48,7 +48,7 @@ const cell=(r:any,clock:string)=>r.children.find((n:any)=>n.tag==='td'&&n.props[
 
 test('office timetable opens Whole school with lead specialist duty free teachers and a local Classes toggle',async()=>{
     const s=await screen();try{
-        assert.equal(s.calls.length,1);assert.match(s.calls[0],/schedules\/school\?as_of=2026-10-14&weekday=3$/);
+        assert.equal(s.calls.length,1);assert.match(s.calls[0],/schedules\/school\?as_of=2026-10-14$/);
         assert.match(cell(row(s,9),'08:15').textContent,/Practice Junior/);assert.match(cell(row(s,10),'08:15').textContent,/Practice Senior/);
         for(const time of ['09:10','11:50','12:45']) assert.match(cell(row(s,8),time).textContent,/Practice Senior/);
         for(const time of ['08:15','10:05','14:00']) assert.equal(cell(row(s,8),time).textContent,'');
@@ -57,6 +57,17 @@ test('office timetable opens Whole school with lead specialist duty free teacher
         click(s.button('Classes'));await flush();assert.equal(s.calls.length,1);assert.match(cell(row(s,3),'08:15').textContent,/Practice Junior/);
         select(control(s,'schedule-weekday'),5);await flush();assert.equal(s.calls.length,2);assert.match(s.calls[1],/weekday=5$/);
         blur(control(s,'schedule-as-of'));await flush();assert.equal(s.calls.length,2);assert.match(s.calls.at(-1)!,/weekday=5$/);
+    }finally{s.unmount();}
+});
+
+test('office whole school leaves the default day to the server and resets it when the date changes',async()=>{
+    const s=await screen({pageAt:(_url:string,data:any)=>({...data,weekday:2,day:{date:'2026-10-13',weekday:2,state:'meetings',reason:null}})});
+    try {
+        assert.doesNotMatch(s.calls[0],/weekday=/);assert.match(s.text(),/October 13, 2026/);
+        control(s,'schedule-weekday').props.onChange();await flush();assert.match(s.calls[1],/weekday=2$/,'the day control uses the server-selected weekday');
+        select(control(s,'schedule-weekday'),1);await flush();assert.match(s.calls[2],/weekday=1$/);
+        type(control(s,'schedule-as-of'),'2026-10-17');blur(control(s,'schedule-as-of'));await flush();
+        assert.equal(s.calls.length,4);assert.match(s.calls[3],/as_of=2026-10-17$/);assert.doesNotMatch(s.calls[3],/weekday=/);
     }finally{s.unmount();}
 });
 
@@ -77,7 +88,7 @@ test('office teacher and class controls reuse real week cards with co-teachers d
 
 test('office weekend union spans two columns with both clash badges naming the other class and no location view',async()=>{
     const s=await screen({weekend:true});try{
-        assert.doesNotMatch(s.text(),/By location/);assert.match(s.calls[0],/weekday=0$/);
+        assert.doesNotMatch(s.text(),/By location/);assert.match(s.calls[0],/as_of=2026-10-18$/);
         const shared=row(s,8);assert.equal(cell(shared,'11:00').children.filter((n:any)=>n.props['data-meeting-id']).length,2);
         assert.equal(cell(shared,'11:40').children.filter((n:any)=>n.props['data-meeting-id']).length,1);assert.equal(cell(shared,'11:45').textContent,'');
         const badges=s.all(n=>n.tag==='span'&&n.textContent==='Clash');assert.equal(badges.length,3);

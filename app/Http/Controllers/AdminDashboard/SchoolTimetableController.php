@@ -301,13 +301,16 @@ class SchoolTimetableController extends Controller
             return isset($saved['clashes'])?response()->json(['status'=>'clashes','clashes'=>$saved['clashes'],'clash_fingerprint'=>$saved['clash_fingerprint']],409):$this->result($saved['meeting'],$id===null?201:200);
         });
     }
-    /** A date range alone is not history: only an earlier open occurrence of this weekday counts. */
+    /** History follows the stored weekday, even when the calendar's current weekdays have changed. */
     private function hasPastSchoolDay(TimetableMeeting $meeting, SchoolYear $year): bool
     {
         $authority=SchoolDateAuthority::for($year->masjid_id);
         $last=min($meeting->effective_until??$year->last_day->toDateString(), \Carbon\CarbonImmutable::parse($authority->today())->subDay()->toDateString());
-        foreach ($authority->openDaysBetween(max($meeting->effective_from,$year->first_day->toDateString()),$last) as $date) {
-            if (\App\Support\SchoolCalendar::day($date)->dayOfWeek===(int)$meeting->weekday) return true;
+        $first=\App\Support\SchoolCalendar::day(max($meeting->effective_from,$year->first_day->toDateString()));
+        $closures=$year->closures->keyBy(fn($c)=>$c->closed_on->toDateString());
+        $day=$first->addDays(((int)$meeting->weekday-$first->dayOfWeek+7)%7);
+        for (; $day->toDateString()<=$last; $day=$day->addWeek()) {
+            if (! $closures->has($day->toDateString())) return true;
         }
         return false;
     }

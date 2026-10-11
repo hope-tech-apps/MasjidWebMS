@@ -20,7 +20,7 @@
                 <label for="schedule-location">Location</label><select id="schedule-location" v-model="locationId" class="form-select" @change="load()"><option value="">Choose a location</option><option v-for="room in setup.rooms" :key="room.id" :value="room.id">{{ room.name }}</option></select>
             </template>
             <template v-if="lens === 'school'">
-                <label for="schedule-weekday">Day</label><select id="schedule-weekday" v-model="weekday" class="form-select" @change="load()"><option v-for="day in setup.weekdays" :key="day" :value="day">{{ weekdays[day] }}</option></select>
+                <label for="schedule-weekday">Day</label><select id="schedule-weekday" v-model="weekday" class="form-select" @change="chooseDay"><option v-for="day in setup.weekdays" :key="day" :value="day">{{ weekdays[day] }}</option></select>
                 <button type="button" class="btn btn-outline-primary" :aria-pressed="rowsBy === 'teacher'" @click="rowsBy = 'teacher'">Teachers</button>
                 <button type="button" class="btn btn-outline-primary" :aria-pressed="rowsBy === 'class'" @click="rowsBy = 'class'">Classes</button>
             </template>
@@ -77,8 +77,8 @@ const lens = ref('school'); const rowsBy = ref('teacher'); const page = ref<any>
 const date = ref([props.setup.year.first_day, props.setup.today].sort().at(-1)! > props.setup.year.last_day ? props.setup.year.last_day : [props.setup.year.first_day, props.setup.today].sort().at(-1)!);
 const teacherId = ref<number | string>(''); const classId = ref<number | string>(props.setup.classes[0]?.id ?? ''); const locationId = ref<number | string>(props.setup.rooms[0]?.id ?? '');
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const defaultDay = (iso: string) => [...props.setup.weekdays].sort((a, b) => ((a - (weekdayOfIso(iso) ?? 0) + 7) % 7) - ((b - (weekdayOfIso(iso) ?? 0) + 7) % 7))[0] ?? 0;
-const weekday = ref(defaultDay(date.value));
+const weekday = ref<number | string>('');
+let explicitWeekday = false;
 const loading = ref(false); const error = ref(''); const placedIds = ref<number[]>([]);
 const views = computed(() => [{ key: 'school', label: 'Whole school' }, { key: 'teacher', label: 'By teacher' }, { key: 'class', label: 'By class' }, ...(props.setup.rooms.length ? [{ key: 'location', label: 'By location' }] : [])]);
 const placedTeachers = computed(() => props.setup.teachers.filter((t: any) => placedIds.value.includes(t.id)));
@@ -105,7 +105,7 @@ function commitDate(leaving: boolean) {
     const inYear = date.value >= props.setup.year.first_day && date.value <= props.setup.year.last_day;
     if (!leaving && !inYear) return;
     if (leaving && date.value === committedDate) return;
-    if (date.value !== committedDate) { weekday.value = defaultDay(date.value); committedDate = date.value; }
+    if (date.value !== committedDate) { explicitWeekday = false; committedDate = date.value; }
     void load();
 }
 function chooseView(view: string) {
@@ -113,10 +113,12 @@ function chooseView(view: string) {
     if (view === 'teacher' && !teacherId.value) teacherId.value = placedTeachers.value[0]?.id ?? props.setup.teachers[0]?.id ?? '';
     void load();
 }
+function chooseDay() { explicitWeekday = true; void load(); }
 async function load(retry = false) {
     const selected = lens.value === 'teacher' ? teacherId.value : lens.value === 'class' ? classId.value : locationId.value;
     const path = `${props.base}/schedules/${lens.value}${lens.value === 'school' ? '' : '/' + selected}`;
-    const key = `${path}?as_of=${date.value}${lens.value === 'school' ? '&weekday=' + weekday.value : ''}`;
+    // Omit an unchosen weekday so the server can skip closures when choosing the default.
+    const key = `${path}?as_of=${date.value}${lens.value === 'school' && explicitWeekday ? '&weekday=' + weekday.value : ''}`;
     if (!retry && key === lastKey) return;
     lastKey = key; const token = ++generation; page.value = null; error.value = ''; loading.value = false;
     if (weekdayOfIso(date.value) === null || date.value < props.setup.year.first_day || date.value > props.setup.year.last_day) { error.value = boundsMessage(); return; }
@@ -124,7 +126,7 @@ async function load(retry = false) {
     loading.value = true;
     try {
         const response = await ApiService.get(key as any);
-        if (token === generation) { page.value = response.data.data; placedIds.value = page.value.placed_teacher_ids; }
+        if (token === generation) { page.value = response.data.data; placedIds.value = page.value.placed_teacher_ids; if (lens.value === 'school') weekday.value = page.value.weekday; }
     } catch (failure: any) { if (token === generation) error.value = failure?.response?.status === 422 ? boundsMessage() : 'The schedule could not be loaded. Try again.'; }
     finally { if (token === generation) loading.value = false; }
 }

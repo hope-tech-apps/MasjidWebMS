@@ -1,5 +1,6 @@
 import { RouteRecordRaw } from "vue-router";
 import { useAuthStore } from "@/stores/authStore";
+import TeacherApiService from "@/core/services/TeacherApiService";
 
 /**
  * The teacher shell.
@@ -55,6 +56,17 @@ const teacherRoutes: RouteRecordRaw[] = [
                 name: 'teacherSchedule',
                 component: () => import("@/views/teacher/TeacherSchedule.vue"),
                 meta: { pageTitle: 'My schedule' },
+                beforeEnter: async () => {
+                    // The self payload names the default school; this tab may have selected another.
+                    const school = Number(useAuthStore().dashboardMasjidId);
+                    if (!Number.isInteger(school) || school < 1) return '/auth/404';
+                    try {
+                        const response = await TeacherApiService.get(`/api/teacher/masjids/${school}/school`);
+                        return response.data?.data?.school_timetable_enabled === true || '/auth/404';
+                    } catch {
+                        return '/auth/404';
+                    }
+                },
             },
             {
                 // The office edits the calendar; a teacher reads it.

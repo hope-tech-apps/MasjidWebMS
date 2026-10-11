@@ -9559,3 +9559,10 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Work is authorized in this isolated worktree only, without commit. Existing admin/tenant/timetable fences cover all four GET routes, with no new capability or schema.
 - Whole-school time columns split the union of used period rows at every start/end boundary, omitting uncovered gaps. A meeting appears in each interval it overlaps; both overlapping meetings remain visible. Teachers/classes toggle is local and does not refetch.
 - By class, location and whole school retain the editing grid's recurring as-of snapshot semantics. By teacher calls the teacher portal's shared dated-week service: versions apply to their actual displayed day, including year boundaries and midweek changes. Only school meeting days are columns in the office, omitting the portal's extra non-meeting Today column. Meeting cards and week drawing are shared.
+
+## Timetable steps 2 and 3 review fixes — 2026-10-11
+- Owner fix brief supersedes the earlier marker-only midnight and within-week wrapping decisions. The existing marker tick re-reads once per school-local date change, preserving the selected week.
+- Historical occurrence checks use the retained row's weekday/range and closures, independently of current calendar weekdays. Same-day corrections without a past occurrence still delete.
+- Teacher schedule beforeEnter reads the selected school header and accepts only its true flag; typed OFF URLs go to /auth/404. The open page retains its API-refusal sentence.
+- Whole-school default selection belongs to the server, advancing to an open meeting date inside the year and falling back to the last open meeting date; explicit weekday selections keep their week and closures. Existing recurring as-of snapshots stay unchanged.
+- Coverage additions compare the OFF header SQL list with the unchanged fixture and exercise a Monday meeting starting Tuesday with no past Monday occurrence. Temporary extra-SQL/weekday mutations both failed these assertions and were restored.

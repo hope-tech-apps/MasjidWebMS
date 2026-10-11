@@ -175,7 +175,10 @@ it('Teacher Timetable header adds only a true flag for the selected school witho
     $this->getJson("/api/teacher/masjids/{$this->school->id}/school")->assertOk()->assertJsonPath('data.school_timetable_enabled',true);
     $this->getJson('/api/teacher/user')->assertOk()->assertJsonPath('data.masjid.school_timetable_enabled',true);
     $this->school->forceFill(['capability_overrides'=>[]])->save();
+    DB::flushQueryLog(); DB::enableQueryLog();
     $this->getJson("/api/teacher/masjids/{$this->school->id}/school")->assertOk()->assertJsonMissingPath('data.school_timetable_enabled');
+    $sql=array_column(DB::getQueryLog(),'query'); DB::disableQueryLog();
+    expect($sql)->toBe(json_decode(file_get_contents(base_path('tests/fixtures/teacher-schedule-off-15011d6c.json')),true)['school']['sql']);
 });
 
 it('Teacher Timetable a week crossing school years uses each dates containing year only', function () {

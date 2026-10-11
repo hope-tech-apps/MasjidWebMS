@@ -419,3 +419,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 ## Office timetable schedules step 3 — 2026-10-11
 - All current live Teacher accounts with this school's teacher membership belong on the whole-school grid. Teachers with no live placements as of the selected date are separated in the picker/list, including teachers with only future/ended versions.
 - SQLite and mounted controls can prove data/security/request contracts, not browser geometry, print pagination or MySQL behavior. These limits will be explicit in the report.
+
+## Timetable steps 2 and 3 review fixes — 2026-10-11
+- Assigned isolated worktree at 1e9c158f is authorized for writing, with no commit. Existing fixtures and inherited artifacts remain unchanged by edits; no capture variables, deploy or external actions.
+- Year-end fallback means the last open configured meeting date; if every configured date is closed, use the last configured date to show its closure state.
+- Local SQLite and mounted Vue tests establish the regression contracts, not MySQL runtime behavior, browser geometry, physical printing, staging, CI or production.

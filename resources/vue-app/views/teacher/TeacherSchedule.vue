@@ -105,7 +105,12 @@ function move(days: number): void {
     const date = new Date(`${page.value.week_start}T12:00:00Z`); date.setUTCDate(date.getUTCDate()+days);
     void load(date.toISOString().slice(0,10));
 }
-onMounted(() => { void load(null); timer = setInterval(() => { clock.value = Date.now(); }, 30000); });
+onMounted(() => { void load(null); timer = setInterval(() => {
+    const previousDate = schoolClock.value?.date;
+    clock.value = Date.now();
+    // Midnight changes Today, while the teacher's selected week stays put.
+    if (previousDate && schoolClock.value?.date !== previousDate) void load(requestedWeek.value ?? page.value!.week_start);
+}, 30000); });
 onBeforeUnmount(() => { alive = false; ++generation; clearTimeout(typing); if (timer !== undefined) clearInterval(timer); });
 </script>
 

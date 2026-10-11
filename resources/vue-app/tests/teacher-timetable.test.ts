@@ -6,10 +6,10 @@ import { mountSfc, compileSfc, loadTs, flush, click, type, blur, select, deferre
 const require = createRequire(import.meta.url); const vue = require('vue');
 
 const slot = (extra = {}) => ({ id: 1, group_id: 3, group_name: 'Practice Class', class_subject_id: 10, kind: 'subject', label: 'Science', starts_at: '09:10', ends_at: '09:55', room_name: null, co_teachers: [{id: 9, name: 'Practice Co Teacher'}], effective_from: '2026-09-07', effective_until: null, href: '/teacher/classes/3?subject=10', ...extra });
-async function screen(state = 'meetings', code = 'en', location: string | null = null) {
+async function screen(state = 'meetings', code = 'en', location: string | null = null, readPage?: (data: any) => any) {
     const dates = await loadTs('core/types/data/masjid-related/SchoolCalendar.ts', {}); const times = await loadTs('core/helpers/scheduledSend.ts', {}); const calls: string[] = [];
     const data: any = { timezone: 'America/New_York', week_start: '2026-10-12', week_end: '2026-10-18', today: { date: '2026-10-12', state, reason: state === 'closure' ? 'Practice planning day' : null, meetings: state === 'meetings' ? [slot({room_name: location}),slot({id: 2, starts_at: '11:50', ends_at: '12:35', room_name: location, href: '/teacher/classes/3'})] : [] }, days: [ { date: '2026-10-12', weekday: 1, reason: null, meetings: [slot({room_name:location})] }, { date: '2026-10-14', weekday: 3, reason: null, meetings: [slot({id:3, starts_at:'11:00', ends_at:'11:45', effective_from:'2026-10-14', effective_until:'2026-10-16', room_name:location})] }, {date:'2026-10-16',weekday:5,reason:'Practice closure',meetings:[]} ] };
-    const api = { get: async (url: string) => { calls.push(url); if(url.includes('week=2026-10-19')) return {data:{data:{...data,week_start:'2026-10-19',week_end:'2026-10-25',days:[{date:'2026-10-19',weekday:1,reason:null,meetings:[slot({label:'Next week duty',effective_from:'2026-10-19'})]}]}}}; return {data:{data}}; } };
+    const api = { get: async (url: string) => { calls.push(url); const current=readPage ? readPage(data) : data; if(url.includes('week=2026-10-19')) return {data:{data:{...current,week_start:'2026-10-19',week_end:'2026-10-25',days:[{date:'2026-10-19',weekday:1,reason:null,meetings:[slot({label:'Next week duty',effective_from:'2026-10-19'})]}]}}}; return {data:{data:current}}; } };
     const link = vue.defineComponent({props:['to'], setup: (props:any,{slots}:any)=>()=>vue.h('a',{href:props.to},slots.default?.())});
     const meeting = await compileSfc('views/teacher/ScheduleMeeting.vue',{vue,'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'vue-router':{RouterLink:link}});
     const week = await compileSfc('views/teacher/ScheduleWeek.vue', {'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'./ScheduleMeeting.vue':{default:meeting}});
@@ -79,14 +79,28 @@ test('teacher schedule menu follows selected school true-only header; OFF keeps 
     const on=await layout(true);try{assert.match(on.text(),/My schedule/);assert.deepEqual(on.calls,['/api/teacher/user','/api/teacher/masjids/1/school']);}finally{on.unmount();}
 });
 
-test('teacher schedule marker clock respects the end boundary and a different school date without another read',async()=>{
+test('teacher schedule marker clock respects the end boundary without another read on the same school date',async()=>{
     let now=Date.parse('2026-10-12T13:20:00Z'); let tick:(()=>void)|null=null;
     mock.method(Date,'now',()=>now); mock.method(globalThis,'setInterval',(callback:()=>void)=>{tick=callback;return 123;});
     const s=await screen();try{
         assert.match(s.text(),/Happening now/); now=Date.parse('2026-10-12T13:55:00Z'); tick!(); await flush();
         assert.doesNotMatch(s.text(),/Happening now/); assert.equal(s.all(n=>n.props['data-test']==='today-meeting' && n.textContent.includes('Next')).length,1);
-        now=Date.parse('2026-10-13T13:20:00Z'); tick!();await flush(); assert.doesNotMatch(s.text(),/Happening now|Next (?=Practice Class)/);assert.equal(s.all(n=>n.props['data-test']==='today-meeting' && n.textContent.includes('Next')).length,0);
         assert.equal(s.calls.length,1);
+    }finally{s.unmount();mock.restoreAll();}
+});
+
+test('teacher schedule midnight tick rereads once on the school date change and keeps the selected week',async()=>{
+    let now=Date.parse('2026-10-13T03:59:00Z'); let tick:(()=>void)|null=null;
+    mock.method(Date,'now',()=>now); mock.method(globalThis,'setInterval',(callback:()=>void,ms:number)=>{assert.equal(ms,30000);tick=callback;return 123;});
+    const s=await screen('meetings','en',null,data=>now>=Date.parse('2026-10-13T04:00:00Z') ? {...data,today:{date:'2026-10-13',state:'closure',reason:'Tuesday closure',meetings:[]}} : data);
+    try {
+        click(s.button('Next week'));await flush();assert.equal(s.calls.length,2);
+        now=Date.parse('2026-10-13T03:59:30Z');tick!();await flush();assert.equal(s.calls.length,2,'UTC Tuesday is still school-local Monday');
+        now=Date.parse('2026-10-13T04:00:00Z');tick!();tick!();await flush();assert.equal(s.calls.length,3);
+        assert.equal(s.calls[2],'/api/teacher/masjids/1/schedule?week=2026-10-19');
+        assert.match(s.text(),/Today October 13, 2026/);assert.match(s.text(),/No school today: Tuesday closure/);assert.match(s.text(),/Next week duty/);
+        assert.equal(s.all(n=>n.props.id==='schedule-week-date')[0].value,'2026-10-19');
+        now=Date.parse('2026-10-13T04:00:30Z');tick!();await flush();assert.equal(s.calls.length,3);
     }finally{s.unmount();mock.restoreAll();}
 });
 

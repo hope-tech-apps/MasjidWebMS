@@ -423,6 +423,21 @@ it('Timetable regression reenable ends invalid subject class teacher weekday and
     expect(app(TimetableReader::class)->meetings($this->school->id,$this->year->id,'2026-09-14'))->toHaveCount(6);
 });
 
+it('Timetable review retains past Tuesday after OFF calendar weekday change ON and removal from its start', function () {
+    $this->travelTo(\Carbon\Carbon::parse('2026-10-13 16:00:00','UTC'));
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1,2]);
+    $id=($this->place)(($this->class)(),$set['periods'][0]['id'],2,['effective_from'=>'2026-10-13'])->assertCreated()->json('data.id');
+    $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00','UTC'));
+    CapabilityWriter::apply($this->school,['school_timetable'=>false],$this->admin->id);
+    $this->year->update(['meeting_weekdays'=>[1]]);
+    $super=User::factory()->create(['type'=>'SuperAdmin','phone'=>'+15555550801']); Sanctum::actingAs($super,['staff']);
+    $this->patchJson("/api/admin/masjids/{$this->school->id}/capabilities/school_timetable",['enabled'=>true])->assertOk()->assertJsonPath('data.timetable_ended_meetings',1);
+    expect(DB::table('timetable_meetings')->where('id',$id)->value('effective_until'))->toBe('2026-10-13');
+    $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-10-13'])->assertOk();
+    expect(DB::table('timetable_meetings')->where('id',$id)->exists())->toBeTrue();
+    expect(DB::table('timetable_meetings')->where('id',$id)->value('effective_until'))->toBe('2026-10-12');
+});
+
 it('Timetable regression class location creates selects and clears atomically with no setup or year', function () {
     $this->year->delete();
     $g=($this->class)(); $url="/api/admin/masjids/{$this->school->id}/groups/{$g->id}/location";
@@ -556,6 +571,9 @@ it('Timetable walkfix closure and wrong weekday before today do not invent past 
     $set=($this->set)('Regular',[['P1','08:00','08:45']]); ($this->days)($set['id'],[1]); $g=($this->class)();
     $id=($this->place)($g,$set['periods'][0]['id'],1,['effective_from'=>'2026-10-05'])->assertCreated()->json('data.id');
     $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-10-05'])->assertOk();expect(DB::table('timetable_meetings')->where('id',$id)->exists())->toBeFalse();
+    // Tuesday-Friday were open, but a Monday row starting Tuesday has never occurred.
+    $id=($this->place)($g,$set['periods'][0]['id'],1,['effective_from'=>'2026-10-06'])->assertCreated()->json('data.id');
+    $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-10-06'])->assertOk();expect(DB::table('timetable_meetings')->where('id',$id)->exists())->toBeFalse();
 });
 
 it('Timetable walkfix period and location refusals pluralize one and two meetings', function () {
@@ -595,6 +613,20 @@ it('Timetable office schedule reads have fixed HTTP query counts at two and twel
     expect($counts[2])->toBe(['teacher'=>29,'class'=>22,'location'=>22,'school'=>23]);
 });
 
+it('Timetable review whole school defaults forward across weeks skips closures and falls back inside the year', function () {
+    $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1,2,3,4,5]);
+    ($this->place)(($this->class)(),$set['periods'][0]['id'],1,['effective_from'=>'2026-09-07'])->assertCreated();
+    \App\Models\SchoolClosure::create(['masjid_id'=>$this->school->id,'school_year_id'=>$this->year->id,'closed_on'=>'2026-10-05','reason'=>'Past closure']);
+    $url=$this->base.'/schedules/school';
+    $this->getJson($url.'?as_of=2026-10-10')->assertOk()->assertJsonPath('data.day.date','2026-10-12')->assertJsonPath('data.day.state','meetings')->assertJsonPath('data.week_start','2026-10-12');
+    $this->getJson($url.'?as_of=2026-10-12')->assertOk()->assertJsonPath('data.day.date','2026-10-12');
+    \App\Models\SchoolClosure::create(['masjid_id'=>$this->school->id,'school_year_id'=>$this->year->id,'closed_on'=>'2026-10-12','reason'=>'Next closure']);
+    foreach (['2026-10-10','2026-10-12'] as $date) $this->getJson($url.'?as_of='.$date)->assertOk()->assertJsonPath('data.day.date','2026-10-13')->assertJsonPath('data.weekday',2)->assertJsonPath('data.day.state','meetings');
+    $this->getJson($url.'?as_of=2026-10-12&weekday=1')->assertOk()->assertJsonPath('data.day.date','2026-10-12')->assertJsonPath('data.day.state','closure')->assertJsonPath('data.day.reason','Next closure');
+    $this->year->update(['last_day'=>'2027-06-27']);
+    $this->getJson($url.'?as_of=2027-06-26')->assertOk()->assertJsonPath('data.day.date','2027-06-25')->assertJsonPath('data.weekday',5);
+});
+
 it('Timetable office schedules default to local today bound dates suppress closures and use the next meeting day', function () {
     $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]);
     $g=($this->class)(); $teacher=($this->teacher)();
@@ -606,7 +638,7 @@ it('Timetable office schedules default to local today bound dates suppress closu
     $this->getJson($this->base.'/schedules/school?weekday=9')->assertUnprocessable();
     \App\Models\SchoolClosure::create(['masjid_id'=>$this->school->id,'school_year_id'=>$this->year->id,'closed_on'=>'2026-10-12','reason'=>'Practice planning day']);
     foreach (['teacher/'.$teacher->id, 'class/'.$g->id, 'school'] as $lens) {
-        $r=$this->getJson($this->base.'/schedules/'.$lens.'?as_of=2026-10-12')->assertOk()->assertHeader('Cache-Control','no-store, private');
+        $r=$this->getJson($this->base.'/schedules/'.$lens.'?as_of=2026-10-12'.($lens==='school'?'&weekday=1':''))->assertOk()->assertHeader('Cache-Control','no-store, private');
         $r->assertJsonPath('data.days.0.reason','Practice planning day')->assertJsonPath('data.days.0.meetings',[]);
     }
     $this->getJson($this->base.'/schedules/school?as_of=2026-10-12&weekday=0')->assertOk()->assertJsonPath('data.day.state','non_meeting');

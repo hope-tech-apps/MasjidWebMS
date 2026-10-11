@@ -177,6 +177,19 @@ test('Timetable OFF typed route returns the pre-feature not-found page for both 
     }
 });
 
+test('Timetable teacher typed schedule route uses only the selected schools true-only flag', async () => {
+    const calls:string[]=[];
+    const auth={isAuthenticated:true,dashboardMasjidId:2,user:{type:'Teacher',masjid:{id:1,school_timetable_enabled:true},memberships:[{masjid_id:1,masjid:{school_timetable_enabled:true}},{masjid_id:2,masjid:{}}]}};
+    let flag:any;
+    const routes=await loadTs('router/routes/teacherRoutes.ts',{'vue-router':{},'@/stores/authStore':{useAuthStore:()=>auth},'@/core/services/TeacherApiService':{default:{get:async(url:string)=>{calls.push(url);return{data:{data:{id:2,school_timetable_enabled:flag}}};}}}});
+    const route=routes.default[0].children.find((r:any)=>r.path==='schedule');
+    assert.equal(typeof route.beforeEnter,'function');
+    for (flag of [undefined,false,'true',1,true]) {
+        assert.equal(await route.beforeEnter(),flag===true?true:'/auth/404');
+    }
+    assert.deepEqual(calls,Array(5).fill('/api/teacher/masjids/2/school'));
+});
+
 test('Timetable mounted controls and modal use neighbouring Bootstrap theme classes', async () => {
     const s=await screen();try {
         click(s.button('Science'));await flush();
