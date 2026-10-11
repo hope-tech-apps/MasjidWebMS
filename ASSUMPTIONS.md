@@ -430,3 +430,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Equal fallback clocks share one column with both names/IDs. Tied overlaps choose the earlier displayed row, consistently and deterministically. Teacher grids retain one card in each assigned teacher's row, while class grids have one card per meeting.
 - Phone gutter expansion uses 8px on either side so the observed 240px strip at 320 becomes 256px (96 + 150 + 10); this is CSS intent, not a measured browser result.
 - SQLite/mounted Vue/source and compiled CSS checks are local evidence only. Real browser geometry, print pagination, assistive technology, MySQL, CI, staging and production remain unchecked.
+
+## 2026-10-11 Student allergies
+
+- Named child forms are either repeatable firstName/lastName or flat studentFirstName/studentLastName. Reject incompatible selected fields/forms explicitly.
+- Existing guardian edges are matching evidence, not a credential grant. Class membership must be role member; source answers are only copied by authenticated office/explicit CLI.

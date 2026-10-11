@@ -93,7 +93,18 @@
                      mark buttons tapped quickly, and a slip must not open a
                      sheet over the register. -->
                 <div v-else class="list-group">
-                    <button v-for="s in students" :key="s.membership_id" type="button"
+                    <template v-for="s in students" :key="s.membership_id">
+                        <div v-if="Object.prototype.hasOwnProperty.call(s, 'student_allergy')" class="list-group-item d-flex align-items-start gap-2 tc-allergy-roster-row">
+                            <button type="button" class="btn btn-link p-0 d-flex align-items-start gap-2 flex-grow-1 tc-allergy-name" @click="sheetFor = s">
+                                <PersonAvatar :avatar="s.contact?.avatar" :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="40" />
+                                <span class="fw-semibold small">{{ name(s.contact) }}
+                                    <span v-if="s.grade_label" class="badge bg-primary-subtle text-primary-emphasis fw-normal">{{ s.grade_label }}</span>
+                                    <span v-if="ageLabel(s.age)" class="text-muted small">{{ ageLabel(s.age) }}</span>
+                                </span>
+                            </button>
+                            <AllergyBadge :note="s.student_allergy" />
+                        </div>
+                    <button v-else type="button"
                             class="list-group-item list-group-item-action d-flex align-items-center gap-3 tc-roster-row"
                             @click="sheetFor = s">
                         <PersonAvatar :avatar="s.contact?.avatar"
@@ -113,6 +124,7 @@
                         </div>
                         <i class="bi bi-chevron-right text-muted"></i>
                     </button>
+                    </template>
                 </div>
             </section>
 
@@ -165,9 +177,10 @@
                              class="list-group-item d-flex align-items-center gap-3 flex-wrap tc-att-row">
                             <PersonAvatar :avatar="s.contact?.avatar"
                                           :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="36" />
-                            <div class="flex-grow-1">
-                                <div class="d-flex align-items-center gap-2">
-                                    <span class="fw-semibold small">{{ name(s.contact) }}</span>
+                            <div class="flex-grow-1" :class="{ 'tc-allergy-name': s.student_allergy !== undefined }">
+                                <div class="d-flex gap-2" :class="s.student_allergy !== undefined ? 'align-items-start' : 'align-items-center'">
+                                    <span class="fw-semibold small" :class="{ 'tc-allergy-student-name': s.student_allergy !== undefined }">{{ name(s.contact) }}</span>
+                                    <AllergyBadge v-if="s.student_allergy !== undefined" :note="registerAllergies[s.membership_id]" />
                                     <span v-if="s.grade_label"
                                           class="badge bg-primary-subtle text-primary-emphasis fw-normal">
                                         {{ s.grade_label }}
@@ -2616,6 +2629,7 @@
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText, uploadErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
+import AllergyBadge from '@/components/classes/AllergyBadge.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
 import SubjectWorkPage from './subject/SubjectWorkPage.vue';
@@ -2776,6 +2790,7 @@ onBeforeUnmount(() => {
 });
 
 const students = computed<any[]>(() => group.value?.students ?? []);
+const registerAllergies = ref<Record<number, any>>({});
 // The student whose sheet is open (Roster tab), or null.
 const sheetFor = ref<any>(null);
 
@@ -2824,12 +2839,14 @@ const offDayNote = computed(() => {
 });
 
 const loadAttendance = async () => {
+    registerAllergies.value = {};
     attLoading.value = true;
     attError.value = '';
     attSaved.value = false;
     try {
         const res = await TeacherApiService.get(`${base.value}/attendance?date=${attDate.value}`);
         const data = res.data?.data ?? {};
+        registerAllergies.value = Object.fromEntries((data.students ?? []).map((s: any) => [s.membership_id, s.student_allergy]));
         const day = data.school_day;
         schoolDay.value = day && typeof day === 'object'
             ? {
@@ -2875,6 +2892,7 @@ const saveAttendance = async () => {
             })),
         };
         const res = await TeacherApiService.put(`${base.value}/attendance`, payload);
+        registerAllergies.value = Object.fromEntries((res.data?.data?.students ?? []).map((s: any) => [s.membership_id, s.student_allergy]));
         attTaken.value = !!res.data?.data?.taken;
         attSaved.value = true;
     } catch (e: any) {
@@ -6987,3 +7005,10 @@ watch(() => [route.query.tab, route.query.week], ([tab, week], [previousTab]) =>
 <!-- The phone layout, in its own file so it can change without touching the
      template above. Scoped like the block before it. -->
 <style scoped src="./TeacherClass.phone.css"></style>
+
+<style scoped>
+.tc-allergy-name { min-inline-size: 0; text-align: start; overflow-wrap: anywhere; }
+.tc-allergy-name > span { min-inline-size: 0; white-space: normal; }
+.tc-allergy-student-name { min-inline-size: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
+.tc-allergy-roster-row .tc-allergy-name { color: inherit; text-decoration: none; }
+</style>

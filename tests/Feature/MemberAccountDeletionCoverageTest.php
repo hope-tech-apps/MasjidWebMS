@@ -29,7 +29,7 @@ class MemberAccountDeletionCoverageTest extends TestCase
     #[Test]
     public function every_column_that_points_at_a_contact_is_classified(): void
     {
-        $classified = array_merge(MemberAccountDeletion::OFFICE_RECORDS, MemberAccountDeletion::LOGIN_RECORDS);
+        $classified = array_merge(MemberAccountDeletion::OFFICE_RECORDS, MemberAccountDeletion::LOGIN_RECORDS, MemberAccountDeletion::CASCADE_RECORDS);
 
         $tables = array_map(static fn (array $table) => (string) $table['name'], Schema::getTables());
         $this->assertGreaterThan(50, count($tables), 'The schema walk found almost no tables — the migrations did not run.');
@@ -56,7 +56,7 @@ class MemberAccountDeletionCoverageTest extends TestCase
             [],
             $unclassified,
             'These columns can hold a contact id but MemberAccountDeletion does not know them. Add each to '
-            . 'OFFICE_RECORDS (keeps the contact) or LOGIN_RECORDS (cleared by the deletion).'
+            . 'OFFICE_RECORDS (keeps the contact), LOGIN_RECORDS (cleared by the deletion) or CASCADE_RECORDS (follows contact erasure).'
         );
     }
 

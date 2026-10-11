@@ -554,4 +554,14 @@ return [
         'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
     ],
 
+    'student_allergies' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Student allergies',
+        'description' => 'Keep student allergies for the office and assigned class teachers.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
 ];

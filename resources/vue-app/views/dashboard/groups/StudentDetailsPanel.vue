@@ -157,7 +157,8 @@
                             </template>
                         </template>
 
-                        <p class="small text-muted mt-4 mb-0">
+                        <slot v-if="allergiesEnabled" name="allergies" :student="student" />
+                        <p v-else class="small text-muted mt-4 mb-0">
                             Allergies, medical notes and emergency contacts are not kept on a student's record. If the
                             family filled in an enrolment form, they are in Forms, under that form's responses.
                         </p>
@@ -237,6 +238,7 @@ const props = defineProps<{
     memberships: GroupMembership[];
     /** The grade is being saved, so its field cannot be typed in. */
     savingGrade?: boolean;
+    allergiesEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{

@@ -1479,6 +1479,14 @@ Route::prefix('admin')->group(function () {
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                     });
 
+                Route::middleware(['capability:student_allergies', 'permission:manage contacts'])->group(function () {
+                    Route::get('{masjid_id}/students/allergy-forms', [\App\Http\Controllers\AdminDashboard\StudentAllergiesController::class, 'forms']);
+                    Route::post('{masjid_id}/students/copy-allergies', [\App\Http\Controllers\AdminDashboard\StudentAllergiesController::class, 'copy']);
+                    Route::get('{masjid_id}/groups/{group_id}/members/{membership_id}/allergies', [\App\Http\Controllers\AdminDashboard\StudentAllergiesController::class, 'show']);
+                    Route::put('{masjid_id}/groups/{group_id}/members/{membership_id}/allergies', [\App\Http\Controllers\AdminDashboard\StudentAllergiesController::class, 'update']);
+                    Route::get('{masjid_id}/groups/{group_id}/roster.csv', [\App\Http\Controllers\AdminDashboard\StudentAllergiesController::class, 'export']);
+                });
+
                 // A student's DATE OF BIRTH, so the class roster can show an age.
                 // The roster row itself carries only the whole-number age; the
                 // date is read and set here, by roster row, for a student in a

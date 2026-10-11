@@ -327,3 +327,7 @@ export type BackendApiRoute =
     | `/api/admin/masjids/${string}/shop/sales?${string}`
     | `/api/admin/masjids/${string}/shop/sales/${string}/collect`
     | `/api/admin/masjids/${string}/shop/sales/${string}/resolve`
+
+    | `/api/admin/masjids/${string}/students/allergy-forms`
+    | `/api/admin/masjids/${string}/students/copy-allergies`
+    | `/api/admin/masjids/${string}/groups/${string}/members/${string}/allergies`

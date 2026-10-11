@@ -108,6 +108,16 @@ final class ClassSubjectMode
         return SchoolSettings::timetable($org);
     }
 
+    /** Student health is independent of subjects. Reuse main's request row, including OFF. */
+    public static function allergiesEnabled(int|string|null $masjidId): bool
+    {
+        if ($masjidId === null) return false;
+        $id = (int) $masjidId;
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::withTrashed()->select(['id', 'org_type', 'capability_overrides', 'deleted_at'])->find($id);
+        return StudentAllergies::enabled($org);
+    }
+
     /** No schema lookup: an old SELECT * row simply has no hint before migration. */
     public static function timetableRecordsHeld(int $id): bool
     {

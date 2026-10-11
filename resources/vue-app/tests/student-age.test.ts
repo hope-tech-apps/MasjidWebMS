@@ -690,13 +690,15 @@ const section = (from: string, to: string) => {
     return teacherClass.slice(start, end);
 };
 
-test('teacher roster: the whole row is one button with a chevron, and it opens the sheet', () => {
+test('teacher roster: the OFF row remains one button; the ON row has a separate allergy control', () => {
     const roster = section('ROSTER (read only)', 'ATTENDANCE -->');
 
-    assert.match(roster, /<button v-for="s in students" :key="s\.membership_id" type="button"\s+class="list-group-item list-group-item-action [^"]*tc-roster-row"\s+@click="sheetFor = s">/);
+    assert.match(roster, /<template v-for="s in students" :key="s\.membership_id">/);
+    assert.match(roster, /<button v-else type="button"\s+class="list-group-item list-group-item-action [^"]*tc-roster-row"\s+@click="sheetFor = s">/);
     assert.match(roster, /<i class="bi bi-chevron-right text-muted"><\/i>\s*<\/button>/);
-    // One target per row: no second button inside it (the Avatar button moved into the sheet).
-    assert.equal((roster.match(/<button/g) ?? []).length, 1);
+    // The enabled badge is a sibling of the sheet button, never nested inside it.
+    assert.match(roster, /<\/button>\s*<AllergyBadge :note="s\.student_allergy" \/>/);
+    assert.equal((roster.match(/<button/g) ?? []).length, 2);
     assert.match(roster, /<span v-if="ageLabel\(s\.age\)" class="text-muted small">\{\{ ageLabel\(s\.age\) \}\}<\/span>/);
     assert.match(teacherClass, /\.tc-roster-row \{ min-height: 56px; \}/);
     assert.match(teacherClass, /<TeacherStudentSheet v-if="sheetFor" :student="sheetFor" :masjid-id="masjidId" :base="base"\s+:is-class="group\?\.kind === 'class'"\s+@close="sheetFor = null" @avatar-saved="onAvatarSaved" \/>/);

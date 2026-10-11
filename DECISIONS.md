@@ -9573,3 +9573,13 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Reuse the neighbouring FormResponsesView btn-primary/btn-outline-primary selection idiom plus active/aria-pressed; no theme changes or literal colors. Group labels and controls, stacking below the page's 820px breakpoint.
 - Print overrides the app table's rem-based typography/spacing; protects only grid rows, not the enclosing document row. Normal wrapping preserves whole words. Closure is a single dated sentence; unplaced teacher list is school/teacher only. Phone columns use 96/150px and half-rem strip gutter expansion at <=400px.
 - No commit, CHANGELOG.md or CAPTURE_* variables per owner. Real-browser geometry/pagination cannot be claimed: dedicated local headless Chrome aborted before about:blank (exit 134).
+
+## 2026-10-11 Student allergies
+
+- Separate contact+school table; no Contact relationship/appends. Office clear is a retained null office row, preserving office precedence over subsequent copies.
+- Source contact health note cascades on force-delete/merge, never reassigned. Survivor keeps only its own health record; soft delete retains source note. Avoids assigning an absorbed child's note to a different child and preserves OFF merge SQL.
+- No response-child/contact stored link exists. Use exact normalised first+last AND guardian email (phone only if response email absent). No guessed matching or automatic arrival copy.
+- Class roster had no CSV action; ON-only class roster export added. Existing school records and form-response exports unchanged.
+- Newest response ID wins per matched contact, including an empty answer; later duplicate entries and older responses are superseded. Empty form answers clear prior form records only on an explicit copy. Office precedence is permanent until an office changes the record, including clears.
+- Health text uses the existing encrypted-cast pattern so database write errors cannot log plaintext bindings. Source/editor IDs remain historical references without FK retirement errors.
+- App account erasure retains notes while existing office records retain the contact; otherwise health follows contact erasure by cascade. A classification-only CASCADE_RECORDS list preserves OFF erasure SQL.

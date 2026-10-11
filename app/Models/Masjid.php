@@ -546,6 +546,7 @@ class Masjid extends Model implements HasMedia
 
         if (! \App\Support\SchoolSettings::classSubjectReportSummary($this)) unset($out['class_subject_report_summary']);
         if (! \App\Support\SchoolSettings::timetable($this)) unset($out['school_timetable']);
+        if (! \App\Support\StudentAllergies::enabled($this)) unset($out['student_allergies']);
 
         return $out;
     }

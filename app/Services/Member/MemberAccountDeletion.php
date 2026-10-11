@@ -83,6 +83,12 @@ use Illuminate\Support\Facades\Log;
  */
 class MemberAccountDeletion
 {
+    // These records follow contact deletion by FK cascade, like the allergy merge decision.
+    // Roster rows already keep a student contact (including withdrawn rows). If all office
+    // records have gone, a health note alone does not prevent the contact's erasure.
+    // Classification only: adds no request or erasure SQL while the switch is off.
+    public const CASCADE_RECORDS = ['student_allergies' => ['contact_id']];
+
     public const OUTCOME_ERASED = 'erased';
     public const OUTCOME_LOGIN_REMOVED = 'login_removed';
 

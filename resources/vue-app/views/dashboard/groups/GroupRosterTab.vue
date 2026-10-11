@@ -12,11 +12,14 @@
                 <button v-if="canMoveClass" type="button" class="btn btn-sm btn-outline-primary" @click="movingClass = true">
                     <i class="bi bi-arrow-right-circle me-1" aria-hidden="true"></i> Move the class
                 </button>
+                <button v-for="exportKey in (allergiesEnabled ? ['allergy-export'] : [])" :key="exportKey" type="button" class="btn btn-sm btn-outline-success" :disabled="exportingAllergies" @click="exportAllergyRoster">Export roster CSV</button>
                 <button ref="addToRosterButton" class="btn btn-sm btn-success" @click="openAddModal">
                     <i class="bi bi-person-plus me-1"></i> Add to roster
                 </button>
             </div>
         </div>
+
+        <CopyStudentAllergies v-for="copyKey in (allergiesEnabled ? [masjidId] : [])" :key="copyKey" :masjid-id="masjidId" @copied="reload" />
 
         <div v-if="loading" class="text-center py-5">
             <div class="spinner-border text-primary" role="status">
@@ -144,6 +147,16 @@
                                     Only a student's: a legacy leader row is a
                                     teacher, and has no guardians to show.
                                 -->
+                                <template v-if="allergiesEnabled">
+                                    <span class="student-name-with-allergy">
+                                        <button v-if="isStudentRow(membership)" type="button" class="btn btn-link p-0 student-name-button" title="Open student details" @click="openStudent(membership)">
+                                            {{ fullName(membership.contact) }}
+                                        </button>
+                                        <template v-else>{{ fullName(membership.contact) }}</template>
+                                        <AllergyBadge v-if="isStudentRow(membership)" :note="membership.student_allergy" />
+                                    </span>
+                                </template>
+                                <template v-else>
                                 <button v-if="isStudentRow(membership)"
                                         type="button"
                                         class="btn btn-link p-0 student-name-button"
@@ -152,6 +165,7 @@
                                     {{ fullName(membership.contact) }}
                                 </button>
                                 <template v-else>{{ fullName(membership.contact) }}</template>
+                                </template>
                                 <span v-if="isPending(membership)" class="badge bg-warning-subtle text-warning ms-1">
                                     Unconfirmed
                                 </span>
@@ -738,6 +752,7 @@
         <StudentDetailsPanel
             :student="studentFor"
             :memberships="memberships"
+            :allergies-enabled="allergiesEnabled"
             :saving-grade="studentFor !== null && savingGrade === studentFor.id"
             @close="closeStudent"
             @save-grade="saveGrade"
@@ -763,6 +778,9 @@
                  a login that may not see it. Students of a class only. -->
             <template #age="{ student }">
                 <div v-if="isClass && ageLabel(student.age)" class="small text-muted mb-1">{{ ageLabel(student.age, student.age_given) }}</div>
+            </template>
+            <template #allergies="{ student }">
+                <StudentAllergyField v-if="allergiesEnabled" :key="student.id" :masjid-id="masjidId" :group-id="groupId" :membership-id="student.id" @saved="allergiesSaved(student, $event)" />
             </template>
             <template #birth-date="{ student }">
                 <StudentBirthDateForm
@@ -796,6 +814,9 @@ import ApiService from '@/core/services/ApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentDetailsPanel from './StudentDetailsPanel.vue';
+import AllergyBadge from '@/components/classes/AllergyBadge.vue';
+import StudentAllergyField from './StudentAllergyField.vue';
+import CopyStudentAllergies from './CopyStudentAllergies.vue';
 import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { Contact } from '@/core/types/data/masjid-related/Contact';
 import { ConsentScope, GroupContact, GroupMembership, GroupMembershipPayload, GroupRole } from '@/core/types/data/masjid-related/Group';
@@ -867,6 +888,23 @@ const props = defineProps<{
 const avatarFor = ref<any>(null);
 
 const masjidId = computed(() => masjidStore.masjid?.id ?? 0);
+const allergiesEnabled = computed(() => isClass.value && masjidStore.masjid?.org_type === 'school' && masjidStore.masjid?.capabilities?.student_allergies === true);
+const exportingAllergies = ref(false);
+const allergiesSaved = (student: GroupMembership, record: any) => {
+    // Update every displayed row for the same child, including a withdrawn one.
+    for (const row of props.memberships) if (row.contact_id === student.contact_id && row.role === 'member') row.student_allergy = record;
+};
+async function exportAllergyRoster() {
+    if (!allergiesEnabled.value || exportingAllergies.value) return;
+    exportingAllergies.value = true;
+    try {
+        const response = await ApiService.VueApp.axios.get(`/api/admin/masjids/${masjidId.value}/groups/${props.groupId}/roster.csv` as BackendApiRoute, { responseType: 'blob' });
+        const url = URL.createObjectURL(response.data);
+        const link = document.createElement('a');
+        link.href = url; link.download = 'class-roster.csv'; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    } catch { Swal.fire({ icon: 'error', title: 'Could not export roster', text: 'Please try again.' }); }
+    finally { exportingAllergies.value = false; }
+}
 
 // Which grade a student is in, inside a class that spans more than one. Saved on
 // change rather than behind a Save button: it is one short field on a row the
@@ -1897,4 +1935,10 @@ onBeforeUnmount(() => { document.body.style.overflow = ''; });
     text-decoration: underline;
     vertical-align: middle;
 }
+</style>
+
+<style scoped>
+.student-name-with-allergy { display: inline-flex; align-items: flex-start; gap: .375rem; max-inline-size: 16rem; vertical-align: top; }
+.student-name-with-allergy .student-name-button { flex: 1 1 auto; min-inline-size: 0; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+@media (max-width: 390px) { .student-name-with-allergy { max-inline-size: 11rem; } }
 </style>

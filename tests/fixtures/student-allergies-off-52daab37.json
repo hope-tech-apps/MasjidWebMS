@@ -1,0 +1,279 @@
+{
+    "office-roster": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"permissions\"",
+            "select \"roles\".*, \"role_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"role_has_permissions\".\"role_id\" as \"pivot_role_id\" from \"roles\" inner join \"role_has_permissions\" on \"roles\".\"id\" = \"role_has_permissions\".\"role_id\" where \"role_has_permissions\".\"permission_id\" in (1, 2, 3, 4, 5, 6, 7, 8)",
+            "select \"permissions\".*, \"model_has_permissions\".\"model_id\" as \"pivot_model_id\", \"model_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"model_has_permissions\".\"model_type\" as \"pivot_model_type\" from \"permissions\" inner join \"model_has_permissions\" on \"permissions\".\"id\" = \"model_has_permissions\".\"permission_id\" where \"model_has_permissions\".\"model_id\" in (1) and \"model_has_permissions\".\"model_type\" = ?",
+            "select \"roles\".*, \"model_has_roles\".\"model_id\" as \"pivot_model_id\", \"model_has_roles\".\"role_id\" as \"pivot_role_id\", \"model_has_roles\".\"model_type\" as \"pivot_model_type\" from \"roles\" inner join \"model_has_roles\" on \"roles\".\"id\" = \"model_has_roles\".\"role_id\" where \"model_has_roles\".\"model_id\" in (1) and \"model_has_roles\".\"model_type\" = ?",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select name, type, not \"notnull\" as \"nullable\", dflt_value as \"default\", pk as \"primary\", hidden as \"extra\" from pragma_table_xinfo('group_memberships', 'main') order by cid asc",
+            "select \"sql\" from \"main\".sqlite_master where type = 'table' and name = 'group_memberships'",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"group_memberships\".\"masjid_id\" = ? order by \"role\" asc, \"id\" asc",
+            "select \"id\", \"first_name\", \"last_name\", \"email\", \"phone\", \"avatar_character\", \"avatar_tone\", \"avatar_color\", \"staff_avatar_character\", \"staff_avatar_tone\", \"staff_avatar_color\" from \"contacts\" where \"contacts\".\"id\" in (1, 2) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select \"id\", \"first_name\", \"last_name\", \"email\" from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select name, type, not \"notnull\" as \"nullable\", dflt_value as \"default\", pk as \"primary\", hidden as \"extra\" from pragma_table_xinfo('contacts', 'main') order by cid asc",
+            "select \"sql\" from \"main\".sqlite_master where type = 'table' and name = 'contacts'",
+            "select name, type, not \"notnull\" as \"nullable\", dflt_value as \"default\", pk as \"primary\", hidden as \"extra\" from pragma_table_xinfo('contacts', 'main') order by cid asc",
+            "select \"sql\" from \"main\".sqlite_master where type = 'table' and name = 'contacts'",
+            "select \"id\", \"masjid_id\", \"date_of_birth\", \"age_given\" from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc"
+        ],
+        "payload": {
+            "status": "success",
+            "data": [
+                {
+                    "id": 2,
+                    "masjid_id": 1,
+                    "group_id": 1,
+                    "contact_id": 2,
+                    "role": "guardian",
+                    "guardian_of_contact_id": 1,
+                    "joined_at": null,
+                    "created_at": "2026-10-11T16:00:00.000000Z",
+                    "updated_at": "2026-10-11T16:00:00.000000Z",
+                    "consent_granted_at": null,
+                    "consent_scope": null,
+                    "provenance": "confirmed",
+                    "confirmed_at": null,
+                    "confirmed_by_user_id": null,
+                    "source_registration_id": null,
+                    "grade_label": null,
+                    "left_on": null,
+                    "left_recorded_by_user_id": null,
+                    "moved_from_group_id": null,
+                    "moved_to_group_id": null,
+                    "moved_on": null,
+                    "moved_by_user_id": null,
+                    "consent_carried_from_group_id": null,
+                    "contact": {
+                        "id": 2,
+                        "first_name": "Casey",
+                        "last_name": "Willow",
+                        "email": "casey@example.invalid",
+                        "phone": "+15555550104",
+                        "avatar_character": null,
+                        "avatar_tone": null,
+                        "avatar_color": null,
+                        "staff_avatar_character": null,
+                        "staff_avatar_tone": null,
+                        "staff_avatar_color": null,
+                        "avatar": null
+                    },
+                    "guardian_of": {
+                        "id": 1,
+                        "first_name": "Robin",
+                        "last_name": "Willow",
+                        "email": "robin@example.invalid",
+                        "avatar": null
+                    },
+                    "confirmed_by": null,
+                    "source_registration": null,
+                    "moved_to": null,
+                    "moved_from": null,
+                    "consent_carried_from": null,
+                    "moved_to_state": null,
+                    "consent_less_than_carried_from": false,
+                    "age": null,
+                    "age_given": false,
+                    "claim": {
+                        "fingerprint": null,
+                        "contested": false,
+                        "rival_claim_ids": [],
+                        "origin": {
+                            "state": "confirmed",
+                            "registration_id": null,
+                            "payer": null
+                        }
+                    }
+                },
+                {
+                    "id": 1,
+                    "masjid_id": 1,
+                    "group_id": 1,
+                    "contact_id": 1,
+                    "role": "member",
+                    "guardian_of_contact_id": null,
+                    "joined_at": null,
+                    "created_at": "2026-10-11T16:00:00.000000Z",
+                    "updated_at": "2026-10-11T16:00:00.000000Z",
+                    "consent_granted_at": null,
+                    "consent_scope": null,
+                    "provenance": "confirmed",
+                    "confirmed_at": null,
+                    "confirmed_by_user_id": null,
+                    "source_registration_id": null,
+                    "grade_label": null,
+                    "left_on": null,
+                    "left_recorded_by_user_id": null,
+                    "moved_from_group_id": null,
+                    "moved_to_group_id": null,
+                    "moved_on": null,
+                    "moved_by_user_id": null,
+                    "consent_carried_from_group_id": null,
+                    "contact": {
+                        "id": 1,
+                        "first_name": "Robin",
+                        "last_name": "Willow",
+                        "email": "robin@example.invalid",
+                        "phone": "+15555550103",
+                        "avatar_character": null,
+                        "avatar_tone": null,
+                        "avatar_color": null,
+                        "staff_avatar_character": null,
+                        "staff_avatar_tone": null,
+                        "staff_avatar_color": null,
+                        "avatar": null
+                    },
+                    "guardian_of": null,
+                    "confirmed_by": null,
+                    "source_registration": null,
+                    "moved_to": null,
+                    "moved_from": null,
+                    "consent_carried_from": null,
+                    "moved_to_state": null,
+                    "consent_less_than_carried_from": false,
+                    "age": null,
+                    "age_given": false,
+                    "claim": {
+                        "fingerprint": null,
+                        "contested": false,
+                        "rival_claim_ids": [],
+                        "origin": {
+                            "state": "confirmed",
+                            "registration_id": null,
+                            "payer": null
+                        }
+                    }
+                }
+            ],
+            "meta": {
+                "pending_claims": 0,
+                "contested_claims": 0,
+                "group_name": "Practice Class",
+                "teaches_students": true,
+                "school_today": "2026-10-11",
+                "move_note": null
+            }
+        }
+    },
+    "student-details": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"group_memberships\".\"id\" = ? and \"group_memberships\".\"masjid_id\" = ? limit 1",
+            "select * from \"contacts\" where \"contacts\".\"id\" = ? and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "date_of_birth": null,
+                "age": null,
+                "age_given": false,
+                "unreadable": false,
+                "school_today": "2026-10-11"
+            }
+        }
+    },
+    "teacher-roster": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select \"t\".\"group_id\", \"t\".\"id\" as \"thread_id\", count(*) as unread from \"group_messages\" inner join \"group_threads\" as \"t\" on \"t\".\"id\" = \"group_messages\".\"group_thread_id\" and \"t\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"t\".\"deleted_at\" is null left join \"group_thread_reads\" as \"r\" on \"r\".\"group_thread_id\" = \"t\".\"id\" and \"r\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"r\".\"user_id\" = ? where (\"group_messages\".\"author_user_id\" is null or \"group_messages\".\"author_user_id\" <> ?) and ((\"r\".\"id\" is not null and ((\"r\".\"last_read_message_id\" is not null and \"group_messages\".\"id\" > \"r\".\"last_read_message_id\") or (\"r\".\"last_read_message_id\" is null and (\"r\".\"last_read_at\" is null or \"group_messages\".\"created_at\" > \"r\".\"last_read_at\")))) or (\"r\".\"id\" is null and \"group_messages\".\"created_at\" >= ?)) and \"t\".\"group_id\" in (?) and \"group_messages\".\"masjid_id\" = ? group by \"t\".\"group_id\", \"t\".\"id\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+            "select \"id\", \"first_name\", \"last_name\", \"avatar_character\", \"avatar_tone\", \"avatar_color\", \"staff_avatar_character\", \"staff_avatar_tone\", \"staff_avatar_color\" from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+            "select \"id\", \"masjid_id\", \"date_of_birth\", \"age_given\" from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select \"subjects\" from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "name": "Practice Class",
+                "kind": "class",
+                "description": "Quisquam suscipit recusandae animi et amet ut.",
+                "is_active": true,
+                "arabic_stage": "letters",
+                "points_period": "running",
+                "my_subjects": [
+                    "arabic"
+                ],
+                "subject_labels": {
+                    "quran": "Qur'an",
+                    "arabic": "Arabic",
+                    "islamic_studies": "Islamic Studies"
+                },
+                "students": [
+                    {
+                        "membership_id": 1,
+                        "grade_label": null,
+                        "contact": {
+                            "id": 1,
+                            "first_name": "Robin",
+                            "last_name": "Willow",
+                            "avatar": null
+                        },
+                        "age": null
+                    }
+                ],
+                "unread_messages": 0
+            }
+        }
+    },
+    "teacher-attendance": {
+        "sql": [
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+            "select \"id\", \"first_name\", \"last_name\", \"avatar_character\", \"avatar_tone\", \"avatar_color\", \"staff_avatar_character\", \"staff_avatar_tone\", \"staff_avatar_color\" from \"contacts\" where \"contacts\".\"id\" in (1) and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"attendance_records\" where \"group_id\" = ? and strftime('%Y-%m-%d', \"session_date\") = cast(? as text) and \"attendance_records\".\"masjid_id\" = ?",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "session_date": "2026-10-11",
+                "taken": false,
+                "students": [
+                    {
+                        "membership_id": 1,
+                        "grade_label": null,
+                        "contact": {
+                            "id": 1,
+                            "first_name": "Robin",
+                            "last_name": "Willow",
+                            "avatar": null
+                        },
+                        "status": null,
+                        "note": null
+                    }
+                ],
+                "school_day": {
+                    "has_calendar": false,
+                    "in_year": false,
+                    "meeting_day": false,
+                    "closed": false,
+                    "reason": null
+                }
+            }
+        }
+    }
+}

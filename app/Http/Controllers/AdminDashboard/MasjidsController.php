@@ -372,6 +372,15 @@ class MasjidsController extends Controller
      */
     private function withoutHiddenCalendarTerms($response, string $masjid_id)
     {
+        if (! \App\Support\ClassSubjectMode::allergiesEnabled((int) $masjid_id)) {
+            $payload = $response->getData(true);
+            foreach ($payload['data']['groups'] as &$group) {
+                $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== 'student_allergies'));
+            }
+            unset($group);
+            $payload['data']['history'] = array_values(array_filter($payload['data']['history'], fn ($row) => $row['capability'] !== 'student_allergies'));
+            $response->setData($payload);
+        }
         if (! \App\Support\ClassSubjectMode::timetableEnabled((int) $masjid_id)) {
             $payload = $response->getData(true);
             foreach ($payload['data']['groups'] as &$group) {

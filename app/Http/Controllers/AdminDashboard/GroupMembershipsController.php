@@ -215,10 +215,11 @@ class GroupMembershipsController extends Controller
         // family gave (no date of birth on file), so the screen can say so: it
         // may be one short after a birthday.
         $ages = StudentAge::forRosterShown($group, $memberships);
+        $allergies = \App\Support\StudentAllergies::forRoster($group, $memberships);
 
         return response()->json([
             'status' => 'success',
-            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested, $movedToStates, $lessThanCarried, $ages): array {
+            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested, $movedToStates, $lessThanCarried, $ages, $allergies): array {
                 $isContested = in_array((int) $membership->getKey(), $contested, true);
 
                 return array_merge($membership->toArray(), [
@@ -236,7 +237,7 @@ class GroupMembershipsController extends Controller
                             : [],
                         'origin' => RosterClaimIdentity::origin($membership),
                     ],
-                ]);
+                ], $allergies !== null && $membership->role === GroupMembership::ROLE_MEMBER ? ['student_allergy' => $allergies[(int) $membership->id] ?? null] : []);
             })->values(),
             'meta' => [
                 'pending_claims' => $memberships
