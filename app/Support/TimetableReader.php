@@ -9,13 +9,24 @@ final class TimetableReader
 {
     public function meetings(int $school, int $year, ?string $date, string $lens = 'school', ?int $id = null, ?int $weekday = null): array
     {
+        return $this->read($school, [$year], $date, $lens, $id, $weekday);
+    }
+
+    /** Dated versions for a teacher across the years holding today and the requested week; two bulk queries. */
+    public function teacherVersions(int $school, array $years, int $teacher): array
+    {
+        return $this->read($school, $years, null, 'teacher', $teacher, null);
+    }
+
+    private function read(int $school, array $years, ?string $date, string $lens, ?int $id, ?int $weekday): array
+    {
         if (! in_array($lens, ['teacher','class','room','school'], true)) throw new \InvalidArgumentException('Unknown timetable view.');
         $q = DB::table('timetable_meetings as m')->join('school_years as y', 'y.id', '=', 'm.school_year_id')
             ->join('groups as g', 'g.id', '=', 'm.group_id')->join('timetable_periods as p', 'p.id', '=', 'm.period_id')
             ->leftJoin('class_subjects as s', 's.id', '=', 'm.class_subject_id')
             ->leftJoin('timetable_class_rooms as cr', function ($join) { $join->on('cr.group_id','=','m.group_id')->on('cr.masjid_id','=','m.masjid_id'); })
             ->leftJoin('timetable_rooms as r', 'r.id', '=', DB::raw('COALESCE(m.room_id, cr.room_id)'))
-            ->where('m.masjid_id', $school)->where('m.school_year_id', $year)
+            ->where('m.masjid_id', $school)->whereIn('m.school_year_id', $years)
             ->where('g.masjid_id',$school)->where('y.masjid_id',$school)->where('p.masjid_id',$school);
         if ($date !== null) $q->whereDate('m.effective_from','<=',$date)->where(fn($q)=>$q->whereNull('m.effective_until')->orWhereDate('m.effective_until','>=',$date))
             ->whereDate('y.first_day','<=',$date)->whereDate('y.last_day','>=',$date);

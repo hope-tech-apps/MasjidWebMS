@@ -24,7 +24,7 @@ use App\Models\SchoolYear;
 final class TeacherSchoolHeader
 {
     /**
-     * @return array{id: int, name: string, logo_url: string|null, org_type: string|null, school_calendar_published: bool}
+     * @return array{id: int, name: string, logo_url: string|null, org_type: string|null, school_calendar_published: bool, school_timetable_enabled?: true}
      */
     public static function for(Masjid $masjid): array
     {
@@ -39,7 +39,7 @@ final class TeacherSchoolHeader
             'logo_url' => $logo?->original_url,
             'org_type' => $masjid->org_type,
             'school_calendar_published' => self::calendarPublished((int) $masjid->id),
-        ];
+        ] + (SchoolSettings::timetable($masjid) ? ['school_timetable_enabled' => true] : []);
     }
 
     /**

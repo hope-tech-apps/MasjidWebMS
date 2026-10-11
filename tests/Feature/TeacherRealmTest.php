@@ -305,6 +305,17 @@ class TeacherRealmTest extends TestCase
     }
 
     #[Test]
+    public function timetable_adds_only_a_guarded_read_and_never_a_write_to_the_exact_list(): void
+    {
+        $routes = array_values(array_filter(Route::getRoutes()->getRoutes(), fn ($r) => $r->uri() === 'api/teacher/masjids/{masjid_id}/schedule'));
+        $this->assertCount(1, $routes);
+        $this->assertSame(['GET', 'HEAD'], $routes[0]->methods());
+        foreach (['auth:sanctum', 'teacher', 'tenant', 'capability:school_timetable'] as $gate) {
+            $this->assertContains($gate, $routes[0]->gatherMiddleware());
+        }
+    }
+
+    #[Test]
     public function a_non_teacher_staff_login_cannot_enter_the_teacher_realm(): void
     {
         $admin = User::factory()->create([

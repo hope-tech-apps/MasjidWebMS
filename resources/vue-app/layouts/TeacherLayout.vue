@@ -1,5 +1,5 @@
 <template>
-    <div class="min-vh-100 mn-realm">
+    <div class="min-vh-100 mn-realm" :class="{ 'teacher-with-schedule': timetableEnabled }">
         <nav class="navbar navbar-expand sticky-top mn-topbar">
             <div class="container-fluid px-3 px-lg-4">
                 <router-link to="/teacher" class="navbar-brand d-flex align-items-center gap-2 text-decoration-none teacher-brand">
@@ -26,6 +26,11 @@
                                  :class="{ 'is-active': isCalendarActive }"
                                  aria-label="School calendar" title="School calendar">
                         <i class="bi bi-calendar3"></i><span class="d-none d-sm-inline">Calendar</span>
+                    </router-link>
+                    <router-link v-if="timetableEnabled" to="/teacher/schedule"
+                                 class="nav-link mn-topbar-link teacher-tap" :class="{ 'is-active': route.name === 'teacherSchedule' }"
+                                 :aria-label="t('schedule_title')" :title="t('schedule_title')">
+                        <i class="bi bi-calendar-week" aria-hidden="true"></i><span class="d-none d-sm-inline">{{ t('schedule_title') }}</span>
                     </router-link>
                     <!-- Only with 2+ schools (memberships[] on /api/teacher/user). A
                          teacher at one school sees the header they always saw. -->
@@ -73,6 +78,7 @@ import { landingSchoolId, schoolChoices, switchTarget } from '@/core/helpers/tea
 import { clearTeacherSchoolNotices, provideSelectedSchool, teacherSchoolMismatch, teacherSchoolRefused } from '@/core/tenancy/teacherSchoolGuard';
 import { bumpTenantEpoch, forgetServerTenant } from '@/core/tenancy/tenantRequests';
 import { resetTenantScopedStores } from '@/stores/plugins/tenantStoreReset';
+import { useFamilyLang } from '@/views/family/familyI18n';
 import { useStaffChrome } from '@/core/helpers/staffChrome';
 
 // The staff theme (resources/css/custom/theme.css) for as long as this shell is up.
@@ -94,6 +100,8 @@ const teacherName = ref('');
 const signingOut = ref(false);
 /** True only when the self payload says so; missing, false or a failed read hide the link. */
 const calendarPublished = ref(false);
+const timetableEnabled = ref(false);
+const { t } = useFamilyLang();
 
 // The classes list is the shell's home; keep its nav pill lit while browsing it.
 const isClassesActive = computed(() => route.path === '/teacher');
@@ -189,6 +197,7 @@ async function loadSchoolHeader(): Promise<void> {
         const own: any = authStore.user?.masjid ?? null;
         school.value = own;
         calendarPublished.value = (authStore.user as any)?.school_calendar_published === true;
+        timetableEnabled.value = own?.school_timetable_enabled === true;
         return;
     }
 
@@ -198,6 +207,7 @@ async function loadSchoolHeader(): Promise<void> {
         if (data) {
             school.value = data;
             calendarPublished.value = data.school_calendar_published === true;
+            timetableEnabled.value = data.school_timetable_enabled === true;
         }
     } catch {
         // Not fatal to the shell — the classes screen shows its own error, a 401 is
@@ -205,6 +215,7 @@ async function loadSchoolHeader(): Promise<void> {
         // its 403 interceptor.
         school.value = null;
         calendarPublished.value = false;
+        timetableEnabled.value = false;
     }
 }
 
@@ -263,6 +274,11 @@ const signOut = async () => {
     /* Shrink only; never grow, or the empty header becomes one big link home. */
     min-width: 0;
     flex: 0 1 auto;
+}
+
+@media (max-width: 575.98px) {
+    .teacher-with-schedule .mn-topbar > .container-fluid { flex-wrap: wrap; row-gap: .25rem; }
+    .teacher-with-schedule .mn-topbar .ms-auto { flex-wrap: wrap; gap: .375rem !important; max-width: 100%; }
 }
 
 @media (max-width: 575.98px), (pointer: coarse) {

@@ -9539,3 +9539,11 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Re-enable under the organisation lock ends invalid ongoing/future meetings from today for hidden/missing subjects, archived/inactive classes, absent teachers, removed weekdays and missing/mismatched period sets. Keep earlier history and report the count; do not reopen on restore.
 - Optional Location in the class header picks or creates a school location and assigns it in one organisation-locked save without a school year. Clearing keeps the location. Slots identify classes; all office room wording is Location.
 - Delete the renderer-only phone-width test; actual browser layout remains unverified.
+
+## Teacher timetable step 2 — 2026-10-11
+- No new grant or migration. School-local today independent of selected Monday-to-Sunday week; each day uses its containing year and effective dates. Closure columns are shown even without teacher slots. No calendar years means nothing placed yet.
+- Bulk teacher versions reuse the existing two-query reader; two bulk assignment/visible-subject queries establish subject links. A fresh authenticated page has 11 queries including unchanged realm/tenant/membership middleware.
+- Subject links use existing saved ID/provenance authority. Schedule placement does not grant class roster access; class/subject destination guards remain.
+- Teacher portal was verified English-only; explicit Arabic requirement is met by reusing the family six-language mechanism for new schedule and menu label, including its persisted preference and self-hosted Urdu font. New strings marked MACHINE-DRAFTED.
+- Device instant converted with Intl using the calendar's resolved zone; no change to calendar fallback or school-local slot times. Markers update every 30 seconds; midnight requires a page/this-week read, avoiding background requests.
+- Work remains uncommitted; report artifacts/school-timetable-step2-report.md. Real browser probe SIGABRT, no geometry claim.

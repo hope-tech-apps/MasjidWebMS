@@ -403,3 +403,10 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Scratch output filename follows the supplied fix brief's sibling output log: scratchpad/timetable-1-fix.md, outside artifacts.
 - Pre-migration compatibility is proved with both timetable tables and retention columns absent. Re-enable tests use synthetic raw mutations to emulate invalid retained legacy data that current guards otherwise refuse.
 - SQLite and the mounted renderer establish local behavior; actual MySQL interleavings, CI/staging/production and real browser geometry/RTL/assistive technology remain unchecked.
+
+## Teacher timetable step 2 — 2026-10-11
+- Named isolated worktree at 15011d6c authorizes edits. No HANDOFF.md, no inherited tracked changes; artifacts preserved.
+- ISO Monday weeks make previous/next date changes predictable; Sunday weekend schools show Sunday in the same date-ordered week.
+- Explicit Arabic requirement takes precedence over the English-only existing teacher portal. Reuse existing family locale layer for this new surface, preserving existing teacher screens and OFF menu.
+- Schedule placement does not widen existing class/subject permissions. Teachers without class staff assignment still see their named slots; class destination may refuse under the existing gate.
+- Headless browser aborted; CSS constraints and mounted semantic tests do not prove actual phone layout. No external deployment, MySQL server, fluent translation review, touch or assistive-tech validation performed.

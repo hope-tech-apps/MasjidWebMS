@@ -499,6 +499,9 @@ class AuthController extends Controller
                     // than the teacher. This route binds no tenant, so the school
                     // is named.
                     $user->school_calendar_published = \App\Support\TeacherSchoolHeader::calendarPublished((int) $masjid->id);
+                    if (\App\Support\SchoolSettings::timetable($masjid)) {
+                        $masjid->school_timetable_enabled = true;
+                    }
                 }
 
                 // The switcher's list, on the endpoint the SPA calls on every

@@ -146,6 +146,9 @@ Route::prefix('teacher')
                 // calendar answers `years: []`.
                 Route::get('/school-calendar', [\App\Http\Controllers\Teacher\SchoolCalendarController::class, 'index']);
 
+                Route::get('/schedule', [\App\Http\Controllers\Teacher\TimetableController::class, 'index'])
+                    ->middleware('capability:school_timetable');
+
                 // Per-class: every route below is fenced to a class the teacher
                 // LEADS by `teacher.leads`.
                 Route::prefix('groups/{group_id}')

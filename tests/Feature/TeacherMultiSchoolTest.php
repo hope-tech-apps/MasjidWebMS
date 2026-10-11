@@ -408,7 +408,7 @@ class TeacherMultiSchoolTest extends TestCase
             \App\Support\ClassSubjectInitializer::run($school, false, true);
             // Subject notes and marks are off by default too; swept for real, like the store.
             $on = $school->fresh();
-            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['class_subject_work' => true])])->save();
+            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true])])->save();
             \App\Models\MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $school->id, 'paper_bucks_enabled' => true]);
         }
 
@@ -671,6 +671,7 @@ class TeacherMultiSchoolTest extends TestCase
         $bodyRefusal = [403, 404, 422];
 
         return [
+            'GET /schedule' => ['query' => ['week' => '2026-10-12']],
             'POST /guides/ask' => ['body' => fn () => ['question' => 'How do I open Help?']],
             'POST /behavior-skills' => [
                 'body' => fn (TeacherRealmWorld $w) => ['label' => "MARK-{$w->tag}-NEW-SKILL", 'polarity' => BehaviorSkill::POLARITY_POSITIVE, 'default_points' => 2],

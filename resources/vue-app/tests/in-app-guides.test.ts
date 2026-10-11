@@ -136,6 +136,7 @@ test('Help is the final organisation menu entry and a mounted topbar entry in bo
         const modules: any = {
             '@/core/services/ApiService': { default: {} }, '@/stores/authStore': { useAuthStore: () => auth },
             '@/core/pageTitle': { setOrgTitle() {} }, 'vue-router': { useRoute: () => route, useRouter: () => router },
+            '@/views/family/familyI18n': { useFamilyLang: () => ({ t: (key: string) => key }) },
             '@/core/helpers/staffChrome': chrome,
             '@/core/services/TeacherApiService': { default: { get: async () => ({ data: { data: { name: 'Pebble', id: 1 } } }) } },
             '@/components/teacher/TeacherSchoolPicker.vue': { default: { render: () => null } },

@@ -1,0 +1,147 @@
+{
+    "home": {
+        "sql": [
+            "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" in (1) and \"masjids\".\"deleted_at\" is null",
+            "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+            "select exists(select * from \"school_years\" where \"masjid_id\" = ?) as \"exists\"",
+            "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "name": "Practice Specialist",
+                "email": "specialist@example.invalid",
+                "email_verified_at": "2026-10-12T13:20:00.000000Z",
+                "type": "Teacher",
+                "phone": "+15555550201",
+                "updated_at": "2026-10-12T13:20:00.000000Z",
+                "created_at": "2026-10-12T13:20:00.000000Z",
+                "id": 1,
+                "avatar": null,
+                "school_calendar_published": true,
+                "memberships": [
+                    {
+                        "masjid_id": 1,
+                        "role": "teacher",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 1,
+                            "name": "Practice School",
+                            "org_type": "school"
+                        }
+                    }
+                ],
+                "masjid": {
+                    "id": 1,
+                    "user_id": null,
+                    "name": "Practice School",
+                    "email": "practice@example.invalid",
+                    "email_verified_at": null,
+                    "phone": "+15555550200",
+                    "phone_verified_at": null,
+                    "country_id": "1",
+                    "city_id": "1",
+                    "address": "Practice",
+                    "latitude": 0,
+                    "longitude": 0,
+                    "website_link": null,
+                    "created_by": null,
+                    "updated_by": null,
+                    "deleted_by": null,
+                    "created_at": "2026-10-12T13:20:00.000000Z",
+                    "updated_at": "2026-10-12T13:20:00.000000Z",
+                    "deleted_at": null,
+                    "timezone": "America\/New_York",
+                    "copyright_text": null,
+                    "app_store_link": null,
+                    "google_play_link": null,
+                    "google_maps_key": null,
+                    "stripe_account_id": null,
+                    "stripe_charges_enabled": false,
+                    "stripe_payouts_enabled": false,
+                    "crm_enabled": true,
+                    "assistant_enabled": false,
+                    "tax_id": null,
+                    "statement_signatory": null,
+                    "mailing_locale": null,
+                    "org_type": "school",
+                    "listed_at": null,
+                    "parent_id": null,
+                    "capability_overrides": [],
+                    "forms_card_via_masjid_id": null,
+                    "forms_card_via_set_at": null,
+                    "forms_card_via_set_by": null,
+                    "stripe_deauthorized_at": null,
+                    "slug": null,
+                    "description": null,
+                    "privacy_policy_url": null,
+                    "logo": null,
+                    "logo_url": null
+                }
+            }
+        }
+    },
+    "school": {
+        "sql": [
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+            "select exists(select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ?) as \"exists\"",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "name": "Practice School",
+                "logo_url": null,
+                "org_type": "school",
+                "school_calendar_published": true
+            }
+        }
+    },
+    "classes": {
+        "sql": [
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+            "select * from \"groups\" where exists (select * from \"users\" inner join \"group_staff\" on \"users\".\"id\" = \"group_staff\".\"user_id\" where \"groups\".\"id\" = \"group_staff\".\"group_id\" and \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null) and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? order by position IS NULL, \"position\" asc, \"name\" asc, \"id\" asc",
+            "select \"t\".\"group_id\", \"t\".\"id\" as \"thread_id\", count(*) as unread from \"group_messages\" inner join \"group_threads\" as \"t\" on \"t\".\"id\" = \"group_messages\".\"group_thread_id\" and \"t\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"t\".\"deleted_at\" is null left join \"group_thread_reads\" as \"r\" on \"r\".\"group_thread_id\" = \"t\".\"id\" and \"r\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"r\".\"user_id\" = ? where (\"group_messages\".\"author_user_id\" is null or \"group_messages\".\"author_user_id\" <> ?) and ((\"r\".\"id\" is not null and ((\"r\".\"last_read_message_id\" is not null and \"group_messages\".\"id\" > \"r\".\"last_read_message_id\") or (\"r\".\"last_read_message_id\" is null and (\"r\".\"last_read_at\" is null or \"group_messages\".\"created_at\" > \"r\".\"last_read_at\")))) or (\"r\".\"id\" is null and \"group_messages\".\"created_at\" >= ?)) and \"t\".\"group_id\" in (?) and \"group_messages\".\"masjid_id\" = ? group by \"t\".\"group_id\", \"t\".\"id\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+            "select * from \"school_closures\" where \"school_closures\".\"school_year_id\" in (1) and \"school_closures\".\"masjid_id\" = ? order by \"closed_on\" asc",
+            "select name, type, not \"notnull\" as \"nullable\", dflt_value as \"default\", pk as \"primary\", hidden as \"extra\" from pragma_table_xinfo('contacts', 'main') order by cid asc",
+            "select \"sql\" from \"main\".sqlite_master where type = 'table' and name = 'contacts'",
+            "select \"subjects\" from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": [
+                {
+                    "id": 1,
+                    "name": "Practice Class",
+                    "kind": "class",
+                    "description": null,
+                    "is_active": true,
+                    "arabic_stage": "letters",
+                    "points_period": "running",
+                    "my_subjects": null,
+                    "subject_labels": {
+                        "quran": "Qur'an",
+                        "arabic": "Arabic",
+                        "islamic_studies": "Islamic Studies"
+                    },
+                    "students": [],
+                    "unread_messages": 0
+                }
+            ]
+        }
+    }
+}
