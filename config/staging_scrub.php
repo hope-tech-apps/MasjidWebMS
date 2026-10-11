@@ -436,6 +436,10 @@ return [
     | unconditionally because it exists to FORCE a state, not to mask a value.
     */
     'anonymise' => [
+        'timetable_period_sets' => ['name' => 'label:Period set'],
+        'timetable_periods' => ['name' => 'label:Period'],
+        'timetable_rooms' => ['name' => 'label:Room', 'name_key' => 'label:Room'],
+        'timetable_meetings' => ['activity_name' => 'label:Activity'],
         'class_subjects' => [
             'name' => 'label:Subject',
             'name_key' => 'label:subject',

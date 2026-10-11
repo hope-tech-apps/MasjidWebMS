@@ -156,9 +156,22 @@ final class SchoolSettings
         return self::classSubjectWork($school) && (bool) $school?->hasCapability('class_subject_report_summary');
     }
 
+    public static function timetable(?Masjid $school): bool
+    {
+        return $school?->deleted_at === null && $school?->orgType() === 'school'
+            && $school->hasCapability('school_calendar') && $school->hasCapability('school_timetable');
+    }
+
     /** Evaluate the intended map under the organisation mutex, before any writes. */
     public static function assertSubjectWorkChange(Masjid $school, array $changes): void
     {
+        if (($changes['school_timetable'] ?? false) === true
+            && ($school->orgType() !== 'school' || ! ($changes['school_calendar'] ?? $school->hasCapability('school_calendar')))) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['capability' => ['Switch on the school calendar at a school before enabling its timetable.']]);
+        }
+        if (($changes['school_calendar'] ?? null) === false && ($changes['school_timetable'] ?? $school->hasCapability('school_timetable'))) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['capability' => ['Switch off the school timetable before switching off its calendar.']]);
+        }
         if (($changes['class_subject_sharing'] ?? false) === true
             && (! ($changes['class_subjects'] ?? self::classSubjects($school))
                 || ! ($changes['class_subject_work'] ?? $school->hasCapability('class_subject_work')))) {

@@ -383,6 +383,14 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCapability: 'school_calendar'
     },
     {
+        title: 'Timetable',
+        svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="17" rx="2" stroke="white"/><path d="M3 10h18M9 10v11M15 10v11" stroke="white"/></svg>',
+        to: '/masjid/timetable',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresOrgTypes: ['school'],
+        requiresCapability: 'school_timetable'
+    },
+    {
         // The class store (T-003.4): the school-wide prize list and the class totals of Manara
         // Bucks. Shown once the organisation HAS `class_store` (OFF for every organisation until a
         // SuperAdmin decides); the server's gate is the boundary. Plain title, no terminology key.

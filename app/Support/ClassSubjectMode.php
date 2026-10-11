@@ -98,6 +98,16 @@ final class ClassSubjectMode
         return $org?->deleted_at === null && SchoolSettings::classSubjectReportSummary($org);
     }
 
+    /** The timetable does not depend on class subjects; reuse the request's organisation row. */
+    public static function timetableEnabled(int|string|null $masjidId): bool
+    {
+        if ($masjidId === null) return false;
+        $id = (int) $masjidId;
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::withTrashed()->select(['id', 'org_type', 'capability_overrides', 'deleted_at'])->find($id);
+        return SchoolSettings::timetable($org);
+    }
+
     public static function responseEnabled(int|string|null $masjidId): bool
     {
         return self::enabled($masjidId);

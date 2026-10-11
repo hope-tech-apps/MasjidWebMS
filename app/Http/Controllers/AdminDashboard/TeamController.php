@@ -281,6 +281,8 @@ class TeamController extends Controller
         $masjid = $this->boundMasjid();
         $user = $this->member($masjid, $user_id);
 
+        \App\Support\TimetableDeletion::refuse('user_id', $user->id, $masjid->id);
+
         if ((int) $user->id === (int) $masjid->user_id) {
             return $this->refuse('That account owns this organisation, so its access cannot be removed here.', Response::HTTP_CONFLICT);
         }

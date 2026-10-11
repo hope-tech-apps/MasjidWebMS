@@ -258,6 +258,16 @@ return [
         'catalogue_when_off' => false,
     ],
 
+    'school_timetable' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'School timetable',
+        'description' => 'Place classes, activities, teachers and rooms in the school week.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'class_subject_work' => [
         'kind' => 'grant',
         'group' => 'school',

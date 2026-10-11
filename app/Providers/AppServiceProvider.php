@@ -84,6 +84,43 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->registerFamilyGuard();
 
+        // Model deletes retain timetable history; bulk school removal is also fenced at its controller.
+        \App\Models\Group::deleting(fn ($row) => \App\Support\TimetableDeletion::refuse('group_id', $row->id, $row->masjid_id));
+        \App\Models\ClassSubject::deleting(fn ($row) => \App\Support\TimetableDeletion::refuse('class_subject_id', $row->id, $row->masjid_id));
+        \App\Models\User::updating(function ($row) {
+            if ($row->isDirty('type') && $row->getOriginal('type') === 'Teacher' && $row->type !== 'Teacher') {
+                \App\Support\TimetableDeletion::refuseAccount($row->id);
+            }
+        });
+        \App\Models\User::deleting(fn ($row) => \App\Support\TimetableDeletion::refuseAccount($row->id));
+        \App\Models\MasjidUser::deleting(fn ($row) => \App\Support\TimetableDeletion::refuse('user_id', $row->user_id, $row->masjid_id));
+
+        \App\Models\ClassSubject::updating(function ($row) {
+            if ($row->isDirty('hidden_at') && $row->hidden_at !== null && \App\Support\ClassSubjectMode::timetableEnabled($row->masjid_id)) {
+                $until = \Carbon\CarbonImmutable::parse(\App\Support\SchoolDateAuthority::for($row->masjid_id)->today())->subDay()->toDateString();
+                \App\Models\TimetableMeeting::where('class_subject_id', $row->id)
+                    ->where(fn ($q) => $q->whereNull('effective_until')->orWhereDate('effective_until', '>', $until))->update(['effective_until' => $until]);
+            }
+        });
+        \App\Models\Group::updating(function ($row) {
+            if (($row->isDirty('kind') && $row->kind !== 'class') || ($row->isDirty('is_active') && ! $row->is_active)) {
+                \App\Support\TimetableDeletion::refuse('group_id', $row->id, $row->masjid_id);
+            }
+        });
+        \App\Models\SchoolYear::deleting(function ($row) {
+            if (\App\Support\ClassSubjectMode::timetableEnabled($row->masjid_id) && \App\Models\TimetablePeriodSet::where('school_year_id', $row->id)->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['year' => ['Keep this school year while it has timetable period sets.']]);
+            }
+        });
+        \App\Models\SchoolYear::updating(function ($row) {
+            if (! $row->isDirty(['first_day', 'last_day', 'meeting_weekdays']) || ! \App\Support\ClassSubjectMode::timetableEnabled($row->masjid_id)) return;
+            $days = \App\Support\SchoolSettings::calendarTerms(\App\Models\Masjid::findOrFail($row->masjid_id)) ? \App\Support\SchoolDateAuthority::weekdays($row) : [$row->meetingWeekday()];
+            $stranded = \App\Models\TimetableDay::where('school_year_id', $row->id)->whereNotIn('weekday', $days)->exists()
+                || \App\Models\TimetableClassDay::where('school_year_id', $row->id)->whereNotIn('weekday', $days)->exists()
+                || \App\Models\TimetableMeeting::where('school_year_id', $row->id)->where(fn ($q) => $q->whereDate('effective_from', '<', $row->first_day->toDateString())->orWhereDate('effective_from', '>', $row->last_day->toDateString())->orWhereDate('effective_until', '>', $row->last_day->toDateString()))->exists();
+            if ($stranded) throw \Illuminate\Validation\ValidationException::withMessages(['year' => ['Keep the dates and weekdays used by this year’s timetable.']]);
+        });
+
         // NOTE ON REGISTRATION: everything under app/Listeners with a typed
         // handle() is ALREADY registered by Laravel's event discovery —
         // Application::configure() calls withEvents() unconditionally, which is

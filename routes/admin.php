@@ -644,6 +644,28 @@ Route::prefix('admin')->group(function () {
             // registration form needs the calendar before any class or contact
             // exists. Teachers and families read it through their own realms,
             // ungated. Every write answers with the whole calendar.
+            Route::prefix('{masjid_id}/timetable')->middleware('capability:school_timetable')
+                ->controller(\App\Http\Controllers\AdminDashboard\SchoolTimetableController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::prefix('years/{year_id}')->group(function () {
+                        Route::get('/setup', 'setup');
+                        Route::get('/week', 'week');
+                        Route::get('/clashes', 'clashes');
+                        Route::post('/sets', 'storeSet');
+                        Route::put('/sets/{set_id}', 'updateSet');
+                        Route::delete('/sets/{set_id}', 'destroySet');
+                        Route::put('/days', 'days');
+                        Route::post('/rooms', 'storeRoom');
+                        Route::put('/rooms/{room_id}', 'updateRoom');
+                        Route::delete('/rooms/{room_id}', 'destroyRoom');
+                        Route::put('/classes/{group_id}/room', 'classRoom');
+                        Route::post('/meetings', 'storeMeeting');
+                        Route::put('/meetings/{meeting_id}', 'updateMeeting');
+                        Route::delete('/meetings/{meeting_id}', 'destroyMeeting');
+                        Route::post('/copy-day', 'copyDay');
+                    });
+                });
+
             Route::prefix('{masjid_id}/school-calendar')->middleware('capability:school_calendar')
                 ->controller(\App\Http\Controllers\AdminDashboard\SchoolCalendarController::class)
                 ->group(function () {

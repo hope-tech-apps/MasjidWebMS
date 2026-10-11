@@ -57,7 +57,7 @@ export type MasjidDashboardRoute =
     // terminology pack.
     '/masjid/teachers' |
     // School years and no-school days (`school_calendar` capability).
-    '/masjid/school-calendar' |
+    '/masjid/school-calendar' | '/masjid/timetable' |
     // The class store (T-003.4): the school-wide prize list and the class totals (`class_store` capability).
     '/masjid/class-store' |
     // The office's read of the register the class teachers take. Beside the

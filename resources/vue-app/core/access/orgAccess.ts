@@ -178,6 +178,8 @@ export function menuItemState(
         return isSuper ? 'switched_off' : 'hidden';
     }
 
+    if (item.requiresCapability === 'school_timetable' && !hasGrant(masjid, 'school_timetable')) return 'hidden';
+
     if (item.requiresCapability && !hasGrant(masjid, item.requiresCapability)) {
         if (!isSuper) return 'hidden';
         return item.requiresModule ? 'visible' : 'switched_off';

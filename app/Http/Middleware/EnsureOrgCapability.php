@@ -45,6 +45,12 @@ class EnsureOrgCapability
 
     public function handle(Request $request, Closure $next, string ...$capabilities): Response
     {
+        if (in_array('school_timetable', $capabilities, true)) {
+            $id = $this->tenant->get() ?? $request->route('masjid_id');
+            abort_unless(\App\Support\ClassSubjectMode::timetableEnabled($id), 404);
+            return $next($request);
+        }
+
         if (in_array('class_subject_sharing', $capabilities, true)) {
             $id = $this->tenant->get() ?? $request->route('masjid_id');
             abort_unless(\App\Support\ClassSubjectMode::sharingEnabled($id), 404);

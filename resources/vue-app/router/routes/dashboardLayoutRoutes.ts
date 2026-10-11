@@ -267,6 +267,12 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/SchoolCalendarView.vue")
             },
             {
+                path: 'timetable',
+                name: 'masjid.schoolTimetable',
+                meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresCapability: 'school_timetable', pageTitle: 'Timetable' },
+                component: () => import('@/views/dashboard/SchoolTimetableView.vue')
+            },
+            {
                 // The class store (T-003.4): the school-wide prize list and the class totals of
                 // Manara Bucks. `requiresCapability`, not `requiresCrm`: the server's
                 // `capability:class_store` gate is the boundary (a SuperAdmin passes it), and
