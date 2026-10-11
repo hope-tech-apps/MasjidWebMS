@@ -28,7 +28,7 @@ class SchoolYear extends Model
     ];
 
     protected $casts = ['meeting_weekdays' => 'array'];
-    protected $hidden = ['meeting_weekdays', 'term_system'];
+    protected $hidden = ['meeting_weekdays', 'term_system', 'has_duty_rota_records'];
 
     public function terms(): HasMany
     {

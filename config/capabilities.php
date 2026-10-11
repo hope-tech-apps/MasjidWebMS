@@ -258,6 +258,16 @@ return [
         'catalogue_when_off' => false,
     ],
 
+    'family_duty_rota' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Family duty rota',
+        'description' => 'Families take turns on open school days. Requires the school calendar.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'school_timetable' => [
         'kind' => 'grant',
         'group' => 'school',

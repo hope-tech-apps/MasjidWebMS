@@ -1,0 +1,71 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { mountSfc, loadTs, flush, click, type, select, submit, check } from './support/mountSfc.ts';
+const vue = createRequire(import.meta.url)('vue');
+const family = { id: 1, name: 'Maple Family', email: 'maple@example.invalid', phone: '+15555550102', registration_count: 3, still_owed: 1, unplaced_picks: ['2026-10-25'], held: ['2026-10-04'], notices: [], link_sent_at: null };
+const assignment = { id: 9, family_id: 1, ...family, source: 'form', reminder_sent_at: null };
+const data: any = { rota: { id: 7, school_year_id: 2, name: 'Cleaning', capacity: 2, turns_owed: 2, source_form_id: 3, source_field: 'days', reminder_lead: 3, reminder_line: 'Cleaning starts at 1:30 PM after class.', active: true }, today: '2026-10-11', totals: { families: 3, taken: 2, available: 4, needs: 1 }, families: [family], days: [{ date: '2026-10-04', taken: 3, capacity: 2, assignments: [assignment] }, { date: '2026-10-18', taken: 1, capacity: 2, assignments: [assignment] }, { date: '2026-10-25', taken: 2, capacity: 2, assignments: [] }, { date: '2026-11-01', taken: 0, capacity: 2, assignments: [] }], mails: [], history: [] };
+async function office(on=true, overrides: any={}) {
+ const calls: any[]=[]; const dates=await loadTs('core/types/data/masjid-related/SchoolCalendar.ts',{});
+ const api={get:async(url:string)=>{calls.push({url});return {data:{data:{rotas:[data.rota],years:[{id:2,label:'Practice year'}],forms:[{id:3,name:'Registration',fields:[{name:'days',label:'Days'}]}],selected:data}}};},post:async(url:string,body:any)=>{calls.push({url,body});return {data:{data:url.endsWith('/preview')?{registrations:42,picks:84,placed:61,unplaced:23}:{...data,result:{queued:1,skipped_no_email:2}}}};}};
+ Object.assign(api,overrides);
+ const s=await mountSfc('views/dashboard/DutyRotaView.vue',{}, {vue,'@/core/services/ApiService':{default:api},'@/stores/authStore':{useAuthStore:()=>({dashboardMasjidId:1})},'@/stores/masjidStore':{useMasjidStore:()=>({masjid:{capabilities:{family_duty_rota:on}}})},'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/constants/appConfigConstants':{LOCAL_STORAGE_KEYS:{token:'token'}}});await flush();return {...s,calls};
+}
+test('Duty rota OFF has no requests or controls',async()=>{const s=await office(false);try{assert.equal(s.calls.length,0);assert.doesNotMatch(s.text(),/Build from the form/);}finally{s.unmount();}});
+test('Duty rota by day retains an over-capacity earlier day and shows contacts and source',async()=>{const s=await office();try{assert.match(s.text(),/Earlier/);assert.match(s.text(),/3 of 2/);assert.match(s.text(),/3 registrations/);assert.equal(s.all(n=>n.tag==='a'&&n.props.href==='mailto:maple@example.invalid').length>0,true);assert.match(s.text(),/form/);}finally{s.unmount();}});
+test('Duty rota needs email requires named confirmation and shows queued and no-email counts',async()=>{const s=await office();try{click(s.button('Needs a day'));await flush();assert.match(s.text(),/1 more day/);click(s.button('Email all 1 family who need a day'));await flush();assert.equal(s.calls.length,1);assert.match(s.text(),/Email families who need a day/);submit(s.all(n=>n.tag==='form')[0]);await flush();assert.equal(s.calls.length,2);assert.equal(s.calls[1].body.confirmed,true);assert.match(s.text(),/1 email queued/);assert.match(s.text(),/2 families have no email/);}finally{s.unmount();}});
+test('Duty rota move dialog lists only days with room until deliberate over capacity',async()=>{const s=await office();try{click(s.all(n=>n.tag==='button'&&n.textContent==='Move')[0]);await flush();assert.match(s.text(),/Move Maple Family/);const options=s.all(n=>n.tag==='option').map(n=>n.props.value);assert.ok(options.includes('2026-11-01'));assert.ok(!options.includes('2026-10-25'));check(s.all(n=>n.tag==='input'&&n.props.id==='dutyOver')[0],true);await flush();assert.ok(s.all(n=>n.tag==='option').some(n=>n.props.value==='2026-10-25'));}finally{s.unmount();}});
+test('Duty rota build previews before named confirmation and one build request',async()=>{const s=await office();try{click(s.button('Build from the form'));await flush();assert.match(s.text(),/42 registrations, 84 picks: 61 placed, 23 could not be placed/);submit(s.all(n=>n.tag==='form')[0]);await flush();assert.equal(s.calls.length,3);assert.equal(s.calls[2].body.confirmed,true);}finally{s.unmount();}});
+async function claim() {
+ const dates=await loadTs('core/types/data/masjid-related/SchoolCalendar.ts',{});const calls:any[]=[];let result:any={school:{name:'Practice School'},rota:{name:'Cleaning',capacity:3},family:{name:'Maple Family'},held:['2026-10-18'],today:'2026-10-11',still_owed:2,available:[{date:'2026-10-25',left:2},{date:'2026-11-01',left:1}],message:''};
+ (globalThis as any).window={location:{hash:'#token='+'a'.repeat(64),pathname:'/duty/1/7',search:''},history:{replaceState(){}}};
+ (globalThis as any).fetch=async(url:string,opts:any)=>{calls.push({url,body:JSON.parse(opts.body)});if(url.endsWith('/claim'))result={...result,held:[...result.held,'2026-11-01'],still_owed:1,available:[{date:'2026-11-08',left:3}],message:'Sunday, October 25 was just taken. Pick another.'};if(url.endsWith('/give-back'))result={...result,held:[],still_owed:2};return {ok:true,json:async()=>({data:result})};};
+ const s=await mountSfc('views/public/DutyRotaClaim.vue',{}, {vue,'vue-router':{useRoute:()=>({params:{masjidId:1,rotaId:7}})},'@/core/types/data/masjid-related/SchoolCalendar':dates});await flush();return {...s,calls};
+}
+test('Duty rota claim page picks fewer, displays refusal and saved days, then gives back with one request',async()=>{const s=await claim();try{assert.match(s.text(),/Practice School/);assert.match(s.text(),/2 of 3 left/);check(s.all(n=>n.tag==='input'&&n.props.value==='2026-10-25')[0],true);await flush();submit(s.all(n=>n.tag==='form')[0]);await flush();assert.equal(s.calls.length,2);assert.deepEqual(s.calls[1].body.dates,['2026-10-25']);assert.match(s.text(),/was just taken/);assert.match(s.text(),/November 1/);click(s.all(n=>n.tag==='button'&&n.textContent.includes('Give back'))[0]);await flush();click(s.button('Confirm give back'));await flush();assert.equal(s.calls.length,3);}finally{s.unmount();}});
+test('Duty rota theme and phone source has no palette, physical offsets or bare templates',()=>{for(const path of ['views/dashboard/DutyRotaView.vue','views/public/DutyRotaClaim.vue']){const s=readFileSync(new URL('../'+path,import.meta.url),'utf8');const styles=[...s.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('');assert.doesNotMatch(styles, /#[0-9a-f]{3,8}\b|\b(?:margin-left|margin-right|padding-left|padding-right)\s*:/i);assert.match(styles,/min-width:\s*0/);assert.match(styles,/overflow-wrap:\s*anywhere/);}});
+
+for (const existing of [true,false]) test(`Duty rota real Add dialog submits ${existing?'existing':'typed new'} family`,async()=>{
+ const s=await office();try { click(s.all(n=>n.tag==='button'&&n.textContent==='Add a family')[0]);await flush();
+ if(existing){select(s.all(n=>n.props.id==='dutyFamily')[0],1);await flush();assert.equal(s.all(n=>n.tag==='input'&&String(n.props.maxlength)==='200').length,0);}
+ else {const name=s.all(n=>n.tag==='input'&&String(n.props.maxlength)==='200')[0];assert.ok(name.props.required!==undefined);type(name,'Cedar Family');type(s.all(n=>n.tag==='input'&&n.props.type==='email')[0],'cedar@example.invalid');}
+ select(s.all(n=>n.props.id==='dutyMoveDay')[0],'2026-11-01');await flush();submit(s.all(n=>n.tag==='form')[0]);await flush();
+ const sent=s.calls.at(-1);assert.ok(sent.url.endsWith('/assignments'));assert.equal(sent.body.date,'2026-11-01');
+ if(existing){assert.equal(sent.body.family_id,1);assert.equal('name' in sent.body,false);}else {assert.equal(sent.body.name,'Cedar Family');assert.equal(sent.body.email,'cedar@example.invalid');}
+ }finally{s.unmount();}
+});
+for(const all of [false,true]) test(`Duty rota copied link forgotten after ${all?'bulk':'single family'} email reissues`,async()=>{
+ const s=await office(true,{post:async(url:string)=>({data:{data:url.endsWith('/link')?{url:'https://practice.invalid/duty#token=old'}:{...data,result:{queued:1,skipped_no_email:0}}}})});try{click(s.button('Needs a day'));await flush();click(s.button('Copy claim link'));await flush();assert.equal(s.all(n=>n.tag==='input'&&n.props.readonly!==undefined).length,1);click(s.button(all?'Email all 1 family who need a day':'Email this family'));await flush();submit(s.all(n=>n.tag==='form')[0]);await flush();assert.equal(s.all(n=>n.tag==='input'&&n.props.readonly!==undefined).length,0);}finally{s.unmount();}
+});
+test('Duty rota refused move reloads capacity in still open dialog',async()=>{
+ let reloads=0;const s=await office(true,{get:async(url:string)=>{reloads++;return {data:{data:url.endsWith('/7')?{...data,days:data.days.map((d:any)=>d.date==='2026-11-01'?{...d,taken:d.capacity}:d)}:{rotas:[data.rota],years:[],forms:[],selected:data}}};},post:async()=>{throw {response:{status:422,data:{errors:{date:['That day is full. Choose another day or deliberately allow over capacity.']}}}};}});try{click(s.all(n=>n.tag==='button'&&n.textContent==='Move')[0]);await flush();select(s.all(n=>n.props.id==='dutyMoveDay')[0],'2026-11-01');submit(s.all(n=>n.tag==='form')[0]);await flush();assert.equal(reloads,2);assert.match(s.text(),/That day is full/);assert.equal(s.all(n=>n.tag==='option'&&n.props.value==='2026-11-01').length,0);assert.equal(s.all(n=>n.props.role==='dialog').length,1);}finally{s.unmount();}
+});
+
+test('Duty rota refused Add keeps the full day for one deliberate over-capacity retry',async()=>{
+ const writes:any[]=[];let reloads=0;
+ const s=await office(true,{
+  get:async(url:string)=>{reloads++;return {data:{data:url.endsWith('/7')?data:{rotas:[data.rota],years:[],forms:[],selected:data}}};},
+  post:async(url:string,body:any)=>{writes.push({url,body:{...body}});if(!body.over_capacity)throw {response:{status:422,data:{errors:{date:['That day is full. Choose another day or deliberately allow over capacity.']}}}};return {data:{data}};},
+ });
+ try {
+  const date='2026-10-25';
+  const section=s.all(n=>n.tag==='section'&&n.textContent.includes('October 25'))[0];
+  click(s.all(n=>n.tag==='button'&&n.textContent==='Add a family'&&n.parent===section)[0]);await flush();
+  // Populate the renderer's select options without changing the day supplied by Add.
+  const dayBox=s.all(n=>n.props.id==='dutyMoveDay')[0];dayBox.options=dayBox.children.filter(n=>n.tag==='option');
+  select(s.all(n=>n.props.id==='dutyFamily')[0],1);await flush();
+  const chosen=()=>{const box=s.all(n=>n.props.id==='dutyMoveDay')[0];return box.options[box.selectedIndex]?.props.value;};
+  assert.equal(chosen(),date);
+  submit(s.all(n=>n.tag==='form')[0]);await flush();
+  assert.equal(writes.length,1);assert.equal(writes[0].body.date,date);assert.equal(writes[0].body.over_capacity,false);
+  assert.equal(reloads,2);assert.match(s.text(),/That day is full/);assert.equal(s.all(n=>n.props.role==='dialog').length,1);
+  assert.equal(chosen(),date);
+  check(s.all(n=>n.props.id==='dutyOver')[0],true);await flush();
+  submit(s.all(n=>n.tag==='form')[0]);await flush();
+  const retries=writes.slice(1);assert.equal(retries.length,1);assert.ok(retries[0].url.endsWith('/assignments'));
+  assert.deepEqual(retries[0].body,{action:'add',date,family_id:1,over_capacity:true});
+  assert.equal(s.all(n=>n.props.role==='dialog').length,0);
+ } finally {s.unmount();}
+});

@@ -31,7 +31,8 @@ class StudentAllergiesTest extends TestCase
         $this->travelTo(\Carbon\Carbon::parse('2026-10-11 16:00:00', 'UTC'));
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
         $this->school = Masjid::create(['name'=>'Practice School','email'=>'practice@example.invalid','phone'=>'+15555550100','country_id'=>'1','city_id'=>'1','address'=>'Practice','latitude'=>0,'longitude'=>0,'org_type'=>'school','crm_enabled'=>true]);
-        $this->class = Group::factory()->create(['masjid_id'=>$this->school->id,'kind'=>'class','name'=>'Practice Class','slug'=>'practice-class']);
+        // Pin exposed fixture text: seeded optional Faker output depends on suite order.
+        $this->class = Group::factory()->create(['masjid_id'=>$this->school->id,'kind'=>'class','name'=>'Practice Class','slug'=>'practice-class','description'=>'Quisquam suscipit recusandae animi et amet ut.']);
         $this->child = Contact::factory()->create(['masjid_id'=>$this->school->id,'first_name'=>'Robin','last_name'=>'Willow','email'=>'robin@example.invalid','phone'=>'+15555550103']);
         $this->parent = Contact::factory()->create(['masjid_id'=>$this->school->id,'first_name'=>'Casey','last_name'=>'Willow','email'=>'casey@example.invalid','phone'=>'+15555550104']);
         $this->member = GroupMembership::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'contact_id'=>$this->child->id,'role'=>'member']);

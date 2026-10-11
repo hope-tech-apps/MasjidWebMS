@@ -9574,6 +9574,22 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Print overrides the app table's rem-based typography/spacing; protects only grid rows, not the enclosing document row. Normal wrapping preserves whole words. Closure is a single dated sentence; unplaced teacher list is school/teacher only. Phone columns use 96/150px and half-rem strip gutter expansion at <=400px.
 - No commit, CHANGELOG.md or CAPTURE_* variables per owner. Real-browser geometry/pagination cannot be claimed: dedicated local headless Chrome aborted before about:blank (exit 134).
 
+## Family duty rota — 2026-10-11
+- Save the free dates in a partial claim and return named refusals plus fresh choices. Successful choices remain held, reducing what must be re-picked.
+- Derive the current bearer from a random issuance nonce using APP_KEY-domain-separated HMAC; retain its separate hash only, and encrypt queued mail content. Copy/reminders preserve the issued link; explicit reissue rotates it.
+- Closure reconciliation runs under the rota mutex on the next read/build/claim/reminder sweep, without email. A removed closure does not resurrect a released assignment.
+- Last live registration cancellation/deletion withdraws the family's remaining obligation, releases future form assignments and keeps past/claim/office rows. A later live registration restores the obligation.
+- Retain forms/years referenced by a rota, including while OFF; refuse deletion and year date/weekday changes in words. After families exist, freeze year/source; create another rota to change them. OFF retains rows and stops routes/source builds/delivery. Reduced capacity keeps existing assignments.
+- An explicit office/claim re-add reactivates the same family/date row and retains its once-only reminder stamp. Closure notices remain on the copied family record. No rota/family delete endpoint.
+- Use daily school-local PointsReportSchedule time (default 3:00 PM) in an hourly sweep. Unique reminder keys/stamps plus atomic queued-to-sending claims and one attempt ensure at-most-once sends; a crash may lose a notice. Office pick resends are deliberate separate sends.
+- Responses with neither email nor phone stay separate by response identity. Exclude repeatable source fields; bound owed turns to 1–1000. Preview counts already-held picks as placed and rolls all writes back.
+
+## Family duty rota review fixes — 2026-10-11
+- Owner's explicit fix brief supersedes encrypted queued-content and blanket released-row suppression decisions: queue IDs/dates only, compose mail at send using the current issuance; re-take cancellation releases through normal future capacity/owed checks only. Confirmation dates retain the action snapshot. Obsolete picks become dropped with a fixed reason.
+- Send inside school then rota mutexes so releases cannot commit between final eligibility and mailer handoff. Mail transaction has one attempt, excluding external-send replay by transaction retries. Slow SMTP delays school writers; no claim of parallel MySQL proof.
+- Inspect the resolved Symfony transport graph rather than mutable mail config, including cached/custom/nested failover and roundrobin members. Refuse log/array outside local/testing before composing private content. Symfony 7 has no public member accessor, so this guarded branch reads RoundRobinTransport's private transports property.
+- Used source-schema updates share school then rota locks and retain the hidden-flag fast path for unused forms. Office Add supplies no typed identity for an existing family; nullable name stays required for typed new families. Forget copied links on email/reissue attempts; capacity refusal refreshes only the still-current dialog and tenant.
+
 ## 2026-10-11 Student allergies
 
 - Separate contact+school table; no Contact relationship/appends. Office clear is a retained null office row, preserving office precedence over subsequent copies.

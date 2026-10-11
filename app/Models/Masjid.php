@@ -548,6 +548,7 @@ class Masjid extends Model implements HasMedia
 
         if (! \App\Support\SchoolSettings::classSubjectReportSummary($this)) unset($out['class_subject_report_summary']);
         if (! \App\Support\SchoolSettings::timetable($this)) unset($out['school_timetable']);
+        if (! \App\Support\SchoolSettings::familyDutyRota($this)) unset($out['family_duty_rota']);
         if (! \App\Support\StudentAllergies::enabled($this)) unset($out['student_allergies']);
 
         return $out;
@@ -606,6 +607,7 @@ class Masjid extends Model implements HasMedia
             unset($attributes['capability_overrides']['class_subject_report_summary']);
         }
         if (! \App\Support\SchoolSettings::timetable($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['school_timetable']);
+        if (! \App\Support\SchoolSettings::familyDutyRota($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['family_duty_rota']);
         return $attributes;
     }
 

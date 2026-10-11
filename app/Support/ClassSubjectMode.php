@@ -108,6 +108,14 @@ final class ClassSubjectMode
         return SchoolSettings::timetable($org);
     }
 
+    /** Reuse the organisation loaded by the existing capability-panel path. */
+    public static function familyDutyRotaEnabled(int $id): bool
+    {
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::withTrashed()->select(['id', 'org_type', 'capability_overrides', 'deleted_at'])->find($id);
+        return SchoolSettings::familyDutyRota($org);
+    }
+
     /** Student health is independent of subjects. Reuse main's request row, including OFF. */
     public static function allergiesEnabled(int|string|null $masjidId): bool
     {

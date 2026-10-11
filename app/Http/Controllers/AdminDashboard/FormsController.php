@@ -254,12 +254,14 @@ class FormsController extends Controller
                 return $refusal;
             }
 
-            $form->update($request->safe()->all());
+            \App\Support\DutyRotaMode::updateForm($form, $request->safe()->all());
 
             return response()->json([
                 'status' => 'success',
                 'data' => $this->serialize($form->fresh()),
             ], Response::HTTP_OK);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['status'=>'failed','data'=>$e->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -318,6 +320,7 @@ class FormsController extends Controller
     {
         $masjid = Masjid::findOrFail($masjid_id);
         $form = $masjid->forms()->findOrFail($form_id);
+        \App\Support\DutyRotaMode::refuseDeletion($form, 'source_form_id');
 
         // Explicit masjid filter and an explicit scope bypass: this must not depend on
         // whether TenantContext happens to be bound on this request, because a query

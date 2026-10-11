@@ -82,6 +82,7 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        \Illuminate\Support\Facades\RateLimiter::for('duty-rota', fn ($request) => \Illuminate\Cache\RateLimiting\Limit::perMinute(30)->by($request->ip()));
         $this->registerFamilyGuard();
 
         foreach ([\App\Models\TimetablePeriodSet::class, \App\Models\TimetablePeriod::class, \App\Models\TimetableDay::class,
@@ -120,7 +121,20 @@ class AppServiceProvider extends ServiceProvider
                 \App\Support\TimetableDeletion::refuse('group_id', $row->id, $row->masjid_id);
             }
         });
+        \App\Models\Form::retrieved(fn ($row) => \App\Support\DutyRotaMode::rememberForm($row));
+        \App\Models\FormResponse::created(fn ($row) => \App\Support\DutyRotaMode::responseChanged($row));
+        \App\Models\FormResponse::updated(function ($row) {
+            if ($row->wasChanged(['status','data','respondent_email','respondent_phone'])) \App\Support\DutyRotaMode::responseChanged($row);
+        });
+        \App\Models\FormResponse::deleted(fn ($row) => \App\Support\DutyRotaMode::responseChanged($row));
+        \App\Models\Form::deleting(fn ($row) => \App\Support\DutyRotaMode::refuseDeletion($row,'source_form_id'));
+        \App\Models\SchoolYear::updating(function ($row) {
+            if ($row->getAttribute('has_duty_rota_records') && $row->isDirty(['first_day','last_day','meeting_weekdays']) && \App\Models\DutyRota::where('school_year_id',$row->id)->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['year'=>['Keep this year’s dates and weekdays while a duty rota uses them. Create a new year and rota instead.']]);
+            }
+        });
         \App\Models\SchoolYear::deleting(function ($row) {
+            \App\Support\DutyRotaMode::refuseDeletion($row,'school_year_id');
             if (\App\Support\TimetableRetention::instance()->school($row->masjid_id) && \App\Models\TimetablePeriodSet::where('school_year_id', $row->id)->exists()) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['year' => ['Keep this school year while it has timetable period sets.']]);
             }
