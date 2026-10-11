@@ -123,7 +123,9 @@ const needs=computed(()=>data.value?.families.filter((f:any)=>f.still_owed>0) ||
 const earlier=computed(()=>data.value?.days.filter((d:any)=>d.date<data.value.today) || []);
 const current=computed(()=>data.value?.days.filter((d:any)=>d.date>=data.value.today) || []);
 const sourceFields=computed(()=>setup.value.forms.find((f:any)=>f.id===Number(draft.value.source_form_id))?.fields || []);
-const placementDays=computed(()=>data.value?.days.filter((d:any)=>d.date!==dialog.value?.date && (placement.value.over_capacity || d.taken<d.capacity)) || []);
+// Days still to come only. The day an Add was opened on stays listed even when full, so the box is never blank;
+// the server still refuses a full day unless the over-capacity box is ticked.
+const placementDays=computed(()=>data.value?.days.filter((d:any)=>d.date>=data.value.today && d.date!==dialog.value?.date && (placement.value.over_capacity || d.taken<d.capacity || (dialog.value?.action==='add' && d.date===placement.value.date))) || []);
 const buildCounts=computed(()=>counts.value ? `${counts.value.registrations} ${plural(counts.value.registrations,'registration')}, ${counts.value.picks} ${plural(counts.value.picks,'pick')}: ${counts.value.placed} placed, ${counts.value.unplaced} could not be placed` : '');
 const familyName=(id:number)=>data.value.families.find((f:any)=>f.id===id)?.name || 'Family';
 function failure(e:any):string { const errors=e?.response?.data?.errors || e?.response?.data?.data; return errors && typeof errors==='object' ? Object.values(errors).flat().join(' ') : e?.response?.data?.message || 'Could not complete this action. Please try again.'; }
@@ -146,7 +148,7 @@ async function saveDialog(){
     const done=await request(()=>d.kind==='edit'?(d.rota?ApiService.put(url as any,draft.value):ApiService.post(base.value as any,draft.value)):d.kind==='build'?ApiService.post(`${url}/build` as any,{confirmed:true}):d.kind==='email'?ApiService.post(`${url}/email` as any,{confirmed:true,...(d.family?{family_id:d.family.id}:{})}):ApiService.post(`${url}/assignments` as any,{action:d.action,...(d.action==='remove'?{}:d.action==='add'&&placement.value.family_id?{date:placement.value.date,family_id:placement.value.family_id,over_capacity:placement.value.over_capacity}:placement.value),...(d.family?{assignment_id:d.family.id}:{})}),value=>{
         data.value=value;selectedId.value=value.rota.id;
         if(!setup.value.rotas.some((r:any)=>r.id===value.rota.id))setup.value.rotas.push(value.rota);else setup.value.rotas=setup.value.rotas.map((r:any)=>r.id===value.rota.id?value.rota:r);
-        if(d.kind==='email'){const n=value.result.queued;const skipped=value.result.skipped_no_email;result.value=`${n} ${plural(n,'email')} queued. ${skipped} ${plural(skipped,'family','families')} ${skipped===1?'has':'have'} no email: call them.`;}else result.value=d.kind==='build'?'The form build is complete.':'Saved.';
+        if(d.kind==='email'){const n=value.result.queued;const skipped=value.result.skipped_no_email;result.value=`${n} ${plural(n,'email')} queued.`+(skipped?` ${skipped} ${plural(skipped,'family','families')} ${skipped===1?'has':'have'} no email: call them.`:'');}else result.value=d.kind==='build'?'The form build is complete.':'Saved.';
     },async e=>{
         if(d.kind==='assignment' && d.action!=='remove' && e?.response?.status===422 && failure(e).includes('That day is full')){
             try{const response=await ApiService.get(url as any);if(`${base.value}/${selectedId.value}`===url && dialog.value===d && enabled.value){data.value=response.data.data;placement.value.date='';}}catch{dialogError.value+=' Could not refresh the days. Close and reload before trying again.';}
