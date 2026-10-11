@@ -38,7 +38,8 @@ async function screen(options:any={}) {
     const link=vue.defineComponent({props:['to'],setup:(props:any,{slots}:any)=>()=>vue.h('a',{href:props.to},slots.default?.())});
     const meeting=await compileSfc('views/teacher/ScheduleMeeting.vue',{'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'vue-router':{RouterLink:link}});
     const week=await compileSfc('views/teacher/ScheduleWeek.vue',{'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'./ScheduleMeeting.vue':{default:meeting}});
-    const modules={'@/core/services/ApiService':{default:api},'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'../teacher/ScheduleMeeting.vue':{default:meeting},'../teacher/ScheduleWeek.vue':{default:week}};
+    const committed = await loadTs('composables/useCommittedDate.ts', { vue });
+    const modules={'@/composables/useCommittedDate': committed,'@/core/services/ApiService':{default:api},'@/core/types/data/masjid-related/SchoolCalendar':dates,'@/core/helpers/scheduledSend':times,'../teacher/ScheduleMeeting.vue':{default:meeting},'../teacher/ScheduleWeek.vue':{default:week}};
     const child=options.parent?await compileSfc('views/dashboard/OfficeSchedules.vue',modules):null;
     const s=options.parent?await mountSfc('views/dashboard/SchoolTimetableView.vue',{}, {...modules,'./OfficeSchedules.vue':{default:child},'@/stores/authStore':{useAuthStore:()=>({dashboardMasjidId:1})},'@/stores/masjidStore':{useMasjidStore:()=>({masjid:{capabilities:{school_timetable:true}}})}}):await mountSfc('views/dashboard/OfficeSchedules.vue',{base:'/api/admin/masjids/1/timetable/years/7',setup,onEditClass:(...args:any[])=>emitted.push(args)},modules);await flush();
     return {...s,calls,emitted,setup,modules};

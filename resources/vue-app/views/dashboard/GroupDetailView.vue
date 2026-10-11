@@ -104,6 +104,9 @@
                         </template>
                     </GroupRosterTab>
 
+                    <GroupAttendanceTab v-else-if="activeTab === 'attendance' && attendanceAvailable" :key="groupId"
+                        :groupId="groupId" :masjidId="masjidStore.masjid?.id ?? 0" :date="typeof route.query.date === 'string' ? route.query.date : ''" />
+
                     <GroupStoryTab v-else-if="activeTab === 'story'" :groupId="groupId" />
 
                     <GroupPointsTab
@@ -186,11 +189,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeMount } from 'vue';
+import { ref, computed, onBeforeMount, watch } from 'vue';
 import ClassLocationField from '@/components/classes/ClassLocationField.vue';
 import { useRoute } from 'vue-router';
 import { AxiosError } from 'axios';
 import PageDataContainer from '@/components/PageDataContainer.vue';
+import GroupAttendanceTab from './groups/GroupAttendanceTab.vue';
 import GroupRosterTab from './groups/GroupRosterTab.vue';
 import GroupStoryTab from './groups/GroupStoryTab.vue';
 import GroupPointsTab from './groups/GroupPointsTab.vue';
@@ -231,7 +235,7 @@ import { afterOpening, unreadNumber, unreadPill, unreadSpoken } from '@/core/hel
  */
 
 type TabKey = 'roster' | 'story' | 'points' | 'letters' | 'grades' | 'lessons' | 'hifz'
-    | 'threads' | 'files' | 'subject' | 'reports';
+    | 'threads' | 'files' | 'subject' | 'reports' | 'attendance';
 
 // Routing
 const route = useRoute();
@@ -241,17 +245,19 @@ const groupsStore = useGroupsStore();
 const masjidStore = useMasjidStore();
 
 // State
-const groupId = Number(route.params.groupId);
+const groupId = computed(() => Number(route.params.groupId));
 const group = ref<Group | null>(null);
 const bootstrapping = ref(true);
 const notFound = ref(false);
 const loadError = ref('');
 const rosterLoading = ref(false);
 const rosterError = ref('');
-const activeTab = ref<TabKey>('roster');
+const activeTab = ref<TabKey>(route.query.tab === 'attendance' ? 'attendance' : 'roster');
 
-const tabs: { key: TabKey; label: string; icon: string }[] = [
+const attendanceAvailable = computed(() => group.value?.kind === 'class' && masjidStore.orgType === 'school');
+const tabs = computed<{ key: TabKey; label: string; icon: string }[]>(() => [
     { key: 'roster', label: 'Roster', icon: 'bi-people' },
+    ...(attendanceAvailable.value ? [{ key: 'attendance' as TabKey, label: 'Attendance', icon: 'bi-calendar-check' }] : []),
     // "Class Story" is the name of the FEATURE, not of the tenant's group, so it
     // is authored rather than drawn from the terminology pack — a masjid's
     // halaqa has a class story just as a school's classroom does.
@@ -276,7 +282,7 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
     // Last, as it is on the teacher's screen: the only tab whose rows are files
     // rather than records about children, and the one the office opens least.
     { key: 'files', label: 'Files', icon: 'bi-folder2-open' }
-];
+]);
 
 // Computed
 const groupsTerm = computed<string>(() => masjidStore.term('groups'));
@@ -290,19 +296,27 @@ onBeforeMount(async () => {
     await bootstrap();
 });
 
+watch(groupId, () => { activeTab.value = route.query.tab === 'attendance' ? 'attendance' : 'roster'; void bootstrap(); });
+
 // Methods
+let bootstrapGeneration = 0;
 const bootstrap = async () => {
+    const run = ++bootstrapGeneration;
+    const id = groupId.value;
     bootstrapping.value = true;
     notFound.value = false;
     loadError.value = '';
     try {
-        group.value = await groupsStore.fetchGroup(groupId);
+        const fetched = await groupsStore.fetchGroup(id);
+        if (run !== bootstrapGeneration) return;
+        group.value = fetched;
         if (!group.value) {
             notFound.value = true;
             return;
         }
         await loadRoster();
     } catch (error) {
+        if (run !== bootstrapGeneration) return;
         // A cross-tenant or deleted id is a 404 MISS by design, not a failure to
         // report as an error — see .claude/rules/tenant-scoping.md.
         if ((error as AxiosError)?.response?.status === 404) {
@@ -311,7 +325,7 @@ const bootstrap = async () => {
             loadError.value = apiErrorText(error, 'Failed to load this group.');
         }
     } finally {
-        bootstrapping.value = false;
+        if (run === bootstrapGeneration) bootstrapping.value = false;
     }
 };
 
@@ -329,7 +343,7 @@ const loadRoster = async () => {
     rosterLoading.value = true;
     rosterError.value = '';
     try {
-        await groupsStore.fetchMemberships(groupId);
+        await groupsStore.fetchMemberships(groupId.value);
     } catch (error) {
         rosterError.value = apiErrorText(error, 'Failed to load the roster.');
     } finally {
@@ -337,10 +351,10 @@ const loadRoster = async () => {
     }
 };
 
-const subjectBase = computed(() => `/api/admin/masjids/${masjidStore.masjid?.id ?? 0}/groups/${groupId}`);
+const subjectBase = computed(() => `/api/admin/masjids/${masjidStore.masjid?.id ?? 0}/groups/${groupId.value}`);
 const subjectWorkEnabled = computed(() => group.value?.class_subjects_enabled === true && group.value?.class_subject_work_enabled === true);
 const classSubjects = useClassSubjects({
-    realm: 'office', group, base: subjectBase, activeTab, api: ApiService,
+    realm: 'office', officeAttendance: attendanceAvailable, group, base: subjectBase, activeTab, api: ApiService,
     activate: tab => { activeTab.value = tab as TabKey; },
 });
 const subjectsChanged = (subjects: ClassSubject[]) => {
@@ -353,11 +367,11 @@ const subjectsChanged = (subjects: ClassSubject[]) => {
     .class-subjects-enabled .container { max-width: none; }
 }
 .nav-tabs .nav-link {
-    color: #6c757d;
+    color: var(--bs-secondary-color);
 }
 
 .nav-tabs .nav-link.active {
-    color: #198754;
+    color: var(--bs-success);
     font-weight: 600;
 }
 </style>

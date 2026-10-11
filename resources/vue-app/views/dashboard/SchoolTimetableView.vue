@@ -150,6 +150,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
+import { useCommittedDate } from '@/composables/useCommittedDate';
 import { formatSchoolDay, weekdayOfIso } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { schoolTimeRange } from '@/core/helpers/scheduledSend';
 import ApiService from '@/core/services/ApiService';
@@ -199,10 +200,10 @@ function editClassWeek(id: number, date: string) { classId.value = id; asOf.valu
 // A date box reports a "complete" date at several keys while one is typed over another
 // (11/15 passes through 1 Jan and 1 Nov), so a change waits for the typing to stop; Enter
 // and leaving the box load at once.
-let typing: ReturnType<typeof setTimeout> | undefined;
-function typedAsOf() { clearTimeout(typing); typing = setTimeout(() => { if (asOf.value >= '2000-01-01') commitAsOf(true); }, 400); }
+const dateInput = useCommittedDate(asOf, () => commitAsOf(true));
+function typedAsOf() { dateInput.typed(); }
 function commitAsOf(leaving: boolean) {
-    clearTimeout(typing);
+    dateInput.clear();
     if (!leaving && !inYear(asOf.value)) return;
     const key = `${base.value}:${classId.value}:${asOf.value}`;
     if (key !== lastWeekKey) void loadWeek();
@@ -306,7 +307,7 @@ function keydown(e: KeyboardEvent) {
 watch(root, () => { ++generation; ++weekGeneration; closeEditor(); setup.value = null; years.value = []; week.value = { days: [], meetings: [] }; clashes.value = []; yearId.value = null; classId.value = null; asOf.value = ''; load(); });
 watch(enabled, on => { if (on) load(); else { ++generation; ++weekGeneration; closeEditor(); setup.value = null; years.value = []; week.value = { days: [], meetings: [] }; clashes.value = []; } });
 onMounted(() => { load(); if (typeof document !== 'undefined') document.addEventListener?.('keydown',keydown); });
-onBeforeUnmount(() => { ++generation; ++weekGeneration; clearTimeout(typing); if (typeof document !== 'undefined') document.removeEventListener?.('keydown',keydown); });
+onBeforeUnmount(() => { ++generation; ++weekGeneration; dateInput.clear(); if (typeof document !== 'undefined') document.removeEventListener?.('keydown',keydown); });
 </script>
 
 <style scoped>

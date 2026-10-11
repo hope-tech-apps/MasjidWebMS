@@ -53,7 +53,7 @@ const trackerFor = (alphabet: string) => ({
 });
 const teacherWords = ['Roster', 'Attendance', 'Letters', 'Points', 'Hifdh', 'Class Story', 'Messages'];
 const moreWords = ['Lesson Plans', 'Grades', 'Reports', 'Files'];
-const officeWords = ['Roster', 'Class Story', 'Points', 'Letters', 'Gradebook', 'Lesson Plans', 'Hifdh', 'Messages', 'Files'];
+const officeWords = ['Roster', 'Attendance', 'Class Story', 'Points', 'Letters', 'Gradebook', 'Lesson Plans', 'Hifdh', 'Messages', 'Files'];
 const navLinks = (screen: any) => screen.all((n: Node) => n.tag === 'a' && n.props['data-class-choice'] !== undefined);
 const exactButton = (screen: any, words: string) => {
     const found = screen.all((n: Node) => n.tag === 'button' && (n.textContent === words || n.props['aria-label'] === words));
@@ -86,6 +86,8 @@ async function setup(realm: 'teacher' | 'office', options: any = {}) {
         calls.push({ method: 'get', url });
         if (options.read) { const response = options.read(url); if (response !== undefined) return response; }
         if (url.endsWith('/groups/2')) return ok(data);
+        if (url.includes('/attendance/registers')) return ok({ classes: [] });
+        if (url.includes('/attendance')) return ok({ session_date: '2026-10-08', today: '2026-10-08', timezone: 'America/New_York', students: [student], taken: false });
         if (url.endsWith('/school-subjects')) return ok([{ name: 'Science' }, { name: 'Mathematics' }]);
         if (url.endsWith('/subjects')) return ok(structuredClone(catalog), { guide_subjects: ['English Language Arts', 'Science'], tools: ['hifdh', 'arabic_letters', 'english_letters'] });
         if (/\/subjects\/\d+$/.test(url)) {
@@ -294,7 +296,7 @@ test('check 11: flag OFF and ON in one session restores legacy view and the same
 });
 test('office menu has only existing lines; real Hifdh pager reaches page 2, and letters lock each alphabet', async () => {
     const { screen, calls } = await setup('office'); try {
-        assert.deepEqual(navLinks(screen).map((n) => n.textContent), ['Roster', 'Points', ...subjects.map((s) => s.name), 'Class Story', 'Messages', 'Lesson Plans', 'Grades', 'Files']);
+        assert.deepEqual(navLinks(screen).map((n) => n.textContent), ['Roster', 'Attendance', 'Points', ...subjects.map((s) => s.name), 'Class Story', 'Messages', 'Lesson Plans', 'Grades', 'Files']);
         await pick(screen, "Qur'an");
         click(screen.all((n) => n.props['aria-label'] === 'Next page')[0]); await flush();
         assert.ok(calls.some((c) => c.method === 'hifz-page' && c.page === 2));
@@ -2102,6 +2104,12 @@ test('Timetable OFF class page bytes and requests match literal 30cef6d4 renderi
             return `<${node.tag}${attrs?' '+attrs:''}>${node.children.map(html).join('')}</${node.tag}>`;
         };
         const actual={html:html(screen.root),calls};
-        assert.deepEqual(actual, JSON.parse(readFileSync('tests/fixtures/timetable-class-page-off-30cef6d4.json','utf8')));
+        const expected = JSON.parse(readFileSync('tests/fixtures/timetable-class-page-off-30cef6d4.json','utf8'));
+        // Attendance is the only added legacy office tab; the saved fixture remains unchanged.
+        const story = '<li class="nav-item"><button class="nav-link" type="button"><i class="bi bi-journal-text me-1"></i>';
+        const attendance = '<li class="nav-item"><button class="nav-link" type="button"><i class="bi bi-calendar-check me-1"></i> Attendance <!--v-if--></button></li>';
+        assert.equal(expected.html.split(story).length, 2);
+        expected.html = expected.html.replace(story, attendance + story);
+        assert.deepEqual(actual, expected);
     } finally {screen.unmount();}
 });

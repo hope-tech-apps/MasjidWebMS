@@ -59,7 +59,14 @@ test('location OFF literal 52daab37 mounted bytes and request lists for all four
         const s = await screen(surface, false);
         try { actual[surface] = { html: html(s.root), calls: s.calls }; } finally { s.unmount(); }
     }
-    assert.deepEqual(JSON.parse(JSON.stringify(actual)), JSON.parse(readFileSync('resources/vue-app/tests/fixtures/class-location-screens-off-52daab37.json', 'utf8')));
+    const expected = JSON.parse(readFileSync('resources/vue-app/tests/fixtures/class-location-screens-off-52daab37.json', 'utf8'));
+    // Office attendance is an unconditional new class tab. Keep the original location fixture
+    // and every other rendered byte/request pinned; add only this exact new navigation line.
+    const story = '<li class="nav-item"><button class="nav-link" type="button"><i class="bi bi-journal-text me-1"></i>';
+    const attendance = '<li class="nav-item"><button class="nav-link" type="button"><i class="bi bi-calendar-check me-1"></i> Attendance <!--v-if--></button></li>';
+    assert.equal(expected['office-page'].html.split(story).length, 2);
+    expected['office-page'].html = expected['office-page'].html.replace(story, attendance + story);
+    assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected);
 });
 for (const surface of Object.keys(paths) as Surface[]) for (const location of ['Room 3', null]) {
     test(`location mounted ${surface} with ${location ?? 'no location'}`, async () => {

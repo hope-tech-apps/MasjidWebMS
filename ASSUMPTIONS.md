@@ -453,3 +453,6 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - The usual location is the existing undated class assignment, independent of slot overrides and selected school year. Verified in the existing timetable reader and class Location endpoints.
 - Setup printing is outside the trivial case: its root has no print style; Schedules owns a separate print surface. Skipped under the brief's explicit allowance.
 - Mounted width checks prove wrapping classes and separate lines, not real CSS geometry. The local Chrome/CDP attempt aborted with SIGABRT before connecting; browser phone/RTL remains unverified.
+
+## 2026-10-11 — Office attendance
+Verified base behavior: teacher permits non-meeting and outside-year dates and uses app today for save; the brief's claim that it already refuses those dates is incorrect. Preserve its frozen behavior; office refusals extend its hints while future/closure/roster sentences remain exact. Assumption: a school without a calendar keeps the teacher's permissive past-date behavior because no authority can name meeting days. Overview taken means at least one mark, and latest marker refers to the last updated cell, not completion of the whole roster.

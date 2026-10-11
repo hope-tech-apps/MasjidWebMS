@@ -50,7 +50,7 @@ export function classSubjectApi(api: OfficeSubjectTransport, base: string) {
 const line = (tab: string, label: string): ClassChoice => ({ key: `tab:${tab}`, label, query: { tab } });
 /** Screen navigation is separate from authorization; every subject also passes its detail GET. */
 export function useClassSubjects<T extends string>(options: {
-    realm: 'teacher' | 'office'; group: Ref<ClassPayload | null>; base: Ref<string>; api: SubjectReader;
+    realm: 'teacher' | 'office'; officeAttendance?: Ref<boolean>; group: Ref<ClassPayload | null>; base: Ref<string>; api: SubjectReader;
     reconcileSaved?: (operation: string) => void;
     beforeLeave?: () => Promise<boolean>;
     activeTab: Ref<T>; activate: (tab: string, alphabet: string | null) => void;
@@ -66,7 +66,7 @@ export function useClassSubjects<T extends string>(options: {
             .slice().sort((a, b) => a.position - b.position || a.id - b.id);
     });
     const sections = computed<ClassSection[]>(() => [
-        { label: 'Class', items: [line('roster', 'Roster'), ...(options.realm === 'teacher' ? [line('attendance', 'Attendance')] : []), line('points', 'Points'),
+        { label: 'Class', items: [line('roster', 'Roster'), ...(options.realm === 'teacher' || options.officeAttendance?.value === true ? [line('attendance', 'Attendance')] : []), line('points', 'Points'),
             ...(options.realm === 'teacher' && options.group.value?.class_store === true ? [line('store', 'Class Store')] : [])] },
         { label: 'Subjects', items: visibleSubjects.value.map(s => ({ key: `subject:${s.id}`, label: s.name, query: { subject: String(s.id) } })) },
         { label: 'Families', items: [line('story', 'Class Story'), line(options.realm === 'teacher' ? 'messages' : 'threads', 'Messages')] },

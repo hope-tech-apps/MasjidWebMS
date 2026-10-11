@@ -41,6 +41,10 @@ class AttendanceController extends TeacherController
      */
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
+        if ($request->attributes->get('attendance_frozen_reader') !== true) {
+            return app(\App\Services\Schools\AttendanceRegister::class)->read($this, $request, $masjid_id, $group_id);
+        }
+
         if (\App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id)) {
             return $this->indexConfigured($request, $masjid_id, $group_id);
         }
@@ -95,6 +99,32 @@ class AttendanceController extends TeacherController
         ], Response::HTTP_OK);
     }
 
+    /** Shared action entry into the preserved reader, without re-entering decorators. */
+    public function readFrozen(Request $request, $masjid_id, $group_id): JsonResponse
+    {
+        $previous = $request->attributes->get('attendance_frozen_reader');
+        $request->attributes->set('attendance_frozen_reader', true);
+        try {
+            return self::index($request, $masjid_id, $group_id);
+        } finally {
+            if ($previous === null) $request->attributes->remove('attendance_frozen_reader');
+            else $request->attributes->set('attendance_frozen_reader', $previous);
+        }
+    }
+
+    /** The save body is also source-pinned. Both realms invoke it through this entry. */
+    public function saveFrozen(SaveAttendanceRequest $request, $masjid_id, $group_id): JsonResponse
+    {
+        $previous = $request->attributes->get('attendance_frozen_writer');
+        $request->attributes->set('attendance_frozen_writer', true);
+        try {
+            return self::save($request, $masjid_id, $group_id);
+        } finally {
+            if ($previous === null) $request->attributes->remove('attendance_frozen_writer');
+            else $request->attributes->set('attendance_frozen_writer', $previous);
+        }
+    }
+
     /**
      * Record the register for one day.
      *
@@ -110,6 +140,10 @@ class AttendanceController extends TeacherController
      */
     public function save(SaveAttendanceRequest $request, $masjid_id, $group_id): JsonResponse
     {
+        if ($request->attributes->get('attendance_frozen_writer') !== true) {
+            return app(\App\Services\Schools\AttendanceRegister::class)->save($this, $request, $masjid_id, $group_id);
+        }
+
         $group = Group::findOrFail($group_id);
         $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
 

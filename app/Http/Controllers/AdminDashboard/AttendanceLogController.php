@@ -43,10 +43,8 @@ use Symfony\Component\HttpFoundation\Response;
  * 62%" reaches a parent on the strength of a fortnight a teacher forgot to mark.
  *
  * READ ONLY, and structurally so: two public methods, both GETs, no form request
- * and no write on any path. Taking and correcting a register is the teacher's
- * verb (Teacher\AttendanceController) because a mark stamps `marked_by_user_id`
- * — the same line the gradebook mount draws between reading the office's own
- * records and putting an administrator's name on a judgement.
+ * and no write on any path. Office register management lives separately in
+ * OfficeAttendanceController and attributes marks to the signed-in office user.
  *
  * Tenant isolation is the BelongsToMasjid global scope on Group, GroupMembership
  * and AttendanceRecord, bound from the route's {masjid_id} by `tenant`. Nothing

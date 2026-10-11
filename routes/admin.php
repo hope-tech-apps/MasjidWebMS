@@ -1259,17 +1259,21 @@ Route::prefix('admin')->group(function () {
                 // one class at a time and add up by hand. One class is the
                 // NARROWING (`?group_id=`), not the shape of the route.
                 //
-                // Two GETs and nothing else, on a controller with two public
-                // methods. Taking and correcting a register stays a teacher verb
-                // (Teacher\AttendanceController): a mark stamps
-                // `marked_by_user_id`, so an office screen that could write one
-                // would record a teacher as having seen a child they never saw.
-                // The same line the gradebook block below draws.
-                //
                 // `view contacts`, the gate the roster, the letter tracker and
                 // the gradebook already carry — no new permission, and none
                 // needed: this is the same kind of record about the same
                 // children, read by the same people.
+                // Office register management reuses the roster's permission in both directions.
+                Route::get('{masjid_id}/attendance/registers', [\App\Http\Controllers\AdminDashboard\OfficeAttendanceController::class, 'overview'])
+                    ->middleware('permission:manage contacts');
+                Route::prefix('{masjid_id}/groups/{group_id}/attendance')
+                    ->middleware('permission:manage contacts')
+                    ->controller(\App\Http\Controllers\AdminDashboard\OfficeAttendanceController::class)
+                    ->group(function () {
+                        Route::get('/', 'index');
+                        Route::put('/', 'save');
+                    });
+
                 Route::prefix('{masjid_id}/attendance')
                     ->controller(\App\Http\Controllers\AdminDashboard\AttendanceLogController::class)
                     ->group(function () {
