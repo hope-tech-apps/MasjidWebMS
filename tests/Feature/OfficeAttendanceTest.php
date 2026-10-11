@@ -311,11 +311,14 @@ class OfficeAttendanceTest extends TestCase
         $revision = $read->headers->get('X-Attendance-Revision');
         $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $revision ?? '');
         $body['marks'][0]['status'] = 'present';
-        $this->putJson($url, $body)->assertStatus(409);
+        // A page that predates revisions is told to refresh the PAGE; re-reading the register would not help it.
+        $this->putJson($url, $body)->assertStatus(409)->assertJsonPath('message', 'This page is out of date. Refresh the page, then make your change.');
+        $this->putJson($url, $body, ['X-Attendance-Revision' => ''])->assertStatus(409)->assertJsonPath('message', 'This page is out of date. Refresh the page, then make your change.');
         $this->putJson($url, $body, ['X-Attendance-Revision' => $revision])->assertOk();
         $fresh = $this->getJson($url.'?date=2026-10-19')->assertOk()->headers->get('X-Attendance-Revision');
         $this->assertNotSame($revision, $fresh, 'same-second corrections must advance the revision');
-        $this->putJson($url, $body, ['X-Attendance-Revision' => $revision])->assertStatus(409);
+        $stale = $this->putJson($url, $body, ['X-Attendance-Revision' => $revision])->assertStatus(409);
+        $this->assertStringStartsWith('This register was changed by ', (string) $stale->json('message'));
         $this->assertDatabaseCount('attendance_records', 1);
     }
 

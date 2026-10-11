@@ -38,12 +38,18 @@ class AttendanceRegister
             $date = $request->validated('session_date');
             $marks = $this->marks((int) $masjid_id, (int) $group_id, $date);
             $revision = $request->header(self::REVISION_HEADER);
+            // A page loaded before registers carried a revision sends none. Re-reading the register inside
+            // that page cannot help, so the sentence has to send the person to refresh the page itself.
+            $pageOutOfDate = $revision === null || $revision === '';
+            if ($pageOutOfDate) $revision = null;
             $overwrites = $marks->whereIn('group_membership_id', collect($request->validated('marks'))->pluck('membership_id')->all())->isNotEmpty();
             if (($revision === null && $overwrites) || ($revision !== null && ! hash_equals($this->revision($marks), $revision))) {
                 $latest = $marks->sortByDesc(fn ($m) => [$m->updated_at, $m->id])->first();
                 $marker = $latest ? self::marker($latest->name, $latest->type) : 'another staff member';
                 $time = $latest ? Carbon::parse($latest->updated_at)->setTimezone(SchoolCalendarReaders::for((int) $masjid_id)->timezone())->format('F j, Y, g:i A') : 'an earlier time';
-                return response()->json(['status' => 'failed', 'message' => "This register was changed by {$marker} at {$time}. Reload it, then make your change."], 409);
+                return response()->json(['status' => 'failed', 'message' => $pageOutOfDate
+                    ? 'This page is out of date. Refresh the page, then make your change.'
+                    : "This register was changed by {$marker} at {$time}. Reload it, then make your change."], 409);
             }
             return $writer->saveFrozen($request, $masjid_id, $group_id);
         });
