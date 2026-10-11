@@ -254,12 +254,14 @@ class FormsController extends Controller
                 return $refusal;
             }
 
-            $form->update($request->safe()->all());
+            \App\Support\DutyRotaMode::updateForm($form, $request->safe()->all());
 
             return response()->json([
                 'status' => 'success',
                 'data' => $this->serialize($form->fresh()),
             ], Response::HTTP_OK);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['status'=>'failed','data'=>$e->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',

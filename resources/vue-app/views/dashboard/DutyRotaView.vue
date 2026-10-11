@@ -127,9 +127,9 @@ const placementDays=computed(()=>data.value?.days.filter((d:any)=>d.date!==dialo
 const buildCounts=computed(()=>counts.value ? `${counts.value.registrations} ${plural(counts.value.registrations,'registration')}, ${counts.value.picks} ${plural(counts.value.picks,'pick')}: ${counts.value.placed} placed, ${counts.value.unplaced} could not be placed` : '');
 const familyName=(id:number)=>data.value.families.find((f:any)=>f.id===id)?.name || 'Family';
 function failure(e:any):string { const errors=e?.response?.data?.errors || e?.response?.data?.data; return errors && typeof errors==='object' ? Object.values(errors).flat().join(' ') : e?.response?.data?.message || 'Could not complete this action. Please try again.'; }
-async function request(run:()=>Promise<any>,apply:(value:any)=>void):Promise<boolean> {
+async function request(run:()=>Promise<any>,apply:(value:any)=>void,onFailure?:(e:any)=>Promise<void>):Promise<boolean> {
     if(busy.value || !enabled.value)return false; const context=base.value;busy.value=true;error.value='';dialogError.value='';
-    try{const response=await run();if(base.value!==context || !enabled.value)return false;apply(response.data.data);return true;}catch(e){if(base.value===context){if(dialog.value)dialogError.value=failure(e);else error.value=failure(e);}return false;}finally{busy.value=false;if(reloadNeeded){reloadNeeded=false;void load();}}
+    try{const response=await run();if(base.value!==context || !enabled.value)return false;apply(response.data.data);return true;}catch(e){if(base.value===context){if(dialog.value)dialogError.value=failure(e);else error.value=failure(e);if(onFailure)await onFailure(e);}return false;}finally{busy.value=false;if(reloadNeeded){reloadNeeded=false;void load();}}
 }
 async function load(){if(!enabled.value)return;await request(()=>ApiService.get(base.value as any),value=>{setup.value=value;data.value=value.selected;selectedId.value=value.selected?.rota.id || null;});}
 async function choose(){if(!selectedId.value)return;await request(()=>ApiService.get(`${base.value}/${selectedId.value}` as any),value=>{data.value=value;result.value='';});}
@@ -141,14 +141,19 @@ function remove(family:any,date:string){dialog.value={kind:'assignment',action:'
 function email(family:any){dialog.value={kind:'email',family,title:family?`Email ${family.name} about ${data.value.rota.name}`:'Email families who need a day'};}
 async function preview(){await request(()=>ApiService.post(`${base.value}/${selectedId.value}/preview` as any,{}),value=>{counts.value=value;dialog.value={kind:'build',title:`Build ${data.value.rota.name} from the form`};});}
 async function saveDialog(){
-    const d=dialog.value;if(!d)return;const url=`${base.value}/${selectedId.value}`;
-    const done=await request(()=>d.kind==='edit'?(d.rota?ApiService.put(url as any,draft.value):ApiService.post(base.value as any,draft.value)):d.kind==='build'?ApiService.post(`${url}/build` as any,{confirmed:true}):d.kind==='email'?ApiService.post(`${url}/email` as any,{confirmed:true,...(d.family?{family_id:d.family.id}:{})}):ApiService.post(`${url}/assignments` as any,{action:d.action,...(d.action==='remove'?{}:placement.value),...(d.family?{assignment_id:d.family.id}:{})}),value=>{
+    const d=dialog.value;if(!d || busy.value)return;
+    if(d.kind==='email'){if(d.family)delete links.value[d.family.id];else links.value={};}const url=`${base.value}/${selectedId.value}`;
+    const done=await request(()=>d.kind==='edit'?(d.rota?ApiService.put(url as any,draft.value):ApiService.post(base.value as any,draft.value)):d.kind==='build'?ApiService.post(`${url}/build` as any,{confirmed:true}):d.kind==='email'?ApiService.post(`${url}/email` as any,{confirmed:true,...(d.family?{family_id:d.family.id}:{})}):ApiService.post(`${url}/assignments` as any,{action:d.action,...(d.action==='remove'?{}:d.action==='add'&&placement.value.family_id?{date:placement.value.date,family_id:placement.value.family_id,over_capacity:placement.value.over_capacity}:placement.value),...(d.family?{assignment_id:d.family.id}:{})}),value=>{
         data.value=value;selectedId.value=value.rota.id;
         if(!setup.value.rotas.some((r:any)=>r.id===value.rota.id))setup.value.rotas.push(value.rota);else setup.value.rotas=setup.value.rotas.map((r:any)=>r.id===value.rota.id?value.rota:r);
         if(d.kind==='email'){const n=value.result.queued;const skipped=value.result.skipped_no_email;result.value=`${n} ${plural(n,'email')} queued. ${skipped} ${plural(skipped,'family','families')} ${skipped===1?'has':'have'} no email: call them.`;}else result.value=d.kind==='build'?'The form build is complete.':'Saved.';
+    },async e=>{
+        if(d.kind==='assignment' && d.action!=='remove' && e?.response?.status===422 && failure(e).includes('That day is full')){
+            try{const response=await ApiService.get(url as any);if(`${base.value}/${selectedId.value}`===url && dialog.value===d && enabled.value){data.value=response.data.data;placement.value.date='';}}catch{dialogError.value+=' Could not refresh the days. Close and reload before trying again.';}
+        }
     });if(done){dialog.value=null;}
 }
-async function copyLink(f:any,reissue=false){await request(()=>ApiService.post(`${base.value}/${selectedId.value}/families/${f.id}/link` as any,{reissue}),value=>{links.value[f.id]=value.url;result.value=reissue?`New private link for ${f.name}. The old link is void.`:`Private link for ${f.name} copied; the link below can also be copied.`;navigator.clipboard?.writeText(value.url).catch(()=>{});});}
+async function copyLink(f:any,reissue=false){if(reissue)delete links.value[f.id];await request(()=>ApiService.post(`${base.value}/${selectedId.value}/families/${f.id}/link` as any,{reissue}),value=>{links.value[f.id]=value.url;result.value=reissue?`New private link for ${f.name}. The old link is void.`:`Private link for ${f.name} copied; the link below can also be copied.`;navigator.clipboard?.writeText(value.url).catch(()=>{});});}
 async function exportCsv(){await request(async()=>{const response=await fetch(`${base.value}/${selectedId.value}/export`,{headers:{Authorization:`Bearer ${localStorage.getItem(LOCAL_STORAGE_KEYS.token)}`,Accept:'text/csv'}});if(!response.ok)throw new Error('export');const url=URL.createObjectURL(await response.blob());const a=document.createElement('a');a.href=url;a.download='duty-rota.csv';a.click();URL.revokeObjectURL(url);return {data:{data:null}};},()=>{result.value='CSV exported.';});}
 watch(()=>auth.dashboardMasjidId,()=>{data.value=null;dialog.value=null;setup.value={rotas:[],years:[],forms:[]};links.value={};if(busy.value)reloadNeeded=true;else load();});
 onMounted(load);

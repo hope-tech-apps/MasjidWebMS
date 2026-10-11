@@ -38,6 +38,23 @@ final class DutyRotaMode
         \Illuminate\Support\Facades\DB::table('forms')->where('masjid_id',$school->id)->where('has_duty_rota_records',true)->update(['duty_rota_enabled'=>$changes['family_duty_rota']]);
     }
 
+    /** Retained source schemas change only while school then rota locks exclude builders and source saves. */
+    public static function updateForm(Form $form, array $data): void
+    {
+        if (! isset($data['schema']) || ! $form->getAttribute('has_duty_rota_records')) { $form->update($data); return; }
+        \Illuminate\Support\Facades\DB::transaction(function () use($form,$data) {
+            Masjid::whereKey($form->masjid_id)->lockForUpdate()->firstOrFail();
+            $rotas=\App\Models\DutyRota::withoutMasjidScope()->where('masjid_id',$form->masjid_id)->where('source_form_id',$form->id)->orderBy('id')->lockForUpdate()->get();
+            $locked=Form::where('masjid_id',$form->masjid_id)->whereKey($form->id)->lockForUpdate()->firstOrFail();
+            $candidate=new Form(['schema'=>$data['schema']]);
+            $fields=array_column(DutyRotaService::sourceFields($candidate),'name');
+            foreach ($rotas as $rota) if (! in_array($rota->source_field,$fields,true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['schema'=>['The '.$rota->name.' rota reads this question. Change the rota first.']]);
+            }
+            $locked->update($data);
+        },3);
+    }
+
     public static function refuseDeletion($model, string $column): void
     {
         $kind=$column==='school_year_id'?'year':'form';

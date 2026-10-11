@@ -68,15 +68,15 @@ it('DutyRota actual lock builder takes rota mutex before assignment reads and se
     $connection=DB::connection();$original=$connection->getQueryGrammar();
     $grammar=new class($connection) extends \Illuminate\Database\Query\Grammars\SQLiteGrammar {
         public array $observed=[];
-        public function compileSelect(\Illuminate\Database\Query\Builder $query) { if(DB::transactionLevel()>1 && in_array($query->from,['duty_rotas','duty_rota_assignments','duty_rota_families'],true))$this->observed[]=['table'=>$query->from,'lock'=>$query->lock];return parent::compileSelect($query); }
+        public function compileSelect(\Illuminate\Database\Query\Builder $query) { if(DB::transactionLevel()>1 && in_array($query->from,['masjids','duty_rotas','duty_rota_assignments','duty_rota_families'],true))$this->observed[]=['table'=>$query->from,'lock'=>$query->lock];return parent::compileSelect($query); }
     };
     $connection->setQueryGrammar($grammar);
     try {
         $first=$svc->publicAction($r,$links[0]['token'],'claim',['2026-10-18']);
         $second=$svc->publicAction($r,$links[1]['token'],'claim',['2026-10-18']);
         expect($first['saved'])->toBe(['2026-10-18'])->and($second['saved'])->toBe([])->and($second['refused'])->toBe(['2026-10-18']);
-        expect($grammar->observed[0])->toBe(['table'=>'duty_rotas','lock'=>true]);
-        foreach($grammar->observed as $read)expect($read['lock'])->toBeTrue();
+        expect(array_slice($grammar->observed,0,2))->toBe([['table'=>'masjids','lock'=>true],['table'=>'duty_rotas','lock'=>true]]);
+        foreach(['duty_rota_families','duty_rota_assignments'] as $table)expect(collect($grammar->observed)->firstWhere('table',$table)['lock'])->toBeTrue();
     } finally { $connection->setQueryGrammar($original); }
 });
 it('DutyRota office moves and deliberate over capacity survive rebuild and removal opens a place',function () {
@@ -84,10 +84,15 @@ it('DutyRota office moves and deliberate over capacity survive rebuild and remov
     expect(fn()=>$svc->officeAssignment($r,['action'=>'move','assignment_id'=>$a->id,'date'=>'2026-10-25']))->toThrow(\Illuminate\Validation\ValidationException::class);
     $svc->officeAssignment($r,['action'=>'move','assignment_id'=>$a->id,'date'=>'2026-10-25','over_capacity'=>true]);$svc->build($r);
     expect(DutyRotaAssignment::where('family_id',$maple->id)->whereNull('released_at')->pluck('duty_on')->all())->toBe(['2026-10-25']);expect(DutyRotaAssignment::where('duty_on','2026-10-25')->whereNull('released_at')->count())->toBe(2);
+    $moved=DutyRotaAssignment::where('family_id',$maple->id)->whereNull('released_at')->first();$svc->officeAssignment($r,['action'=>'remove','assignment_id'=>$moved->id]);$svc->build($r);
+    expect(DutyRotaAssignment::where('family_id',$maple->id)->whereNull('released_at')->count())->toBe(0)->and(DutyRotaAssignment::where('duty_on','2026-10-25')->whereNull('released_at')->count())->toBe(1);
+     $cedar=DutyRotaAssignment::where('duty_on','2026-10-25')->whereNull('released_at')->first();$svc->officeAssignment($r,['action'=>'remove','assignment_id'=>$cedar->id]);$svc->build($r);
+    expect(collect($svc->office($r)['days'])->firstWhere('date','2026-10-25')['taken'])->toBe(0);$svc->officeAssignment($r,['action'=>'add','family_id'=>$maple->id,'date'=>'2026-10-25']);expect(DutyRotaAssignment::where('duty_on','2026-10-25')->whereNull('released_at')->count())->toBe(1);
 });
 it('DutyRota phone fallback normalizes digits and a no-contact response remains separate',function () {
     [$s,$y,$f,$r]=dutySetup();foreach(['+1 (555) 555-0102','15555550102'] as $phone) FormResponse::create(['form_id'=>$f->id,'masjid_id'=>$s->id,'respondent_name'=>'Maple Family','respondent_phone'=>$phone,'data'=>['days'=>['2026-10-18']],'status'=>'new','submitted_at'=>now()]);
-    app(DutyRotaService::class)->build($r);expect(DutyRotaFamily::count())->toBe(1)->and(DutyRotaFamily::first()->registration_count)->toBe(2);
+    foreach(range(1,2) as $i) FormResponse::create(['form_id'=>$f->id,'masjid_id'=>$s->id,'respondent_name'=>'No contact','data'=>['days'=>[]],'status'=>'new','submitted_at'=>now()]);
+    app(DutyRotaService::class)->build($r);expect(DutyRotaFamily::count())->toBe(3)->and(DutyRotaFamily::first()->registration_count)->toBe(2);expect(DutyRotaFamily::whereNull('phone')->whereNull('email')->pluck('identity_hash')->unique())->toHaveCount(2);
 });
 it('DutyRota give back today is refused and cancellation never releases claim or office turns',function () {
     [$s,$y,$f,$r]=dutySetup(['turns_owed'=>4]);$response=dutyResponse($f,'maple@example.invalid',['2026-10-11']);$svc=app(DutyRotaService::class);$svc->build($r);$family=DutyRotaFamily::first();$link=$svc->issue($r,$family);

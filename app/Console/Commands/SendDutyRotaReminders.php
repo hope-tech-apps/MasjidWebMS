@@ -29,9 +29,8 @@ class SendDutyRotaReminders extends Command
                             $families=DutyRotaFamily::where('masjid_id',$r->masjid_id)->where('rota_id',$r->id)->get()->keyBy('id');
                             foreach($assignments as $a) {
                                 $f=$families[$a->family_id]; if (! $f->email) continue;
-                                $link=app(DutyRotaService::class)->currentLink($r,$f);
                                 $held=collect($data['families'])->firstWhere('id',$f->id)['held'];
-                                if(app(DutyRotaMailService::class)->queue($r,$f,'reminder',$held,$link,$a)) $queued++;
+                                if(app(DutyRotaMailService::class)->queue($r,$f,'reminder',$held,$a)) $queued++;
                             }
                         });
                     } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::warning('Duty rota reminder sweep failed',['rota'=>$rota->id,'exception'=>$e->getMessage()]); }

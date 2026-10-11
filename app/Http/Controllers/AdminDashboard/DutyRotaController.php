@@ -49,7 +49,7 @@ class DutyRotaController extends Controller
     public function assignment(Request $request,$masjid_id,$rota_id): mixed
     {
         $request->merge(['over_capacity'=>filter_var($request->input('over_capacity',false),FILTER_VALIDATE_BOOLEAN,FILTER_NULL_ON_FAILURE)]);
-        $data=$request->validate(['action'=>'required|in:add,move,remove','assignment_id'=>'required_if:action,move,remove|integer','family_id'=>'nullable|integer','date'=>'required_unless:action,remove|date_format:Y-m-d','name'=>'required_without_all:family_id,assignment_id|string|max:200','email'=>'nullable|email|max:254','phone'=>'nullable|string|max:50','over_capacity'=>'boolean']);
+        $data=$request->validate(['action'=>'required|in:add,move,remove','assignment_id'=>'required_if:action,move,remove|integer','family_id'=>'nullable|integer','date'=>'required_unless:action,remove|date_format:Y-m-d','name'=>'nullable|required_without_all:family_id,assignment_id|string|max:200','email'=>'nullable|email|max:254','phone'=>'nullable|string|max:50','over_capacity'=>'boolean']);
         if($data['action']==='add' && empty($data['family_id']) && empty($data['email']) && empty($data['phone'])) throw \Illuminate\Validation\ValidationException::withMessages(['email'=>['Enter an email or phone for this family.']]);
         $r=$this->rota($rota_id); $this->service->officeAssignment($r,$data); return $this->reply($r);
     }

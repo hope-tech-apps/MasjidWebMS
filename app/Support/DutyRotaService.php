@@ -47,15 +47,15 @@ final class DutyRotaService
         return $out;
     }
 
-    /** First transaction statement is the mutex; locking row reads stay fresh even in nested callers. */
-    public function locked(DutyRota $rota, callable $work): mixed
+    /** School then rota mutexes precede every capacity read and assignment writer. */
+    public function locked(DutyRota $rota, callable $work, int $attempts=3): mixed
     {
         return DB::transaction(function () use ($rota,$work) {
+            $school=Masjid::whereKey($rota->masjid_id)->lockForUpdate()->firstOrFail();
             $locked=DutyRota::withoutMasjidScope()->where('masjid_id',$rota->masjid_id)->whereKey($rota->id)->lockForUpdate()->firstOrFail();
-            $school=Masjid::whereKey($locked->masjid_id)->sharedLock()->first();
             abort_unless(DutyRotaMode::enabled($school),404);
             return $work($locked,$school);
-        },3);
+        },$attempts);
     }
 
     private function calendar(DutyRota $rota): array
@@ -110,14 +110,14 @@ final class DutyRotaService
                     foreach ($picks as $day) {
                         $result['picks']++;
                         if (! is_string($day) || ! in_array($day,$open,true)) { $result['unplaced']++; continue; }
-                        // A release is intentional history, never an invitation for the form to undo it.
+                        // Cancellation alone may be undone by a live registration; intentional releases stay suppressed.
                         $existing=$assignments->first(fn($a)=>$a->family_id===$family->id && $a->duty_on===$day);
-                        if ($existing) { $result[$existing->released_at===null?'placed':'unplaced']++; continue; }
+                        if ($existing && ($existing->released_at===null || $existing->release_reason!=='All registrations cancelled; past turns kept.')) { $result[$existing->released_at===null?'placed':'unplaced']++; continue; }
                         $held=$assignments->filter(fn($a)=>$a->family_id===$family->id && $a->released_at===null)->count();
                         if ($day>$calendar->today() && $held >= $r->turns_owed) { $result['unplaced']++; continue; }
                         $taken=$assignments->filter(fn($a)=>$a->duty_on===$day && $a->released_at===null)->count();
                         if ($day>$calendar->today() && $taken >= $r->capacity) { $family->unplaced_picks=array_values(array_unique([...$family->unplaced_picks,$day])); $family->save(); $result['unplaced']++; continue; }
-                        $assignments->push($this->assign($r,$family,$day,'form',$assignments)); $result['placed']++;
+                        $a=$this->assign($r,$family,$day,'form',$assignments); if (! $existing) $assignments->push($a); $result['placed']++;
                     }
                 }
                 if ($preview) throw new DutyRotaPreview($result);
