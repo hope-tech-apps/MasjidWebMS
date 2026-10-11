@@ -31,7 +31,7 @@ class GroupsController extends TeacherController
 
         return response()->json([
             'status' => 'success',
-            'data' => $groups->map(fn (Group $g): array => $this->classPayload($g, $unread[(int) $g->id] ?? 0))->values(),
+            'data' => $groups->map(fn (Group $g): array => $this->classPayloadWithAllergies($g, $unread[(int) $g->id] ?? 0))->values(),
         ], Response::HTTP_OK);
     }
 
@@ -46,10 +46,22 @@ class GroupsController extends TeacherController
 
         return response()->json([
             'status' => 'success',
-            'data' => $this->classPayload(
+            'data' => $this->classPayloadWithAllergies(
                 $group,
                 GroupThreadUnread::byGroup((int) Auth::id(), [(int) $group->id])[(int) $group->id] ?? 0
             ),
         ], Response::HTTP_OK);
+    }
+
+    /** Decorate only the authorized class roster, leaving the frozen reader intact. */
+    private function classPayloadWithAllergies(Group $group, ?int $unreadMessages = null): array
+    {
+        $payload = $this->classPayload($group, $unreadMessages);
+        if (! $group->teachesStudents()) return $payload;
+        $payload['students'] = \App\Support\StudentAllergies::decorateTeacherRoster(
+            (int) $group->masjid_id, (int) $group->id, $payload['students']->all()
+        );
+
+        return $payload;
     }
 }

@@ -246,7 +246,7 @@ class StudentAllergiesTest extends TestCase
                 $evidence[$size][$name]=['off'=>count($off),'on'=>count($on),'notes'=>count($notes)];
             }
         }
-        file_put_contents('/private/tmp/student-allergies-query-counts.json',json_encode($evidence,JSON_PRETTY_PRINT));
+        file_put_contents(sys_get_temp_dir().'/student-allergies-query-counts.json',json_encode($evidence,JSON_PRETTY_PRINT));
     }
 
     #[Test]
@@ -332,7 +332,7 @@ class StudentAllergiesTest extends TestCase
         foreach ($datasets as $dataset) $this->assertAllergyClean($this->get("/api/admin/masjids/{$this->school->id}/records/export?dataset={$dataset}")->assertOk()->streamedContent(),$dataset);
         $csv=$this->get("/api/admin/masjids/{$this->school->id}/groups/{$this->class->id}/roster.csv")->assertOk()->streamedContent();
         $this->assertStringContainsString('Allergies',$csv); $this->assertStringContainsString('PRIVATE_HEALTH_SENTINEL_Peanuts',$csv);
-        file_put_contents('/private/tmp/student-allergies-privacy-walk.json',json_encode(['counts'=>$counts,'routes'=>$walk],JSON_PRETTY_PRINT));
+        file_put_contents(sys_get_temp_dir().'/student-allergies-privacy-walk.json',json_encode(['counts'=>$counts,'routes'=>$walk],JSON_PRETTY_PRINT));
     }
 
     /** Real child-scoped records for every successful family/member detail and download. */
@@ -524,7 +524,7 @@ class StudentAllergiesTest extends TestCase
         DB::flushQueryLog(); DB::enableQueryLog();
         $this->postJson("/api/admin/masjids/{$this->school->id}/contacts/{$this->child->id}/merge",['target_contact_id'=>$target->id])->assertOk();
         $queries=array_column(DB::getQueryLog(),'query'); DB::disableQueryLog();
-        file_put_contents('/private/tmp/allergy-unused-merge-sql.json',json_encode($queries,JSON_PRETTY_PRINT));
+        file_put_contents(sys_get_temp_dir().'/allergy-unused-merge-sql.json',json_encode($queries,JSON_PRETTY_PRINT));
         $this->assertSame([],array_values(array_filter($queries,fn($q)=>str_contains($q,'student_allerg'))));
     }
 
@@ -620,7 +620,7 @@ class StudentAllergiesTest extends TestCase
         $this->assertSame('text',\Illuminate\Support\Facades\Schema::getColumnType('student_allergies','allergies'));
         $bytes=strlen(DB::table('student_allergies')->value('allergies'));
         $this->assertLessThanOrEqual(65535,$bytes);
-        file_put_contents('/private/tmp/allergy-text-capacity.json',json_encode(['characters'=>8000,'plaintext_bytes'=>strlen($answer),'encrypted_bytes'=>$bytes]));
+        file_put_contents(sys_get_temp_dir().'/allergy-text-capacity.json',json_encode(['characters'=>8000,'plaintext_bytes'=>strlen($answer),'encrypted_bytes'=>$bytes]));
         $this->response($form,[['firstName'=>'Robin','lastName'=>'Willow','allergies'=>$answer.'🥛']]);
         $preview=app(StudentAllergies::class)->copy($form,'allergies',true,$this->office->id);
         $this->assertSame(1,$preview['counts']['too_long']);
@@ -663,6 +663,35 @@ class StudentAllergiesTest extends TestCase
         $this->assertFalse((bool)$this->school->fresh()->getAttribute('has_student_allergy_records'));
         $this->child=Contact::factory()->create(['masjid_id'=>$this->school->id]);
         $this->allergies_review_unused_school_merge_adds_no_health_query();
+    }
+
+    #[Test]
+    public function allergies_decorate_both_reader_modes_without_flagging_legacy_leaders_or_other_group_kinds(): void
+    {
+        StudentAllergy::create(['masjid_id'=>$this->school->id,'contact_id'=>$this->child->id,'allergies'=>'Peanuts','source'=>'office']);
+        $leaderContact=Contact::factory()->create(['masjid_id'=>$this->school->id]);
+        $leader=GroupMembership::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'contact_id'=>$leaderContact->id,'role'=>'leader']);
+        StudentAllergy::create(['masjid_id'=>$this->school->id,'contact_id'=>$leaderContact->id,'allergies'=>'Leader private note','source'=>'office']);
+        $unflagged=Contact::factory()->create(['masjid_id'=>$this->school->id]);
+        $unflaggedMember=GroupMembership::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'contact_id'=>$unflagged->id,'role'=>'member']);
+        $year=\App\Models\SchoolYear::create(['masjid_id'=>$this->school->id,'label'=>'Practice year','first_day'=>'2026-09-01','last_day'=>'2027-06-30','meeting_weekdays'=>[0]]);
+        Sanctum::actingAs($this->teacher,['staff']);
+        foreach ([false,true] as $configured) {
+            $this->school->forceFill(['capability_overrides'=>['student_allergies'=>true,'class_subjects'=>$configured,'school_calendar'=>true,'school_calendar_terms'=>$configured]])->save();
+            foreach ([$this->teacherClass(),$this->teacherClass().'/attendance?date=2026-10-11'] as $url) {
+                $rows=collect($this->getJson($url)->assertOk()->json('data.students'))->keyBy('membership_id');
+                $this->assertSame('Peanuts',$rows[$this->member->id]['student_allergy']['allergies']);
+                $this->assertArrayNotHasKey('student_allergy',$rows[$leader->id]);
+                $this->assertArrayHasKey('student_allergy',$rows[$unflaggedMember->id]);
+                $this->assertNull($rows[$unflaggedMember->id]['student_allergy']);
+            }
+            $this->putJson($this->teacherClass().'/attendance',['session_date'=>'2026-10-11','marks'=>[['membership_id'=>$this->member->id,'status'=>'present']]])->assertOk()->assertJsonPath('data.students.0.student_allergy.allergies','Peanuts');
+        }
+        $this->class->forceFill(['kind'=>'general'])->save();
+        foreach ([$this->teacherClass(),$this->teacherClass().'/attendance?date=2026-10-11'] as $url) {
+            $rows=$this->getJson($url)->assertOk()->json('data.students');
+            foreach ($rows as $row) $this->assertArrayNotHasKey('student_allergy',$row);
+        }
     }
 
 }

@@ -71,8 +71,6 @@ class AttendanceController extends TeacherController
             ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
             ->get();
 
-        $allergies = \App\Support\StudentAllergies::forRoster($group, $students, teacher: true);
-
         $marks = AttendanceRecord::query()
             ->where('group_id', $group->id)
             ->whereDate('session_date', $date)
@@ -84,13 +82,13 @@ class AttendanceController extends TeacherController
             'data' => [
                 'session_date' => $date->toDateString(),
                 'taken' => $marks->isNotEmpty(),
-                'students' => $students->map(function (GroupMembership $m) use ($marks, $allergies): array {
+                'students' => $students->map(function (GroupMembership $m) use ($marks): array {
                     $record = $marks->get($m->id);
 
                     return $this->student($m) + [
                         'status' => $record?->status,
                         'note' => $record?->note,
-                    ] + ($allergies !== null && $m->role === GroupMembership::ROLE_MEMBER ? ['student_allergy' => $allergies[(int) $m->id] ?? null] : []);
+                    ];
                 })->values(),
                 'school_day' => $schoolDay,
             ],
@@ -285,8 +283,6 @@ class AttendanceController extends TeacherController
             ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
             ->get();
 
-        $allergies = \App\Support\StudentAllergies::forRoster($group, $students, teacher: true);
-
         $marks = AttendanceRecord::query()
             ->where('group_id', $group->id)
             ->whereDate('session_date', $date)
@@ -298,13 +294,13 @@ class AttendanceController extends TeacherController
             'data' => [
                 'session_date' => $date->toDateString(),
                 'taken' => $marks->isNotEmpty(),
-                'students' => $students->map(function (GroupMembership $m) use ($marks, $allergies): array {
+                'students' => $students->map(function (GroupMembership $m) use ($marks): array {
                     $record = $marks->get($m->id);
 
                     return $this->student($m) + [
                         'status' => $record?->status,
                         'note' => $record?->note,
-                    ] + ($allergies !== null && $m->role === GroupMembership::ROLE_MEMBER ? ['student_allergy' => $allergies[(int) $m->id] ?? null] : []);
+                    ];
                 })->values(),
                 'school_day' => $schoolDay,
             ],

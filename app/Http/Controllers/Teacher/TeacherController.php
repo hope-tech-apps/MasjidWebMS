@@ -123,7 +123,6 @@ abstract class TeacherController extends Controller
         // its own query and hands back numbers. For a ḥalaqa, a team or a
         // general group it reads nothing and every `age` below is null.
         $ages = StudentAge::forRoster($group, $students, $this->schoolToday($group));
-        $allergies = \App\Support\StudentAllergies::forRoster($group, $students, teacher: true);
 
         return [
             'id' => (int) $group->id,
@@ -143,7 +142,7 @@ abstract class TeacherController extends Controller
             'subject_labels' => \App\Models\GroupStaff::SUBJECT_LABELS,
             'students' => $students->map(fn (GroupMembership $m): array => $this->student($m) + [
                 'age' => $ages[(int) $m->id] ?? null,
-            ] + ($allergies !== null && $m->role === GroupMembership::ROLE_MEMBER ? ['student_allergy' => $allergies[(int) $m->id] ?? null] : []))->values(),
+            ])->values(),
         ] + ($unreadMessages !== null ? ['unread_messages' => $unreadMessages] : [])
           + $this->classStoreFlag($group);
     }
@@ -161,7 +160,6 @@ abstract class TeacherController extends Controller
         // its own query and hands back numbers. For a ḥalaqa, a team or a
         // general group it reads nothing and every `age` below is null.
         $ages = StudentAge::forRoster($group, $students, $this->schoolToday($group));
-        $allergies = \App\Support\StudentAllergies::forRoster($group, $students, teacher: true);
 
         return [
             'id' => (int) $group->id,
@@ -181,7 +179,7 @@ abstract class TeacherController extends Controller
             'subject_labels' => \App\Models\GroupStaff::SUBJECT_LABELS,
             'students' => $students->map(fn (GroupMembership $m): array => $this->student($m) + [
                 'age' => $ages[(int) $m->id] ?? null,
-            ] + ($allergies !== null && $m->role === GroupMembership::ROLE_MEMBER ? ['student_allergy' => $allergies[(int) $m->id] ?? null] : []))->values(),
+            ])->values(),
         ] + ($unreadMessages !== null ? ['unread_messages' => $unreadMessages] : [])
           + $this->classStoreFlag($group)
           + \App\Support\SubjectFence::payload($group, Auth::user());

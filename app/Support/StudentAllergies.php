@@ -36,6 +36,41 @@ final class StudentAllergies
         return $payloads;
     }
 
+    /**
+     * Decorate an authorized teacher reader result with one query, without widening student().
+     * The membership join excludes legacy leaders and departed children, even without a note.
+     */
+    public static function decorateTeacherRoster(int $school, int $group, array $students): array
+    {
+        if ($students === [] || ! ClassSubjectMode::allergiesEnabled($school)) return $students;
+
+        $rows = DB::table('group_memberships as roster')
+            ->join('groups as classroom', function ($join) {
+                $join->on('classroom.id', '=', 'roster.group_id')->on('classroom.masjid_id', '=', 'roster.masjid_id');
+            })
+            ->leftJoin('student_allergies as notes', function ($join) {
+                $join->on('notes.contact_id', '=', 'roster.contact_id')->on('notes.masjid_id', '=', 'roster.masjid_id');
+            })
+            ->where('roster.masjid_id', $school)->where('roster.group_id', $group)
+            ->where('classroom.kind', Group::KIND_CLASS)
+            ->where('roster.role', GroupMembership::ROLE_MEMBER)->whereNull('roster.left_on')
+            ->whereIn('roster.id', array_column($students, 'membership_id'))
+            ->get(['notes.*', 'roster.id as roster_membership_id']);
+
+        $allergies = [];
+        foreach ($rows as $row) {
+            $allergies[(int) $row->roster_membership_id] = $row->id === null
+                ? null : (new StudentAllergy)->newFromBuilder((array) $row)->payload(teacher: true);
+        }
+        foreach ($students as &$student) {
+            $id = (int) $student['membership_id'];
+            if (array_key_exists($id, $allergies)) $student['student_allergy'] = $allergies[$id];
+        }
+        unset($student);
+
+        return $students;
+    }
+
     public static function edit(Contact $student, ?string $answer, ?int $actor): StudentAllergy
     {
         return DB::transaction(function () use ($student, $answer, $actor) {

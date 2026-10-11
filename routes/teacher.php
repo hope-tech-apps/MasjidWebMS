@@ -19,6 +19,7 @@ use App\Http\Controllers\Teacher\PointsPeriodController;
 use App\Http\Controllers\Teacher\ReportCardController;
 use App\Http\Controllers\Teacher\ResourcesController;
 use App\Http\Controllers\Teacher\SchoolController;
+use App\Http\Controllers\Teacher\StudentAllergyAttendanceController;
 use App\Http\Controllers\Teacher\StudentAvatarController;
 use App\Http\Middleware\EchoResolvedTenant;
 use Illuminate\Support\Facades\Route;
@@ -254,8 +255,8 @@ Route::prefix('teacher')
                         // verb, and the admin console has no equivalent screen.
                         // One PUT writes the whole class for one day — see
                         // SaveAttendanceRequest for why it is not twelve calls.
-                        Route::get('/attendance', [AttendanceController::class, 'index']);
-                        Route::put('/attendance', [AttendanceController::class, 'save']);
+                        Route::get('/attendance', [StudentAllergyAttendanceController::class, 'index']);
+                        Route::put('/attendance', [StudentAllergyAttendanceController::class, 'save']);
                         Route::get('/members/{membership_id}/attendance', [AttendanceController::class, 'forMember']);
 
                         // Lesson plans: one per class, per day, per subject.
