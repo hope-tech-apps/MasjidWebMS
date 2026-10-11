@@ -118,6 +118,8 @@ export type Group = ClassSubjectFields & {
     id: number;
     masjid_id: number;
     name: string;
+    /** Usual timetable location name, present only on enabled class GET pages. */
+    location_name?: string | null;
     slug: string;
     kind: GroupKind;
     /** Office-chosen display order, lowest first; null = unplaced (listed after, by name). */

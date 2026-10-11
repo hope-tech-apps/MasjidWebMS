@@ -8,6 +8,7 @@ async function screen(on = true, zeroRooms = false, options: any = {}) {
     const periods = [{ id: 21, name: 'P1', starts_at: '08:00', ends_at: '09:00', kind: 'teaching', position: 1 }];
     const data: any = { today: '2026-10-10', years: [{ id: 7, label: 'Practice year', first_day: '2026-09-07', last_day: '2027-06-25' }], weekdays: [1,5], sets: [{ id: 1, name: 'Regular', periods }, { id: 2, name: 'Friday', periods: [{ ...periods[0], id: 22, starts_at: '08:30', ends_at: '09:15' }] }], days: [{ weekday: 1, period_set_id: 1 }, { weekday: 5, period_set_id: 2 }], classes: [{ id: 3, name: 'Practice Class', room_id: 4, teachers: [8], subjects: [{ id: 10, name: 'Science', teacher_ids: [8] }] }], rooms: [{ id: 4, name: 'Practice Hall', capacity: null, active: true }], teachers: [{ id: 8, name: 'Practice Teacher' }], class_subjects_enabled: true };
     data.year = data.years[0];
+    if (options.classes) data.classes = options.classes;
     const week = { days: data.days.map((d: any) => ({ ...d, periods: data.sets.find((s: any) => s.id === d.period_set_id).periods })), meetings: [{ id: 9, group_id: 3, weekday: 1, period_id: 21, kind: 'subject', class_subject_id: 10, label: 'Science', room_id: 4, room_name: 'Practice Hall', teachers: [data.teachers[0]], effective_from: '2026-10-10' }] };
     const clash = { kind: 'teacher', name: 'Practice Teacher', meetings: [{ group_name: 'Practice Other', label: 'Reading', starts_at: '08:00', ends_at: '09:00' }], effective_from: '2026-10-10', effective_until: '2027-06-25' };
     Object.assign(week, { clashes: [clash] });
@@ -228,4 +229,17 @@ test('Timetable older successful week cannot overwrite the newer committed date'
         const input=s.all(n=>n.props.id==='as-of')[0];type(input,'2026-11-01');blur(input);await flush();type(input,'2026-11-08');blur(input);await flush();
         assert.match(s.text(),/Science/);old.resolve({});await flush();assert.doesNotMatch(s.text(),/Old answer/);assert.match(s.text(),/Science/);
     }finally{old.resolve({});s.unmount();}
+});
+
+for (const count of [2,12]) test(`Setup class locations overview is read-only and includes all ${count} active classes`, async () => {
+    const classes = Array.from({length:count}, (_,i) => ({id:i+3,name:`Practice Class ${i+1}`,room_id:i===0?4:null,teachers:[],subjects:[]}));
+    const s = await screen(true,false,{classes});
+    try {
+        click(s.button('Setup')); await flush();
+        const table = s.all(n => n.tag === 'table' && n.props['aria-label'] === 'Class locations')[0];
+        assert.ok(table); assert.equal(table.children.find(n => n.tag === 'tbody')?.children.filter(n => n.tag === 'tr').length,count);
+        assert.match(table.textContent,/Class\s*Location\s*Practice Class 1\s*Practice Hall/);
+        assert.match(table.textContent,/Practice Class 2\s*No location set/);
+        assert.equal(s.all(n => ['input','select','button'].includes(n.tag) && (()=>{let p=n.parent;while(p){if(p===table)return true;p=p.parent;}return false;})()).length,0);
+    } finally { s.unmount(); }
 });

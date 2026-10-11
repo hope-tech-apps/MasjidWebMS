@@ -9573,3 +9573,10 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Reuse the neighbouring FormResponsesView btn-primary/btn-outline-primary selection idiom plus active/aria-pressed; no theme changes or literal colors. Group labels and controls, stacking below the page's 820px breakpoint.
 - Print overrides the app table's rem-based typography/spacing; protects only grid rows, not the enclosing document row. Normal wrapping preserves whole words. Closure is a single dated sentence; unplaced teacher list is school/teacher only. Phone columns use 96/150px and half-rem strip gutter expansion at <=400px.
 - No commit, CHANGELOG.md or CAPTURE_* variables per owner. Real-browser geometry/pagination cannot be claimed: dedicated local headless Chrome aborted before about:blank (exit 134).
+
+
+## Class location visibility — 2026-10-11
+- Apply an after-reader middleware only to the four existing class GET routes. Preserve source-frozen controller methods, model serialization and OFF statement lists. Enabled class rows add `location_name` (string or null), with one scoped join restricted to already authorized IDs.
+- Reuse the existing Location editor and emit loaded/saved names to the office title; focus it on the list's hash link. Teachers show no empty location wording.
+- Setup overview reuses existing classes/rooms, including retained inactive locations. No new backend key/query for the overview. Skip printing: only the separate Schedules surface has print styling.
+- No migration, table, capability, commit, external data or deploy. Server OFF fixture captured from the unchanged 52daab37 tree before implementation. Mounted OFF pins strengthened to full rendered bytes including comments, captured from a clean 52daab37 git archive export. Functional title fallback and empty singleton location repeats preserve literal OFF markup; existing fixtures untouched.

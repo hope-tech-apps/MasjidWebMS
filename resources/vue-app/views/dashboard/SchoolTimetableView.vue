@@ -33,6 +33,15 @@
                 </div>
                 <h2>Locations</h2>
                 <p>Locations are optional. The timetable uses class names; you can add a location later on the class page.</p>
+                <table class="table table-sm" aria-label="Class locations">
+                    <thead><tr><th scope="col">Class</th><th scope="col">Location</th></tr></thead>
+                    <tbody>
+                        <tr v-for="g in setup.classes" :key="g.id">
+                            <th scope="row" class="fw-normal text-break">{{ g.name }}</th>
+                            <td class="text-break">{{ setup.rooms.find((r: any) => r.id === g.room_id)?.name ?? 'No location set' }}</td>
+                        </tr>
+                    </tbody>
+                </table>
                 <button class="btn btn-outline-primary" type="button" @click="editRoom()">Add location</button>
                 <article v-for="room in setup.rooms" :key="room.id">
                     <p>{{ room.name }}<span v-if="room.capacity"> · Capacity {{ room.capacity }}</span> · {{ room.active ? 'Active' : 'Inactive' }}</p>

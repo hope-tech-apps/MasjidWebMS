@@ -109,7 +109,7 @@ Route::prefix('teacher')
                 // The teacher's own classes (names-only), and the behaviour-skill
                 // vocabulary needed to fill the award dropdown. Neither is
                 // group-scoped, so `teacher.leads` does not apply.
-                Route::get('/groups', [TeacherGroupsController::class, 'index']);
+                Route::get('/groups', [TeacherGroupsController::class, 'index'])->middleware(\App\Http\Middleware\AppendClassLocation::class);
                 Route::get('/avatars', [ContactAvatarController::class, 'catalogue']);
                 Route::get('/behavior-skills', [BehaviorSkillsController::class, 'index']);
 
@@ -156,7 +156,7 @@ Route::prefix('teacher')
                     ->middleware('teacher.leads')
                     ->group(function () {
 
-                        Route::get('/', [TeacherGroupsController::class, 'show']);
+                        Route::get('/', [TeacherGroupsController::class, 'show'])->middleware(\App\Http\Middleware\AppendClassLocation::class);
 
                         // ARABIC — the letters tracker and the daily Arabic notes.
                         // `teacher.teaches:arabic` refuses a teacher whose

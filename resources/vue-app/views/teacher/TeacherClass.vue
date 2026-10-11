@@ -13,7 +13,7 @@
 
         <template v-else-if="group">
             <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-                <h1 class="h4 mb-0">{{ group.name }}</h1>
+                <h1 class="h4 mb-0" :class="{ 'mw-100 text-break': group.location_name !== undefined }">{{ group.name }}</h1>
                 <span v-if="group.kind" class="badge bg-light text-dark border text-capitalize">{{ group.kind }}</span>
                 <span v-if="group.is_active === false" class="badge bg-secondary-subtle text-secondary">Inactive</span>
                 <!-- Messages is the seventh tab, which a phone scrolls out of sight, so the
@@ -22,6 +22,7 @@
                         :aria-label="`${unreadSpoken(unreadMessages)}. Open Messages.`"
                         @click="activeTab = 'messages'">{{ newChip(unreadMessages) }}</button>
             </div>
+            <span v-for="location in group.location_name ? [group.location_name] : []" :key="location" data-class-location class="d-block text-muted small text-break mb-1"><!-- A zero-row repeat preserves literal OFF HTML. -->Location: {{ location }}</span>
             <p v-if="group.description" class="text-muted small mb-3">{{ group.description }}</p>
 
             <!-- Seven tabs already filled a one-row scroller; ten would put the

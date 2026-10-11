@@ -3,7 +3,7 @@
         <label for="class-location">Location (optional)</label>
         <p class="text-muted small mb-1">Pick a location or type a new name. Leave it empty to clear this class's location.</p>
         <div class="d-flex flex-wrap gap-2">
-            <input id="class-location" v-model="name" list="class-location-options" maxlength="60" class="form-control" :disabled="loading || saving" />
+            <input id="class-location" ref="input" v-model="name" list="class-location-options" maxlength="60" class="form-control" :disabled="loading || saving" />
             <datalist id="class-location-options"><option v-for="location in locations" :key="location.id" :value="location.name" /></datalist>
             <button type="submit" class="btn btn-outline-primary" :disabled="loading || saving || loadingFailed">{{ saving ? 'Saving…' : 'Save location' }}</button>
         </div>
@@ -14,18 +14,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount } from 'vue';
+import { ref, watch, nextTick, onBeforeUnmount } from 'vue';
 import ApiService from '@/core/services/ApiService';
 import { apiErrorText } from '@/core/services/ApiErrors';
-const props = defineProps<{ base: string }>();
+const props = defineProps<{ base: string; focusOnLoad?: boolean }>();
+const emit = defineEmits<{ changed: [name: string | null] }>();
+const input = ref<HTMLInputElement | null>(null);
 const name = ref(''); const locations = ref<any[]>([]); const loading = ref(false); const saving = ref(false);
 const error = ref(''); const saved = ref(false); const loadingFailed = ref(false); let generation = 0;
-function apply(data: any) { name.value = data.location?.name ?? ''; locations.value = data.locations ?? []; }
+function apply(data: any) { name.value = data.location?.name ?? ''; locations.value = data.locations ?? []; emit('changed', data.location?.name ?? null); }
 async function load() {
     const run = ++generation; loading.value = true; loadingFailed.value = false; error.value = ''; saved.value = false; name.value = ''; locations.value = [];
     try { const r = await ApiService.get(`${props.base}/location` as any); if (run === generation) apply(r.data.data); }
     catch (e) { if (run === generation) { error.value = apiErrorText(e, 'The location could not be loaded.'); loadingFailed.value = true; } }
-    finally { if (run === generation) loading.value = false; }
+    finally {
+        if (run === generation) {
+            loading.value = false;
+            if (props.focusOnLoad) await nextTick(() => { input.value?.scrollIntoView?.({ block: 'center' }); input.value?.focus(); });
+        }
+    }
 }
 async function save() {
     if (saving.value || loading.value || loadingFailed.value) return;

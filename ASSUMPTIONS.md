@@ -430,3 +430,9 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Equal fallback clocks share one column with both names/IDs. Tied overlaps choose the earlier displayed row, consistently and deterministically. Teacher grids retain one card in each assigned teacher's row, while class grids have one card per meeting.
 - Phone gutter expansion uses 8px on either side so the observed 240px strip at 320 becomes 256px (96 + 150 + 10); this is CSS intent, not a measured browser result.
 - SQLite/mounted Vue/source and compiled CSS checks are local evidence only. Real browser geometry, print pagination, assistive technology, MySQL, CI, staging and production remain unchecked.
+
+
+## Class location visibility — 2026-10-11
+- The usual location is the existing undated class assignment, independent of slot overrides and selected school year. Verified in the existing timetable reader and class Location endpoints.
+- Setup printing is outside the trivial case: its root has no print style; Schedules owns a separate print surface. Skipped under the brief's explicit allowance.
+- Mounted width checks prove wrapping classes and separate lines, not real CSS geometry. The local Chrome/CDP attempt aborted with SIGABRT before connecting; browser phone/RTL remains unverified.

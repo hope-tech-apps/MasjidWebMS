@@ -28,9 +28,9 @@
                          class="card border-0 shadow-sm text-decoration-none text-dark">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start gap-3">
-                        <div class="flex-grow-1">
+                        <div class="flex-grow-1" :class="{ 'mw-100': group.location_name !== undefined }">
                             <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
-                                <h2 class="h6 mb-0">{{ group.name }}</h2>
+                                <h2 class="h6 mb-0" :class="{ 'mw-100 text-break': group.location_name !== undefined }">{{ group.name }}</h2>
                                 <span v-if="unreadNumber(group.unread_messages) > 0"
                                       class="badge rounded-pill bg-danger" aria-hidden="true">{{ newChip(group.unread_messages) }}</span>
                                 <span v-if="unreadNumber(group.unread_messages) > 0"
@@ -41,6 +41,7 @@
                                 <span v-if="group.is_active === false"
                                       class="badge bg-secondary-subtle text-secondary">Inactive</span>
                             </div>
+                            <span v-for="location in group.location_name ? [group.location_name] : []" :key="location" data-class-location class="d-block text-muted small text-break mb-1"><!-- A zero-row repeat preserves literal OFF HTML. -->Location: {{ location }}</span>
                             <p v-if="group.description" class="text-muted small mb-2">{{ group.description }}</p>
 
                             <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -80,6 +81,7 @@ interface TeacherStudent {
 interface TeacherClass {
     id: number;
     name: string;
+    location_name?: string | null;
     kind?: string;
     description?: string;
     is_active?: boolean;
