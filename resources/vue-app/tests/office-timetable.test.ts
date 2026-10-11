@@ -20,15 +20,16 @@ async function screen(options:any={}) {
         const match=/schedules\/(\w+)(?:\/(\d+))?/.exec(url)!; const lens=match[1];const selectionId=Number(match[2]);
         const query=new URLSearchParams(url.split('?')[1]);const date=query.get('as_of')!; const weekday=Number(query.get('weekday')??(options.weekend?0:3));
         let meetings=wholeMeetings;
-        if(options.weekend) meetings=[slot(20,3,0,[8],{starts_at:'11:00',ends_at:'11:40'}),slot(21,4,0,[8],{starts_at:'11:00',ends_at:'11:45'})];
+        if(options.weekend) meetings=[slot(20,3,0,[8],{starts_at:'11:00',ends_at:'11:40',column_key:'period:21'}),slot(21,4,0,[8],{starts_at:'11:00',ends_at:'11:45',column_key:'period:21'}),slot(22,3,1,[9,10],{starts_at:'11:40',ends_at:'12:20',column_key:'period:22'}),slot(23,4,1,[8],{starts_at:'11:45',ends_at:'12:40',column_key:'period:22'})];
         if(options.dated) meetings=lens==='teacher'?[slot(30,3,1,[8],{effective_until:'2026-10-14'}),slot(31,3,1,[10],{effective_from:'2026-10-15'})]:date<'2026-10-15'?[slot(30,3,1,[8],{effective_until:'2026-10-14'})]:[slot(31,3,1,[10],{effective_from:'2026-10-15'})];
         const closures=options.closure;
         if(closures) meetings=[];
         const dayDates=options.weekend?['2026-10-18']:['2026-10-12','2026-10-13','2026-10-14','2026-10-15','2026-10-16'];
         let days=setup.weekdays.map((dw:number,i:number)=>({date:dayDates[i],weekday:dw,state:closures?'closure':'meetings',reason:closures?'Practice planning day':null,periods:lens==='class'?periods:null,meetings:dw===5&&!options.dated?[]:meetings.filter(m=>lens==='teacher'?m.teachers.some(t=>t.id===selectionId)&&m.effective_from<=dayDates[i]&&(!m.effective_until||m.effective_until>=dayDates[i]):lens==='class'?m.group_id===selectionId:true).map(m=>({...m,co_teachers:m.teachers.filter(t=>lens!=='teacher'||t.id!==selectionId),room_name:options.locations?'Practice Hall':null}))}));
         if(lens==='teacher') days=days.filter((day:any)=>day.meetings.length||day.reason||day.date===setup.today);
-        const columns=options.weekend?[{starts_at:'11:00',ends_at:'11:40',names:['P1']},{starts_at:'11:40',ends_at:'11:45',names:['P1','P2']},{starts_at:'11:45',ends_at:'12:20',names:['P2']}]:periods.map(p=>({...p,names:[p.name]}));
-        const data:any={as_of:date,week_start:'2026-10-12',week_end:'2026-10-18',days,lens,selection_id:selectionId,weekday,day:days.find((d:any)=>d.weekday===weekday)??days[0],columns,meetings:weekday===5?[]:meetings,clashes:options.weekend?[{kind:'teacher',id:8,name:'Practice Specialist',meetings}]:[],placed_teacher_ids:[8,9,10,11],teachers,classes:groups,may_edit:true,as_of_state:closures?'closure':'meetings',as_of_reason:closures?'Practice planning day':null};
+        const columns=options.weekend?[{key:'period:21',starts_at:'11:00',ends_at:'11:40',names:['P1']},{key:'period:22',starts_at:'11:40',ends_at:'12:20',names:['P2']},{key:'period:23',starts_at:'12:20',ends_at:'12:45',names:['Break']},{key:'period:24',starts_at:'12:45',ends_at:'13:30',names:['P3']},{key:'period:25',starts_at:'13:30',ends_at:'13:40',names:['Cleaning']},{key:'period:26',starts_at:'13:40',ends_at:'14:00',names:['Prayer']}]:periods.map(p=>({...p,key:`period:${p.id}`,names:[p.name]}));
+        meetings=meetings.map(m=>({...m,column_key:m.column_key??`period:${m.period_id}`}));
+        const data:any={as_of:date,week_start:'2026-10-12',week_end:'2026-10-18',days,lens,selection_id:selectionId,weekday,day:days.find((d:any)=>d.weekday===weekday)??days[0],columns,meetings:weekday===5?[]:meetings,clashes:options.weekend?[{kind:'teacher',id:8,name:'Practice Specialist',meetings:meetings.slice(0,2)}]:[],placed_teacher_ids:[8,9,10,11],teachers,classes:groups,may_edit:true,as_of_state:closures?'closure':'meetings',as_of_reason:closures?'Practice planning day':null};
         if(options.weekend) data.placed_teacher_ids=[8];
         return data;
     }
@@ -86,13 +87,20 @@ test('office teacher and class controls reuse real week cards with co-teachers d
     }finally{s.unmount();}
 });
 
-test('office weekend union spans two columns with both clash badges naming the other class and no location view',async()=>{
+test('office weekend school columns draw each card once with differing clocks and clash list badges',async()=>{
     const s=await screen({weekend:true});try{
         assert.doesNotMatch(s.text(),/By location/);assert.match(s.calls[0],/as_of=2026-10-18$/);
-        const shared=row(s,8);assert.equal(cell(shared,'11:00').children.filter((n:any)=>n.props['data-meeting-id']).length,2);
-        assert.equal(cell(shared,'11:40').children.filter((n:any)=>n.props['data-meeting-id']).length,1);assert.equal(cell(shared,'11:45').textContent,'');
-        const badges=s.all(n=>n.tag==='span'&&n.textContent==='Clash');assert.equal(badges.length,3);
-        assert.match(badges[0].props.title,/Practice Senior/);assert.match(badges[1].props.title,/Practice Junior/);assert.match(badges[2].props.title,/Practice Junior/);
+        const shared=row(s,8);assert.equal(shared.children.filter((n:any)=>n.tag==='td').length,6);
+        assert.equal(cell(shared,'11:00').children.filter((n:any)=>n.props['data-meeting-id']).length,2);
+        assert.equal(cell(shared,'11:40').children.filter((n:any)=>n.props['data-meeting-id']).length,1);
+        assert.match(cell(shared,'11:40').textContent,/11:45 AM - 12:40 PM/);
+        assert.doesNotMatch(cell(row(s,9),'11:40').textContent,/11:40 AM - 12:20 PM/);
+        for(const id of [20,21,23]) assert.equal(s.all(n=>n.props['data-meeting-id']===id).length,1);
+        let badges=s.all(n=>n.tag==='span'&&n.textContent==='Clash');assert.equal(badges.length,2);
+        assert.match(badges[0].props.title,/Practice Senior/);assert.match(badges[1].props.title,/Practice Junior/);
+        click(s.button('Classes'));await flush();
+        for(const id of [20,21,22,23]) assert.equal(s.all(n=>n.props['data-meeting-id']===id).length,1,'co-teachers remain one class card');
+        assert.equal(s.all(n=>n.tag==='span'&&n.textContent==='Clash').length,2);
         click(s.button('By teacher'));await flush();assert.equal(s.all(n=>n.props['data-test']==='week-day').length,1);
         assert.match(s.text(),/Teachers with nothing placed.*Practice Unplaced/);
     }finally{s.unmount();}
@@ -152,5 +160,71 @@ test('office Timetable real parent opens Schedules Whole school once and Edit li
         type(control(s,'schedule-as-of'),'2026-10-15');blur(control(s,'schedule-as-of'));await flush();
         click(s.all(n=>n.tag==='a'&&n.textContent==="Edit this class's week")[0]);await flush();
         assert.equal(s.calls.filter(url=>url.includes('/week?')).length,1);assert.match(s.calls.at(-1)!,/week\?group_id=4&as_of=2026-10-15&include_clashes=1$/);assert.match(s.text(),/Showing the timetable as of/);
+    }finally{s.unmount();}
+});
+
+
+test('office selection buttons use the app filled active style and track real view and row controls',async()=>{
+    const s=await screen({locations:true,parent:true});
+    const selected=(labels:string[],chosen:string)=>{for(const label of labels){const button=s.button(label);const active=label===chosen;assert.equal(button.props['aria-pressed']??false,active);assert.equal(String(button.props.class).split(/\s+/).includes('active'),active);assert.equal(String(button.props.class).split(/\s+/).includes('btn-primary'),active);assert.equal(String(button.props.class).includes('btn-outline-primary'),!active);}};
+    try{
+        selected(['Class week','Schedules','Setup','Clashes'],'Schedules');
+        const views=['Whole school','By teacher','By class','By location'];
+        selected(views,'Whole school');selected(['Teachers','Classes'],'Teachers');
+        click(s.button('Classes'));await flush();selected(['Teachers','Classes'],'Classes');
+        for(const view of ['By teacher','By class','By location','Whole school']){click(s.button(view));await flush();selected(views,view);}
+        for(const panel of ['Setup','Class week','Clashes','Schedules']){click(s.button(panel));await flush();selected(['Class week','Schedules','Setup','Clashes'],panel);}
+    }finally{s.unmount();}
+});
+
+test('office date and each selection keep labels in one responsive field unit',async()=>{
+    const s=await screen({locations:true});try{
+        for(const [view,id] of [['Whole school','schedule-weekday'],['By teacher','schedule-teacher'],['By class','schedule-class'],['By location','schedule-location']]){
+            click(s.button(view));await flush();
+            for(const controlId of ['schedule-as-of',id]){const input=control(s,controlId);assert.match(String(input.parent.props.class),/schedule-field/);assert.ok(input.parent.children.some((n:any)=>n.tag==='label'&&n.props.for===controlId));}
+        }
+    }finally{s.unmount();}
+    const source=readFileSync(new URL('../views/dashboard/OfficeSchedules.vue',import.meta.url),'utf8');
+    assert.match(source,/@media \(max-width: 820px\)/);assert.match(source,/\.schedule-field \{[^}]*flex-direction: column[^}]*width: 100%/);
+});
+
+test('office whole school closure is one dated full sentence and unplaced teachers belong only to school or teacher prints',async()=>{
+    const s=await screen({locations:true,closure:true,pageAt:(_url:string,data:any)=>({...data,as_of:'2026-11-22',as_of_reason:'Thanksgiving break',day:{...data.day,date:'2026-11-22',reason:'Thanksgiving break'}})});
+    try{
+        assert.equal((s.text().match(/School is closed/g)??[]).length,1);assert.match(s.text(),/School is closed on November 22, 2026: Thanksgiving break\./);
+        for(const [view,visible] of [['By class',false],['By location',false],['By teacher',true],['Whole school',true]]){click(s.button(view as string));await flush();const list=s.all(n=>n.tag==='h4'&&n.textContent==='Teachers with nothing placed');assert.equal(list.length,visible?1:0);}
+    }finally{s.unmount();}
+});
+
+test('office print keeps headings and names in cells and protects grid rows without protecting the entire document',()=>{
+    const source=readFileSync(new URL('../views/dashboard/OfficeSchedules.vue',import.meta.url),'utf8');
+    const print=source.slice(source.indexOf('@media print'));
+    assert.match(print,/\.school-grid th, \.school-grid td \{[^}]*overflow-wrap: normal[^}]*word-break: normal/);
+    assert.match(print,/\.school-grid tbody > tr \{ break-inside: avoid; \}/);
+    assert.doesNotMatch(print,/(?:^|\n)\s*tr \{ break-inside: avoid/);
+    assert.match(print,/font-size: 7pt/);
+    assert.match(print,/\.school-grid \{[^}]*font-size: inherit !important/);
+    assert.match(print,/padding: \.1rem \.15rem !important/);
+    assert.match(print,/white-space: normal !important/);
+    const meeting=readFileSync(new URL('../views/teacher/ScheduleMeeting.vue',import.meta.url),'utf8').split('@media print')[1];
+    assert.match(meeting,/overflow-wrap: normal/);assert.match(meeting,/word-break: normal/);
+});
+
+test('office phone grid uses a narrow sticky name and 150px time columns inside its scroll strip',()=>{
+    const source=readFileSync(new URL('../views/dashboard/OfficeSchedules.vue',import.meta.url),'utf8');
+    const phone=source.slice(source.indexOf('@media (max-width: 820px)'),source.indexOf('@page'));
+    assert.match(phone,/\.school-grid \{[^}]*table-layout: fixed/);
+    assert.match(phone,/\.school-grid th, \.school-grid td \{[^}]*min-width: 150px[^}]*max-width: 150px/);
+    assert.match(phone,/\.school-grid \.schedule-row-label \{[^}]*min-width: 96px[^}]*max-width: 96px/);
+    assert.match(phone,/\.school-grid-scroll \{[^}]*width: calc\(100% \+ 1rem\)/);
+});
+
+
+test('office off-scale card renders once under Other times with its full clock and no empty clock heading',async()=>{
+    const s=await screen({pageAt:(_url:string,data:any)=>({...data,columns:[...data.columns,{key:'other',starts_at:null,ends_at:null,names:['Other times']}],meetings:[slot(80,3,0,[8],{starts_at:'17:00',ends_at:'18:00',column_key:'other'})]})});
+    try{
+        assert.equal(s.all(n=>n.props['data-meeting-id']===80).length,1);
+        const heading=s.all(n=>n.tag==='th'&&n.textContent==='Other times')[0];assert.ok(heading);assert.equal(heading.children.filter((n:any)=>String(n.props.class??'').includes('school-column-time')).length,0);
+        assert.match(row(s,8).children.filter((n:any)=>n.tag==='td').at(-1).textContent,/5:00 - 6:00 PM/);
     }finally{s.unmount();}
 });

@@ -9566,3 +9566,10 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Teacher schedule beforeEnter reads the selected school header and accepts only its true flag; typed OFF URLs go to /auth/404. The open page retains its API-refusal sentence.
 - Whole-school default selection belongs to the server, advancing to an open meeting date inside the year and falling back to the last open meeting date; explicit weekday selections keep their week and closures. Existing recurring as-of snapshots stay unchanged.
 - Coverage additions compare the OFF header SQL list with the unchanged fixture and exercise a Monday meeting starting Tuesday with no past Monday occurrence. Temporary extra-SQL/weekday mutations both failed these assertions and were restored.
+
+## Office Schedules browser walk fixes — 2026-10-11
+- Owner's explicit school-scale requirement supersedes the step 3 union-slice/repeated-card decision. Use the school's configured weekday rows; fall back to distinct class rows only with no school set. Merge equal clocks in fallback, retaining IDs/names. Each meeting gets one column_key: own period, containing start, greatest overlap in minutes (ties earliest), otherwise a conditional final Other times column.
+- Once means once per assigned teacher row, and once per class row even with co-teachers. Unstaffed meetings retain class-row visibility. Badges remain derived only from reader clashes.
+- Reuse the neighbouring FormResponsesView btn-primary/btn-outline-primary selection idiom plus active/aria-pressed; no theme changes or literal colors. Group labels and controls, stacking below the page's 820px breakpoint.
+- Print overrides the app table's rem-based typography/spacing; protects only grid rows, not the enclosing document row. Normal wrapping preserves whole words. Closure is a single dated sentence; unplaced teacher list is school/teacher only. Phone columns use 96/150px and half-rem strip gutter expansion at <=400px.
+- No commit, CHANGELOG.md or CAPTURE_* variables per owner. Real-browser geometry/pagination cannot be claimed: dedicated local headless Chrome aborted before about:blank (exit 134).

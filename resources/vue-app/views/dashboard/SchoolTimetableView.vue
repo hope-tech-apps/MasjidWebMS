@@ -4,10 +4,10 @@
             <h1>Timetable</h1>
             <label for="tt-year">School year</label>
             <select class="form-select" id="tt-year" v-model="yearId" @change="loadYear"><option v-for="y in years" :key="y.id" :value="y.id">{{ y.label }}</option></select>
-            <button class="btn btn-outline-primary" type="button" @click="showPanel('week')">Class week</button>
-            <button class="btn btn-outline-primary" type="button" @click="showPanel('schedules')">Schedules</button>
-            <button class="btn btn-outline-primary" type="button" @click="panel = 'setup'">Setup</button>
-            <button class="btn btn-outline-primary" type="button" @click="showPanel('clashes')">Clashes{{ loadedDate ? ' (' + clashes.length + ')' : '' }}</button>
+            <button class="btn" :class="panel === 'week' ? 'btn-primary active' : 'btn-outline-primary'" :aria-pressed="panel === 'week'" type="button" @click="showPanel('week')">Class week</button>
+            <button class="btn" :class="panel === 'schedules' ? 'btn-primary active' : 'btn-outline-primary'" :aria-pressed="panel === 'schedules'" type="button" @click="showPanel('schedules')">Schedules</button>
+            <button class="btn" :class="panel === 'setup' ? 'btn-primary active' : 'btn-outline-primary'" :aria-pressed="panel === 'setup'" type="button" @click="panel = 'setup'">Setup</button>
+            <button class="btn" :class="panel === 'clashes' ? 'btn-primary active' : 'btn-outline-primary'" :aria-pressed="panel === 'clashes'" type="button" @click="showPanel('clashes')">Clashes{{ loadedDate ? ' (' + clashes.length + ')' : '' }}</button>
         </header>
         <p v-if="error" role="alert">{{ error }}</p>
         <p v-if="loading" role="status">Loading timetable…</p>

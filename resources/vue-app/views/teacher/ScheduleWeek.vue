@@ -39,6 +39,7 @@ const dateLabel = (date: string) => formatSchoolDay(date, 'en-US', { month: 'lon
 @media print {
     .schedule-week-scroll { overflow: visible; }
     .schedule-week { min-width: 0; grid-template-columns: repeat(var(--schedule-days), minmax(0, 1fr)); }
+    .schedule-day { overflow-wrap: normal; word-break: normal; }
     .schedule-day:first-child { position: static; }
     .schedule-day h3 { break-after: avoid; }
     .schedule-period { break-inside: avoid; }

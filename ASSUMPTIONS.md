@@ -424,3 +424,9 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Assigned isolated worktree at 1e9c158f is authorized for writing, with no commit. Existing fixtures and inherited artifacts remain unchanged by edits; no capture variables, deploy or external actions.
 - Year-end fallback means the last open configured meeting date; if every configured date is closed, use the last configured date to show its closure state.
 - Local SQLite and mounted Vue tests establish the regression contracts, not MySQL runtime behavior, browser geometry, physical printing, staging, CI or production.
+
+## Office Schedules browser walk fixes — 2026-10-11
+- The assigned branch/worktree authorizes writes and is the sole writer; inherited tracked diff was empty. Prior review fixes and all existing fixture files remain intact.
+- Equal fallback clocks share one column with both names/IDs. Tied overlaps choose the earlier displayed row, consistently and deterministically. Teacher grids retain one card in each assigned teacher's row, while class grids have one card per meeting.
+- Phone gutter expansion uses 8px on either side so the observed 240px strip at 320 becomes 256px (96 + 150 + 10); this is CSS intent, not a measured browser result.
+- SQLite/mounted Vue/source and compiled CSS checks are local evidence only. Real browser geometry, print pagination, assistive technology, MySQL, CI, staging and production remain unchecked.

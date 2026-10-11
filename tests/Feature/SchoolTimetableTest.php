@@ -58,6 +58,7 @@ it('Timetable acceptance A full time different weekday sets specialist and nap h
     $whole=$this->getJson($this->base.'/schedules/school?as_of=2026-10-14')->assertOk()->json('data');
     expect($whole['weekday'])->toBe(3);
     expect(array_column($whole['columns'], 'starts_at'))->toBe(array_column($regular['periods'], 'starts_at'));
+    foreach ($whole['meetings'] as $meeting) expect($meeting['column_key'])->toBe('period:'.$meeting['period_id']);
     foreach ([$juniorTeacher, $seniorTeacher, $specialist, $nap] as $teacher) expect(array_column($whole['teachers'], 'id'))->toContain($teacher->id);
     $specialistRows=array_values(array_filter($whole['meetings'], fn($m)=>in_array($specialist->id, array_column($m['teachers'], 'id'))));
     expect(array_column($specialistRows, 'period_id'))->toBe(array_map(fn($i)=>$regular['periods'][$i]['id'], [2,6,7]));
@@ -69,6 +70,8 @@ it('Timetable acceptance A full time different weekday sets specialist and nap h
     expect(array_unique(array_column($seniors, 'group_id')))->toBe([$b->id]);
     $fridayView=$this->getJson($this->base.'/schedules/school?as_of=2026-10-16')->assertOk()->json('data');
     expect(array_column($fridayView['columns'], 'starts_at'))->toBe(array_column($friday['periods'], 'starts_at'));
+    expect(count($fridayView['meetings']))->toBe(8);
+    foreach ($fridayView['meetings'] as $meeting) expect($meeting['column_key'])->toBe('period:'.$meeting['period_id']);
     $classView=$this->getJson($this->base.'/schedules/class/'.$a->id.'?as_of=2026-10-14')->assertOk()->json('data');
     expect(array_column($classView['days'][0]['periods'], 'id'))->toBe(array_column($regular['periods'], 'id'));
     $meetings=app(TimetableReader::class)->meetings($this->school->id,$this->year->id,'2026-10-12','teacher',$specialist->id,1);
@@ -79,7 +82,7 @@ it('Timetable acceptance A full time different weekday sets specialist and nap h
 it('Timetable acceptance B twelve weekend classes finds teacher room student cross-set overlaps and allows confirmation', function () {
     $this->year->update(['first_day'=>'2026-09-06','last_day'=>'2027-06-27','meeting_weekdays'=>[0]]);
     $set=($this->set)('Sunday',[['P1','11:00','11:40'],['P2','11:40','12:20'],['Break','12:20','12:45','block'],['P3','12:45','13:30'],['Cleaning','13:30','13:40','block'],['Prayer','13:45','14:00','block']]);
-    $override=($this->set)('Later',[['P1','11:00','11:45'],['P2','11:45','12:30'],['Break','12:30','12:40','block'],['P3','12:40','13:30']]); ($this->days)($set['id'],[0]);
+    $override=($this->set)('Later',[['P1','11:00','11:45'],['P2','11:45','12:40'],['Break','12:40','12:45','block'],['P3','12:45','13:30']]); ($this->days)($set['id'],[0]);
     $groups=[]; $shared=($this->teacher)('Practice Shared'); $pupil=Contact::factory()->create(['masjid_id'=>$this->school->id,'first_name'=>'Practice','last_name'=>'Pupil']);
     for($i=0;$i<12;$i++) {
         $g=$groups[]=($this->class)('Practice '.$i); $rows=$i===11?$override['periods']:$set['periods']; if($i===11) ($this->days)($override['id'],[0],$g);
@@ -99,9 +102,17 @@ it('Timetable acceptance B twelve weekend classes finds teacher room student cro
     }
     $unplaced=($this->teacher)('Practice Unplaced');
     $schoolView=$this->getJson($this->base.'/schedules/school?as_of=2026-10-11')->assertOk()->json('data');
-    expect(array_column($schoolView['columns'], 'starts_at'))->toBe(['11:00','11:40','11:45','12:20','12:30','12:40','12:45','13:30','13:45']);
+    expect(array_column($schoolView['columns'], 'starts_at'))->toBe(array_column($set['periods'], 'starts_at'));
+    expect(count($schoolView['columns']))->toBe(count($set['periods']));
+    expect(count(array_unique(array_column($schoolView['meetings'], 'id'))))->toBe(48);
+    foreach ($schoolView['meetings'] as $meeting) expect(array_column($schoolView['columns'], 'key'))->toContain($meeting['column_key']);
+    $second=array_values(array_filter($schoolView['meetings'], fn($m)=>$m['group_id']===$groups[11]->id && $m['starts_at']==='11:45'))[0];
+    expect($second['column_key'])->toBe($schoolView['columns'][1]['key']);
+    expect($second['ends_at'])->toBe('12:40');
+    $panel=$this->getJson($this->base.'/clashes?as_of=2026-10-11')->assertOk()->json('data');
+    expect($schoolView['clashes'])->toBe(array_values(array_filter($panel, fn($c)=>$c['weekday']===0)));
     $long=array_values(array_filter($schoolView['meetings'], fn($m)=>$m['group_id']===$groups[11]->id && $m['starts_at']==='11:00'))[0];
-    expect(array_column(array_values(array_filter($schoolView['columns'], fn($c)=>$long['starts_at']<$c['ends_at'] && $long['ends_at']>$c['starts_at'])), 'starts_at'))->toBe(['11:00','11:40']);
+    expect($long['column_key'])->toBe($schoolView['columns'][0]['key']);
     expect(array_column($schoolView['teachers'], 'id'))->toContain($unplaced->id);
     expect($schoolView['placed_teacher_ids'])->not->toContain($unplaced->id);
     expect(count(array_filter($schoolView['clashes'], fn($c)=>$c['kind']==='teacher' && $c['id']===$shared->id)))->toBe(1);
@@ -666,4 +677,44 @@ it('Timetable office by teacher shares the teacher portal dated week across a mi
         expect(array_column($office,'weekday'))->toBe($teacher->id===$old->id ? [1,3] : [5]);
         expect($office[0]['meetings'][0][$teacher->id===$old->id ? 'effective_until' : 'effective_from'])->toBe($teacher->id===$old->id ? '2026-10-14' : '2026-10-15');
     }
+});
+
+
+it('Timetable office school columns use the start then greatest overlap and add Other times only when necessary', function () {
+    $school=($this->set)('School',[['First','08:00','09:00'],['Second','10:00','11:00'],['Block','11:00','11:30','block']]);
+    ($this->days)($school['id'],[1]);
+    $g=($this->class)();
+    $other=($this->set)('Class',[['Start wins','08:50','10:50'],['Outside','12:00','13:00']]);
+    ($this->days)($other['id'],[1],$g);
+    ($this->place)($g,$other['periods'][0]['id'],1)->assertCreated();
+    $gap=($this->class)('Gap start');
+    $gapSet=($this->set)('Gap',[['Gap start','09:30','10:30']]);
+    ($this->days)($gapSet['id'],[1],$gap);
+    ($this->place)($gap,$gapSet['periods'][0]['id'],1)->assertCreated();
+    $data=$this->getJson($this->base.'/schedules/school?as_of=2026-10-12&weekday=1')->assertOk()->json('data');
+    expect(count($data['columns']))->toBe(3);
+    expect(array_column($data['meetings'],'column_key'))->toBe(['period:'.$school['periods'][0]['id'],'period:'.$school['periods'][1]['id']]);
+    ($this->place)($g,$other['periods'][1]['id'],1)->assertCreated();
+    $data=$this->getJson($this->base.'/schedules/school?as_of=2026-10-12&weekday=1')->assertOk()->json('data');
+    expect(count($data['columns']))->toBe(4);
+    expect($data['columns'][3]['names'])->toBe(['Other times']);
+    expect($data['meetings'][2]['column_key'])->toBe('other');
+});
+
+it('Timetable office without a school set merges distinct class rows by start and keeps own period assignment', function () {
+    $a=($this->class)('A'); $b=($this->class)('B'); $c=($this->class)('C');
+    $first=($this->set)('Early',[['First','08:00','09:00'],['Break','09:00','09:15','block']]);
+    $second=($this->set)('Later',[['Second','08:30','09:30']]);
+    ($this->days)($first['id'],[1],$a); ($this->days)($second['id'],[1],$b);
+    $same=($this->set)('Same clocks',[['Same first','08:00','09:00']]);
+    ($this->days)($same['id'],[1],$c);
+    ($this->place)($c,$same['periods'][0]['id'],1)->assertCreated();
+    ($this->place)($a,$first['periods'][0]['id'],1)->assertCreated();
+    ($this->place)($b,$second['periods'][0]['id'],1)->assertCreated();
+    $data=$this->getJson($this->base.'/schedules/school?as_of=2026-10-12&weekday=1')->assertOk()->json('data');
+    expect(array_column($data['columns'],'starts_at'))->toBe(['08:00','08:30','09:00']);
+    expect($data['columns'][0]['names'])->toBe(['First','Same first']);
+    expect($data['meetings'][0]['column_key'])->toBe($data['columns'][0]['key']);
+    expect($data['meetings'][1]['column_key'])->toBe($data['columns'][0]['key']);
+    expect($data['meetings'][2]['column_key'])->toBe($data['columns'][1]['key']);
 });

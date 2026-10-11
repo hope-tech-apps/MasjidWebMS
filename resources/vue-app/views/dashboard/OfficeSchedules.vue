@@ -2,27 +2,31 @@
     <section class="office-schedules" aria-labelledby="office-schedules-title" lang="en">
         <h2 id="office-schedules-title">Schedules</h2>
         <div class="schedule-controls">
-            <button v-for="view in views" :key="view.key" type="button" class="btn btn-outline-primary" :aria-pressed="lens === view.key" @click="chooseView(view.key)">{{ view.label }}</button>
-            <label for="schedule-as-of">Showing the timetable as of</label>
-            <input id="schedule-as-of" v-model="date" class="form-control" type="date" :min="setup.year.first_day" :max="setup.year.last_day" @change="typedDate" @blur="commitDate(true)" @keydown.enter.prevent="commitDate(true)" />
-            <template v-if="lens === 'teacher'">
+            <button v-for="view in views" :key="view.key" type="button" class="btn" :class="lens === view.key ? 'btn-primary active' : 'btn-outline-primary'" :aria-pressed="lens === view.key" @click="chooseView(view.key)">{{ view.label }}</button>
+            <div class="schedule-field">
+                <label for="schedule-as-of">Showing the timetable as of</label>
+                <input id="schedule-as-of" v-model="date" class="form-control" type="date" :min="setup.year.first_day" :max="setup.year.last_day" @change="typedDate" @blur="commitDate(true)" @keydown.enter.prevent="commitDate(true)" />
+            </div>
+            <div v-if="lens === 'teacher'" class="schedule-field">
                 <label for="schedule-teacher">Teacher</label>
                 <select id="schedule-teacher" v-model="teacherId" class="form-select" @change="load()">
                     <option value="">Choose a teacher</option>
                     <optgroup label="Teachers with meetings"><option v-for="teacher in placedTeachers" :key="teacher.id" :value="teacher.id">{{ teacher.name }}</option></optgroup>
                     <optgroup label="Teachers with nothing placed"><option v-for="teacher in unplacedTeachers" :key="teacher.id" :value="teacher.id">{{ teacher.name }}</option></optgroup>
                 </select>
-            </template>
-            <template v-if="lens === 'class'">
+            </div>
+            <div v-if="lens === 'class'" class="schedule-field">
                 <label for="schedule-class">Class</label><select id="schedule-class" v-model="classId" class="form-select" @change="load()"><option value="">Choose a class</option><option v-for="group in setup.classes" :key="group.id" :value="group.id">{{ group.name }}</option></select>
-            </template>
-            <template v-if="lens === 'location'">
+            </div>
+            <div v-if="lens === 'location'" class="schedule-field">
                 <label for="schedule-location">Location</label><select id="schedule-location" v-model="locationId" class="form-select" @change="load()"><option value="">Choose a location</option><option v-for="room in setup.rooms" :key="room.id" :value="room.id">{{ room.name }}</option></select>
-            </template>
+            </div>
             <template v-if="lens === 'school'">
-                <label for="schedule-weekday">Day</label><select id="schedule-weekday" v-model="weekday" class="form-select" @change="chooseDay"><option v-for="day in setup.weekdays" :key="day" :value="day">{{ weekdays[day] }}</option></select>
-                <button type="button" class="btn btn-outline-primary" :aria-pressed="rowsBy === 'teacher'" @click="rowsBy = 'teacher'">Teachers</button>
-                <button type="button" class="btn btn-outline-primary" :aria-pressed="rowsBy === 'class'" @click="rowsBy = 'class'">Classes</button>
+                <div class="schedule-field">
+                    <label for="schedule-weekday">Day</label><select id="schedule-weekday" v-model="weekday" class="form-select" @change="chooseDay"><option v-for="day in setup.weekdays" :key="day" :value="day">{{ weekdays[day] }}</option></select>
+                </div>
+                <button type="button" class="btn" :class="rowsBy === 'teacher' ? 'btn-primary active' : 'btn-outline-primary'" :aria-pressed="rowsBy === 'teacher'" @click="rowsBy = 'teacher'">Teachers</button>
+                <button type="button" class="btn" :class="rowsBy === 'class' ? 'btn-primary active' : 'btn-outline-primary'" :aria-pressed="rowsBy === 'class'" @click="rowsBy = 'class'">Classes</button>
             </template>
             <button type="button" class="btn btn-outline-primary" :disabled="!page || loading" @click="printSchedule">Print</button>
             <a v-if="lens === 'class' && page?.may_edit" href="#class-week" @click.prevent="$emit('edit-class', Number(classId), page.as_of)">Edit this class's week</a>
@@ -33,19 +37,19 @@
             <table class="schedule-document">
                 <thead><tr><th scope="col"><h3 class="h5">{{ heading }}</h3><p class="fw-normal">As of {{ dateLabel(page.as_of) }} · {{ setup.year.label }}</p><p class="fw-normal">{{ lens === 'school' ? dateLabel(page.day.date) : dateLabel(page.week_start) + ' – ' + dateLabel(page.week_end) }}</p></th></tr></thead>
                 <tbody><tr><td>
-                    <p v-if="page.as_of_state !== 'meetings'">{{ page.as_of_state === 'closure' ? 'School is closed on ' + dateLabel(page.as_of) + ': ' + page.as_of_reason : 'The school does not meet on ' + dateLabel(page.as_of) + '.' }}</p>
+                    <p v-if="(lens !== 'school' || page.day.date !== page.as_of) && page.as_of_state !== 'meetings'">{{ page.as_of_state === 'closure' ? 'School is closed on ' + dateLabel(page.as_of) + ': ' + sentenceEnd(page.as_of_reason) : 'The school does not meet on ' + dateLabel(page.as_of) + '.' }}</p>
                     <template v-if="lens === 'school'">
                         <p v-if="page.day.state !== 'meetings'" role="status">{{ dayWords(page.day) }}</p>
                         <p v-else-if="!page.columns.length">Choose this day's period sets in Setup.</p>
                         <div class="school-grid-scroll" tabindex="0" aria-label="Whole school day, scroll to see other times">
                             <table class="school-grid table table-bordered align-top">
-                                <thead><tr><th scope="col" class="schedule-row-label">{{ rowsBy === 'teacher' ? 'Teacher' : 'Class' }}</th><th v-for="column in page.columns" :key="column.starts_at" scope="col"><bdi dir="ltr">{{ schoolTimeRange(column.starts_at, column.ends_at) }}</bdi><div class="small fw-normal">{{ column.names.join(' / ') }}</div></th></tr></thead>
+                                <thead><tr><th scope="col" class="schedule-row-label">{{ rowsBy === 'teacher' ? 'Teacher' : 'Class' }}</th><th v-for="column in page.columns" :key="column.key" scope="col"><div class="school-column-name">{{ column.names.join(' / ') }}</div><div v-if="column.starts_at" class="school-column-time small fw-normal"><bdi dir="ltr">{{ schoolTimeRange(column.starts_at, column.ends_at) }}</bdi></div></th></tr></thead>
                                 <tbody><tr v-for="row in rows" :key="row.id" :data-row-id="row.id">
                                     <th scope="row" class="schedule-row-label">{{ row.name }}</th>
-                                    <td v-for="column in page.columns" :key="column.starts_at" :data-clock="column.starts_at">
+                                    <td v-for="column in page.columns" :key="column.key" :data-clock="column.starts_at">
                                         <div v-for="meeting in cells(row.id, column)" :key="meeting.id" :data-meeting-id="meeting.id">
                                             <span v-if="clashTitle(meeting, row.id)" class="badge text-bg-warning" :title="clashTitle(meeting, row.id)">Clash</span>
-                                            <ScheduleMeeting :meeting="forRow(meeting, row.id)" :week-start="page.week_start" :week-end="page.week_end" />
+                                            <ScheduleMeeting :meeting="forRow(meeting, row.id)" :show-time="meeting.starts_at !== column.starts_at || meeting.ends_at !== column.ends_at" :week-start="page.week_start" :week-end="page.week_end" />
                                         </div>
                                     </td>
                                 </tr></tbody>
@@ -57,7 +61,7 @@
                         <p v-if="!page.days.some((day: any) => day.meetings.length)">Nothing is placed {{ lens === 'teacher' ? 'for this teacher' : lens === 'class' ? 'for this class' : 'at this location' }} yet.</p>
                         <ScheduleWeek :days="page.days" :week-start="page.week_start" :week-end="page.week_end" />
                     </template>
-                    <div v-if="unplacedTeachers.length" class="mt-3"><h4 class="h6">Teachers with nothing placed</h4><ul><li v-for="teacher in unplacedTeachers" :key="teacher.id">{{ teacher.name }}</li></ul></div>
+                    <div v-if="(lens === 'school' || lens === 'teacher') && unplacedTeachers.length" class="mt-3"><h4 class="h6">Teachers with nothing placed</h4><ul><li v-for="teacher in unplacedTeachers" :key="teacher.id">{{ teacher.name }}</li></ul></div>
                 </td></tr></tbody>
             </table>
         </div>
@@ -87,9 +91,10 @@ const rows = computed(() => rowsBy.value === 'teacher' ? page.value?.teachers ??
 const heading = computed(() => lens.value === 'school' ? `Whole school · ${rowsBy.value === 'teacher' ? 'Teachers' : 'Classes'}` : (lens.value === 'teacher' ? props.setup.teachers.find((t: any) => t.id === Number(teacherId.value))?.name : lens.value === 'class' ? props.setup.classes.find((g: any) => g.id === Number(classId.value))?.name : props.setup.rooms.find((r: any) => r.id === Number(locationId.value))?.name) ?? 'Schedule');
 const dateLabel = (iso: string) => formatSchoolDay(iso, 'en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 const boundsMessage = () => `Pick a date between ${dateLabel(props.setup.year.first_day)} and ${dateLabel(props.setup.year.last_day)}.`;
-const dayWords = (day: any) => day.state === 'closure' ? `School is closed: ${day.reason}.` : day.state === 'outside_year' ? 'This day is outside the school year.' : 'The school does not meet on this day.';
+const sentenceEnd = (reason: string) => reason.trim().replace(/\.+$/, '') + '.';
+const dayWords = (day: any) => day.state === 'closure' ? `School is closed on ${dateLabel(day.date)}: ${sentenceEnd(day.reason)}` : day.state === 'outside_year' ? 'This day is outside the school year.' : 'The school does not meet on this day.';
 function cells(rowId: number, column: any) {
-    return page.value.meetings.filter((m: any) => (rowsBy.value === 'teacher' ? m.teachers.some((t: any) => t.id === rowId) : m.group_id === rowId) && m.starts_at < column.ends_at && m.ends_at > column.starts_at);
+    return page.value.meetings.filter((m: any) => (rowsBy.value === 'teacher' ? m.teachers.some((t: any) => t.id === rowId) : m.group_id === rowId) && m.column_key === column.key);
 }
 function forRow(meeting: any, rowId: number) { return { ...meeting, co_teachers: meeting.teachers.filter((t: any) => rowsBy.value !== 'teacher' || t.id !== rowId) }; }
 function clashTitle(meeting: any, rowId: number) {
@@ -142,6 +147,8 @@ onBeforeUnmount(() => { ++generation; clearTimeout(typing); stopPrinting(); if (
 <style scoped>
 .office-schedules { min-width: 0; max-width: 100%; text-align: start; }
 .schedule-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-block: 1rem; }
+.schedule-field { display: flex; align-items: center; gap: .5rem; min-width: 0; max-width: 100%; }
+.schedule-field label { flex-shrink: 0; }
 .schedule-controls input, .schedule-controls select { width: auto; max-width: 100%; min-width: 0; min-height: 44px; }
 .schedule-controls button { min-height: 44px; }
 .schedule-print, .schedule-document { width: 100%; min-width: 0; max-width: 100%; }
@@ -150,19 +157,34 @@ onBeforeUnmount(() => { ++generation; clearTimeout(typing); stopPrinting(); if (
 .school-grid-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
 .school-grid { width: max-content; min-width: 100%; margin-block-end: 0; }
 .school-grid th, .school-grid td { min-width: 10rem; max-width: 13rem; overflow-wrap: anywhere; }
+.school-column-name, .school-column-time { white-space: normal; }
 .schedule-row-label { position: sticky; inset-inline-start: 0; z-index: 1; background: var(--bs-body-bg) !important; }
-@media (max-width: 400px) { .schedule-controls input, .schedule-controls select { width: 100%; } }
+@media (max-width: 820px) {
+    .schedule-field { flex-direction: column; align-items: stretch; width: 100%; }
+    .schedule-field input, .schedule-field select { width: 100%; }
+    .school-grid { table-layout: fixed; }
+    .school-grid th, .school-grid td { width: 150px; min-width: 150px; max-width: 150px; }
+    .school-grid .schedule-row-label { width: 96px; min-width: 96px; max-width: 96px; }
+}
+@media (max-width: 400px) {
+    .school-grid-scroll { width: calc(100% + 1rem); max-width: none; margin-inline: -.5rem; }
+}
 @page timetable-schedule { size: landscape; margin: 10mm; }
 @media print {
     :global(body.timetable-printing *:not(:has(.schedule-print)):not(.schedule-print):not(.schedule-print *)) { display: none !important; }
     :global(body.timetable-printing *:has(.schedule-print)) { display: block !important; position: static !important; width: auto !important; max-width: none !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; }
-    .schedule-print { page: timetable-schedule; font-size: 8pt; }
-    .school-grid-scroll { overflow: visible; }
-    .school-grid { width: 100%; table-layout: fixed; }
-    .school-grid th, .school-grid td { min-width: 0; max-width: none; padding: .15rem; }
+    .schedule-print { page: timetable-schedule; font-size: 7pt; line-height: 1.15; }
+    .school-grid-scroll { overflow: visible; width: 100%; max-width: 100%; margin-inline: 0; }
+    .school-grid { width: 100%; table-layout: fixed; font-size: inherit !important; }
+    .school-grid th, .school-grid td { width: auto; min-width: 0; max-width: none; padding: .1rem .15rem !important; overflow-wrap: normal; word-break: normal; white-space: normal !important; font-size: inherit !important; letter-spacing: normal !important; }
+    .school-grid .schedule-row-label { width: 9%; min-width: 0; max-width: none; }
+    .school-column-name, .school-column-time { display: block; white-space: normal; font-size: inherit; letter-spacing: normal; }
+    .schedule-print h3 { font-size: 10pt; margin-block-end: .2rem; }
+    .schedule-print p { margin-block-end: .3rem; }
+    .schedule-print ul { margin-block-end: 0; }
     .schedule-row-label { position: static; }
     thead { display: table-header-group; }
-    tr { break-inside: avoid; }
+    .school-grid tbody > tr { break-inside: avoid; }
     .schedule-document > tbody > tr { break-inside: auto; }
 }
 </style>
