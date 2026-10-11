@@ -456,3 +456,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 
 ## 2026-10-11 — Office attendance
 Verified base behavior: teacher permits non-meeting and outside-year dates and uses app today for save; the brief's claim that it already refuses those dates is incorrect. Preserve its frozen behavior; office refusals extend its hints while future/closure/roster sentences remain exact. Assumption: a school without a calendar keeps the teacher's permissive past-date behavior because no authority can name meeting days. Overview taken means at least one mark, and latest marker refers to the last updated cell, not completion of the whole roster.
+
+## 2026-10-11 — Office attendance review corrections
+- Assigned isolated feature/office-attendance is authorized for sole-writer edits without a commit. Actual starting HEAD b6eca6b3 supersedes prior build STATE's uncommitted-base wording; no HANDOFF.md.
+- Conflict times display in school timezone with the existing Office: attribution prefix. If direct external deletion leaves no marks, latest editor/time cannot be recovered without adding history; the 409 uses another staff member/an earlier time.
+- SQLite and mounted Vue exercise request/state contracts. Parallel MySQL sessions, real browser geometry/trusted events/assistive technology, CI/staging/production and a live export walk are unverified. No external action performed.

@@ -138,9 +138,9 @@ class ApiService {
     }
 
     // Put
-    public static put(resource: BackendApiRoute, data: any, contentType: HeaderContentType = "url"): Promise<AxiosResponse> {
+    public static put(resource: BackendApiRoute, data: any, contentType: HeaderContentType = "url", headers?: Record<string, string>): Promise<AxiosResponse> {
         ApiService.setHeaderContentType(contentType);
-        return ApiService.VueApp.axios.put(resource, data);
+        return ApiService.VueApp.axios.put(resource, data, headers ? { headers } : undefined);
     }
 
     // Patch

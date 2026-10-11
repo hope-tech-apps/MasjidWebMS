@@ -130,9 +130,16 @@ class SchoolCalendarReadersTest extends TestCase
         $literal = json_decode(file_get_contents($file), true);
         // No data timestamps vary: the fixture clock is fixed.
         $expected = $literal['sql'];
+        // Revisions add precisely a class mutex before the frozen body and a
+        // marks snapshot after it. Keep every original SQL/body fixture literal.
+        if (in_array($shape, ['teacher-register', 'teacher-closed-register'], true)) {
+            array_splice($expected, 4, 0, ['select * from "groups" where "groups"."id" = ? and "masjid_id" = ? and "groups"."deleted_at" is null and "groups"."masjid_id" = ? limit 1']);
+            array_splice($expected, -1, 0, ['select "marks".*, "marker"."name", "marker"."type" from "attendance_records" as "marks" left join "users" as "marker" on "marker"."id" = "marks"."marked_by_user_id" where "marks"."masjid_id" = ? and "marks"."group_id" = ? and strftime(\'%Y-%m-%d\', "marks"."session_date") = cast(? as text) order by "marks"."id" asc']);
+        }
         $at = match ($shape) {
             'teacher-calendar' => 2,
-            'teacher-lessons', 'teacher-register', 'teacher-closed-register' => 4,
+            'teacher-lessons' => 4,
+            'teacher-register', 'teacher-closed-register' => 5,
             'form-page' => 6,
             'form-count', 'form-closed' => 2,
             default => null,

@@ -16,6 +16,11 @@
                 <span class="small text-muted">{{ formatSchoolDay(loaded, 'en-US') }} · {{ taken ? 'Register taken for this day.' : 'Not taken yet for this day.' }}</span>
                 <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="!editable || !students.length" @click="markAll">Mark all present</button>
             </div>
+            <div v-if="confirmAll" class="alert alert-warning" role="alert">
+                <p>{{ protectedCount }} {{ protectedCount === 1 ? 'student is' : 'students are' }} marked late or excused. Mark them present too?</p>
+                <button type="button" class="btn btn-sm btn-primary me-2" :disabled="!editable" @click="setAllPresent">Mark them present too</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" @click="confirmAll = false">Keep late and excused</button>
+            </div>
             <p v-if="!students.length" class="text-muted">No students on this roster yet.</p>
             <div class="list-group mb-3">
                 <div v-for="student in students" :key="student.membership_id" :data-student="student.membership_id" class="list-group-item register-student">
@@ -25,6 +30,7 @@
                         <span v-if="student.grade_label" class="badge bg-primary-subtle text-primary-emphasis">{{ student.grade_label }}</span>
                     </div>
                     <p v-if="student.marked_by" class="small text-muted text-break mb-2">Marked by {{ student.marked_by }} at {{ when(student.marked_at) }}</p>
+                    <p v-if="conflicts[student.membership_id]" class="small text-warning-emphasis mb-2" role="status">{{ conflicts[student.membership_id] }}</p>
                     <div class="register-marks mb-2" role="group" :aria-label="`Mark ${name(student)}`">
                         <button v-for="option in options" :key="option.value" type="button" class="btn btn-sm"
                             :class="student.status === option.value ? 'btn-primary' : 'btn-outline-secondary'"
@@ -71,30 +77,37 @@ const options = [{ value: 'present', label: 'Present' }, { value: 'absent', labe
 const draft = ref(props.date ?? ''); const loaded = ref(''); const today = ref(''); const timezone = ref('America/New_York');
 const students = ref<Student[]>([]); const classes = ref<Classroom[]>([]); const taken = ref(false); const refusal = ref('');
 const loading = ref(false); const saving = ref(false); const saved = ref(false); const error = ref(''); const overviewError = ref(''); const overviewLoading = ref(false);
+const revision = ref(''); const baseline = ref<Record<number, { status: string | null; note: string }>>({});
+const conflicts = ref<Record<number, string>>({}); const confirmAll = ref(false);
+const protectedCount = computed(() => Object.values(baseline.value).filter(s => s.status === 'late' || s.status === 'excused').length);
 const base = computed(() => `/api/admin/masjids/${props.masjidId}/groups/${props.groupId}/attendance`);
 const editable = computed(() => !loading.value && !saving.value && !refusal.value && !!loaded.value && draft.value === loaded.value);
 const name = (student: Student) => [student.contact?.first_name, student.contact?.last_name].filter(Boolean).join(' ') || 'Student';
 const when = (iso?: string | null) => formatLastOpened(iso, 'en-US', timezone.value);
 let generation = 0; let overviewGeneration = 0; let alive = true;
-function apply(data: any) {
+function apply(data: any, headers?: any) {
+    revision.value = headers?.['x-attendance-revision'] ?? '';
+    conflicts.value = {}; confirmAll.value = false;
     loaded.value = data.session_date; draft.value = data.session_date; today.value = data.today; timezone.value = data.timezone;
     students.value = (data.students ?? []).map((s: Student) => ({ ...s, note: s.note ?? '' })); taken.value = data.taken; refusal.value = data.refusal ?? '';
+    baseline.value = Object.fromEntries(students.value.map(s => [s.membership_id, { status: s.status, note: s.note }]));
 }
 function completeDate() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.value)) { error.value = 'Choose a complete date.'; return; }
     if (draft.value !== loaded.value) void load(draft.value);
 }
 const dateInput = useCommittedDate(draft, completeDate);
-async function load(date = '') {
+async function load(date = '', keepChoices = false) {
     if (saving.value) return;
     dateInput.clear(); const run = ++generation; loading.value = true; error.value = ''; saved.value = false;
     // Invalidate the old overview too: a later date must never receive an older answer.
-    ++overviewGeneration; classes.value = []; overviewError.value = ''; loaded.value = ''; students.value = []; refusal.value = '';
+    ++overviewGeneration; classes.value = []; overviewError.value = ''; confirmAll.value = false;
+    if (!keepChoices) { loaded.value = ''; students.value = []; refusal.value = ''; revision.value = ''; conflicts.value = {}; }
     try {
         const response = await ApiService.get(`${base.value}${date ? `?date=${encodeURIComponent(date)}` : ''}`);
         if (!alive || run !== generation) return;
         const pendingDraft = draft.value;
-        apply(response.data.data);
+        apply(response.data.data, response.headers);
         if (pendingDraft !== date) draft.value = pendingDraft;
         void loadOverview(loaded.value);
     } catch (e) { if (alive && run === generation) error.value = apiErrorText(e, 'Could not load the register.'); }
@@ -108,20 +121,37 @@ async function loadOverview(date: string) {
     } catch (e) { if (alive && run === overviewGeneration) overviewError.value = apiErrorText(e, 'Could not load school registers.'); }
     finally { if (alive && run === overviewGeneration) overviewLoading.value = false; }
 }
-function markAll() { if (!editable.value) return; for (const student of students.value) student.status = 'present'; saved.value = false; }
+function setAllPresent() { if (!editable.value) return; for (const student of students.value) student.status = 'present'; saved.value = false; confirmAll.value = false; }
+function markAll() { if (!editable.value) return; if (protectedCount.value) confirmAll.value = true; else setAllPresent(); }
 async function save() {
     if (!editable.value || !students.value.some(s => s.status)) return;
     saving.value = true; error.value = ''; saved.value = false;
     const date = loaded.value; const run = generation;
+    const choices = students.value.map(s => ({ ...s, changedStatus: s.status !== baseline.value[s.membership_id]?.status, changedNote: s.note !== baseline.value[s.membership_id]?.note }));
     try {
-        const response = await ApiService.put(base.value, { session_date: date, marks: students.value.filter(s => s.status).map(s => ({ membership_id: s.membership_id, status: s.status, note: s.note })) });
+        const response = await ApiService.put(base.value, { session_date: date, marks: students.value.filter(s => s.status).map(s => ({ membership_id: s.membership_id, status: s.status, note: s.note })) }, 'url', { 'X-Attendance-Revision': revision.value });
         if (!alive || run !== generation) return;
-        apply(response.data.data); saved.value = true; void loadOverview(date);
+        apply(response.data.data, response.headers); saved.value = true; void loadOverview(date);
     } catch (e: any) {
         if (!alive || run !== generation) return;
         error.value = apiErrorText(e, 'Could not save the register.');
         // Keep the server's refusal visible while reloading a calendar or roster that changed.
-        if (e?.response?.status === 422) {
+        if (e?.response?.status === 409) {
+            const message = error.value; saving.value = false; await load(date, true);
+            if (!alive || loaded.value !== date || refusal.value) return;
+            for (const student of students.value) {
+                const choice = choices.find(s => s.membership_id === student.membership_id);
+                if (!choice) continue;
+                const statusDiffers = choice.changedStatus && choice.status !== student.status;
+                const noteDiffers = choice.changedNote && choice.note !== student.note;
+                if (statusDiffers || noteDiffers) {
+                    conflicts.value[student.membership_id] = `Your unsaved ${statusDiffers ? `choice (${choice.status ?? 'unmarked'})` : 'note'} is shown below. Saved mark: ${student.status ?? 'unmarked'}${noteDiffers ? `. Saved note: ${student.note || '(empty)'}` : ''}. Review it before saving.`;
+                    if (statusDiffers) student.status = choice.status;
+                    if (noteDiffers) student.note = choice.note;
+                }
+            }
+            error.value = message;
+        } else if (e?.response?.status === 422) {
             const message = error.value; saving.value = false; await load(date); error.value = message;
         }
     } finally { if (alive && run === generation) saving.value = false; }

@@ -126,8 +126,10 @@ class TeacherApiService {
         return TeacherApiService.instance().post(url, data, TeacherApiService.JSON_WRITE);
     }
 
-    public static put(url: string, data: any = {}): Promise<AxiosResponse> {
-        return TeacherApiService.instance().put(url, data, TeacherApiService.JSON_WRITE);
+    public static put(url: string, data: any = {}, headers?: Record<string, string>): Promise<AxiosResponse> {
+        return TeacherApiService.instance().put(url, data, headers
+            ? { headers: { ...headers, ...TeacherApiService.JSON_WRITE.headers } }
+            : TeacherApiService.JSON_WRITE);
     }
 
     public static delete(url: string, data?: unknown): Promise<AxiosResponse> {

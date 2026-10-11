@@ -58,7 +58,8 @@ class OfficeAttendanceTest extends TestCase
     }
     private function save(string $date = '2026-10-19', ?array $marks = null)
     {
-        return $this->putJson($this->url(), ['session_date' => $date, 'marks' => $marks ?? [['membership_id' => $this->student->id, 'status' => 'present']]]);
+        $revision = $this->getJson($this->url().'?date='.$date)->headers->get('X-Attendance-Revision');
+        return $this->putJson($this->url(), ['session_date' => $date, 'marks' => $marks ?? [['membership_id' => $this->student->id, 'status' => 'present']]], $revision ? ['X-Attendance-Revision' => $revision] : []);
     }
     private function close(string $day = '2026-10-19'): void
     {
@@ -91,7 +92,8 @@ class OfficeAttendanceTest extends TestCase
     public function browser_encoded_marks_accept_every_status_and_validate_notes(): void
     {
         foreach (AttendanceRecord::STATUSES as $status) {
-            $this->put($this->url(), ['session_date' => '2026-10-19', 'marks' => [['membership_id' => (string) $this->student->id, 'status' => $status, 'note' => 'Practice note']]], ['Accept' => 'application/json'])->assertOk();
+            $revision = $this->getJson($this->url().'?date=2026-10-19')->assertOk()->headers->get('X-Attendance-Revision');
+            $this->put($this->url(), ['session_date' => '2026-10-19', 'marks' => [['membership_id' => (string) $this->student->id, 'status' => $status, 'note' => 'Practice note']]], ['Accept' => 'application/json', 'X-Attendance-Revision' => $revision])->assertOk();
             $this->assertDatabaseHas('attendance_records', ['group_membership_id' => $this->student->id, 'status' => $status]);
         }
         $this->save(marks: [['membership_id' => $this->student->id, 'status' => 'maybe']])->assertUnprocessable();
@@ -239,6 +241,10 @@ class OfficeAttendanceTest extends TestCase
         $this->school->forceFill(['capability_overrides' => ['school_calendar_terms' => true, 'student_allergies' => true]])->save();
         $r = $this->getJson($this->url())->assertOk();
         $this->assertSame('Practice allergy', collect($r->json('data.students'))->firstWhere('membership_id', $this->student->id)['student_allergy']['allergies']);
+        $this->school->forceFill(['capability_overrides' => ['school_calendar_terms' => true, 'student_allergies' => false]])->save();
+        $off = $this->getJson($this->url())->assertOk();
+        foreach ($off->json('data.students') as $student) $this->assertArrayNotHasKey('student_allergy', $student);
+        $this->assertStringNotContainsString('Practice allergy', $off->getContent());
     }
 
     #[Test]
@@ -262,4 +268,103 @@ class OfficeAttendanceTest extends TestCase
             ->getJson("/api/family/masjids/{$this->school->id}/groups/{$this->class->id}/members/{$this->student->id}/report-cards/{$card}")
             ->assertOk()->assertJsonPath('data.attendance.present', 1)->assertJsonPath('data.attendance.late', 1);
     }
+    #[Test]
+    public function office_note_survives_a_teacher_status_save_with_the_loaded_note(): void
+    {
+        $this->save(marks: [['membership_id' => $this->student->id, 'status' => 'excused', 'note' => 'Medical appointment']])->assertOk();
+        $this->as($this->teacher);
+        $url = str_replace('/admin/', '/teacher/', $this->url());
+        $read = $this->getJson($url.'?date=2026-10-19')->assertOk();
+        $mark = collect($read->json('data.students'))->firstWhere('membership_id', $this->student->id);
+        $this->putJson($url, ['session_date' => '2026-10-19', 'marks' => [['membership_id' => $mark['membership_id'], 'status' => 'late', 'note' => $mark['note']]]], ['X-Attendance-Revision' => $read->headers->get('X-Attendance-Revision') ?? ''])->assertOk();
+        $this->assertDatabaseHas('attendance_records', ['group_membership_id' => $this->student->id, 'status' => 'late', 'note' => 'Medical appointment']);
+    }
+
+    public static function staleRealms(): array { return [[true], [false]]; }
+    #[Test, DataProvider('staleRealms')]
+    public function stale_teacher_then_office_and_office_then_teacher_write_nothing(bool $teacherFirst): void
+    {
+        $officeUrl = $this->url();
+        $teacherUrl = str_replace('/admin/', '/teacher/', $officeUrl);
+        $officeRead = $this->getJson($officeUrl.'?date=2026-10-19')->assertOk();
+        $this->as($this->teacher);
+        $teacherRead = $this->getJson($teacherUrl.'?date=2026-10-19')->assertOk();
+        $first = $teacherFirst ? $this->teacher : $this->office;
+        $second = $teacherFirst ? $this->office : $this->teacher;
+        $this->as($first);
+        $this->putJson($teacherFirst ? $teacherUrl : $officeUrl, ['session_date' => '2026-10-19', 'marks' => [['membership_id' => $this->student->id, 'status' => 'late', 'note' => 'New correction']]], ['X-Attendance-Revision' => ($teacherFirst ? $teacherRead : $officeRead)->headers->get('X-Attendance-Revision') ?? ''])->assertOk();
+        $before = DB::table('attendance_records')->get()->toArray();
+        $this->as($second);
+        $this->putJson($teacherFirst ? $officeUrl : $teacherUrl, ['session_date' => '2026-10-19', 'marks' => [['membership_id' => $this->student->id, 'status' => 'present'], ['membership_id' => $this->second->id, 'status' => 'absent']]], ['X-Attendance-Revision' => ($teacherFirst ? $officeRead : $teacherRead)->headers->get('X-Attendance-Revision') ?? ''])
+            ->assertStatus(409)->assertJsonPath('message', 'This register was changed by '.($teacherFirst ? 'Practice Teacher' : 'Office: Practice Office').' at October 19, 2026, 12:00 PM. Reload it, then make your change.');
+        $this->assertEquals($before, DB::table('attendance_records')->get()->toArray());
+    }
+
+    #[Test, DataProvider('staleRealms')]
+    public function legacy_tabs_without_revision_can_start_but_cannot_overwrite_a_register(bool $teacherRealm): void
+    {
+        if ($teacherRealm) $this->as($this->teacher);
+        $url = $teacherRealm ? str_replace('/admin/', '/teacher/', $this->url()) : $this->url();
+        $body = ['session_date' => '2026-10-19', 'marks' => [['membership_id' => $this->student->id, 'status' => 'late', 'note' => 'Keep this']]];
+        $this->putJson($url, $body)->assertOk();
+        $read = $this->getJson($url.'?date=2026-10-19')->assertOk();
+        $revision = $read->headers->get('X-Attendance-Revision');
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $revision ?? '');
+        $body['marks'][0]['status'] = 'present';
+        $this->putJson($url, $body)->assertStatus(409);
+        $this->putJson($url, $body, ['X-Attendance-Revision' => $revision])->assertOk();
+        $fresh = $this->getJson($url.'?date=2026-10-19')->assertOk()->headers->get('X-Attendance-Revision');
+        $this->assertNotSame($revision, $fresh, 'same-second corrections must advance the revision');
+        $this->putJson($url, $body, ['X-Attendance-Revision' => $revision])->assertStatus(409);
+        $this->assertDatabaseCount('attendance_records', 1);
+    }
+
+    public static function makeupDays(): array { return [['2026-10-18'], ['2026-09-30']]; }
+    #[Test, DataProvider('makeupDays')]
+    public function office_can_correct_existing_makeup_marks_but_cannot_start_that_date(string $date): void
+    {
+        $this->save($date)->assertUnprocessable();
+        $this->as($this->teacher);
+        $this->putJson(str_replace('/admin/', '/teacher/', $this->url()), ['session_date' => $date, 'marks' => [['membership_id' => $this->student->id, 'status' => 'late', 'note' => 'Make-up day']]])->assertOk();
+        $this->as($this->office);
+        $this->getJson($this->overview().'?date='.$date)->assertOk()->assertJsonPath('data.classes.0.taken', true);
+        $read = $this->getJson($this->url().'?date='.$date)->assertOk()->assertJsonPath('data.refusal', null)->assertJsonCount(2, 'data.students');
+        $this->putJson($this->url(), ['session_date' => $date, 'marks' => [['membership_id' => $this->student->id, 'status' => 'excused', 'note' => 'Corrected make-up day']]], ['X-Attendance-Revision' => $read->headers->get('X-Attendance-Revision') ?? ''])->assertOk();
+        $otherClass = Group::factory()->create(['masjid_id' => $this->school->id, 'kind' => 'class']);
+        $otherStudent = $this->enrol($otherClass);
+        $this->putJson(str_replace('/groups/'.$this->class->id.'/', '/groups/'.$otherClass->id.'/', $this->url()), ['session_date' => $date, 'marks' => [['membership_id' => $otherStudent->id, 'status' => 'present']]])->assertUnprocessable();
+        $this->assertDatabaseHas('attendance_records', ['group_membership_id' => $this->student->id, 'status' => 'excused', 'note' => 'Corrected make-up day']);
+        $this->assertDatabaseCount('attendance_records', 1);
+    }
+
+    #[Test, DataProvider('staleRealms')]
+    public function a_legacy_partial_save_may_add_an_unmarked_student_without_overwriting(bool $teacherRealm): void
+    {
+        $this->save(marks: [['membership_id' => $this->student->id, 'status' => 'excused', 'note' => 'Keep this']])->assertOk();
+        if ($teacherRealm) $this->as($this->teacher);
+        $url = $teacherRealm ? str_replace('/admin/', '/teacher/', $this->url()) : $this->url();
+        $this->putJson($url, ['session_date' => '2026-10-19', 'marks' => [['membership_id' => $this->second->id, 'status' => 'present']]])->assertOk();
+        $this->assertDatabaseHas('attendance_records', ['group_membership_id' => $this->student->id, 'status' => 'excused', 'note' => 'Keep this']);
+        $this->assertDatabaseCount('attendance_records', 2);
+    }
+
+    #[Test]
+    public function same_second_note_only_corrections_invalidate_the_loaded_revision(): void
+    {
+        $this->save(marks: [['membership_id' => $this->student->id, 'status' => 'excused', 'note' => 'First note']])->assertOk();
+        $read = $this->getJson($this->url().'?date=2026-10-19')->assertOk();
+        $revision = $read->headers->get('X-Attendance-Revision');
+        $this->putJson($this->url(), ['session_date' => '2026-10-19', 'marks' => [['membership_id' => $this->student->id, 'status' => 'excused', 'note' => 'New note']]], ['X-Attendance-Revision' => $revision])->assertOk();
+        $this->as($this->teacher);
+        $this->putJson(str_replace('/admin/', '/teacher/', $this->url()), ['session_date' => '2026-10-19', 'marks' => [['membership_id' => $this->student->id, 'status' => 'late', 'note' => 'First note']]], ['X-Attendance-Revision' => $revision])->assertStatus(409);
+        $this->assertDatabaseHas('attendance_records', ['group_membership_id' => $this->student->id, 'status' => 'excused', 'note' => 'New note', 'marked_by_user_id' => $this->office->id]);
+    }
+
+    #[Test]
+    public function cross_origin_register_reads_expose_the_revision_header(): void
+    {
+        $this->getJson($this->url().'?date=2026-10-19', ['Origin' => 'https://practice.invalid'])->assertOk()
+            ->assertHeader('Access-Control-Expose-Headers', 'X-Attendance-Revision');
+    }
+
 }

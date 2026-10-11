@@ -135,10 +135,10 @@
                     <div>
                         <label class="form-label small mb-1">Day</label>
                         <input type="date" class="form-control form-control-sm" style="width: 170px"
-                               v-model="attDate" :max="todayIso" @change="loadAttendance" />
+                               v-model="attDate" :max="todayIso" :disabled="attSaving" @change="loadAttendance" />
                     </div>
                     <div class="flex-grow-1"></div>
-                    <button v-if="!attClosed" class="btn btn-sm btn-outline-secondary" :disabled="attLoading || !students.length"
+                    <button v-if="!attClosed" class="btn btn-sm btn-outline-secondary" :disabled="attLoading || attSaving || !students.length"
                             @click="markAllPresent">
                         <i class="bi bi-check2-all me-1"></i>All present
                     </button>
@@ -187,11 +187,13 @@
                                         {{ s.grade_label }}
                                     </span>
                                 </div>
+                                <p v-if="attConflicts[s.membership_id]" class="small text-warning-emphasis mb-0" role="status">{{ attConflicts[s.membership_id] }}</p>
                             </div>
                             <div class="btn-group btn-group-sm" role="group" :aria-label="`Mark ${name(s.contact)}`">
                                 <button v-for="opt in ATT_OPTIONS" :key="opt.value" type="button"
                                         class="btn" :class="marks[s.membership_id] === opt.value ? opt.on : opt.off"
                                         :title="opt.label" :aria-pressed="marks[s.membership_id] === opt.value"
+                                        :disabled="attLoading || attSaving"
                                         @click="marks[s.membership_id] = opt.value">
                                     {{ opt.short }}
                                 </button>
@@ -200,7 +202,7 @@
                     </div>
 
                     <div class="d-flex align-items-center gap-2 tc-att-save">
-                        <button class="btn btn-success btn-sm" :disabled="attSaving || !markedCount"
+                        <button class="btn btn-success btn-sm" :disabled="attLoading || attSaving || !markedCount || attDate !== attLoadedDate"
                                 @click="saveAttendance">
                             <i class="bi bi-save me-1"></i>
                             {{ attSaving ? 'Saving…' : `Save register (${markedCount}/${students.length})` }}
@@ -2814,6 +2816,11 @@ const localDay = (d: Date): string =>
 const todayIso = localDay(new Date());
 const attDate = ref<string>(todayIso);
 const marks = ref<Record<number, string>>({});
+const attNotes = ref<Record<number, string | null>>({});
+const attBaseline = ref<Record<number, string>>({});
+const attRevision = ref('');
+const attLoadedDate = ref('');
+const attConflicts = ref<Record<number, string>>({});
 const attLoading = ref(false);
 const attSaving = ref(false);
 const attSaved = ref(false);
@@ -2840,13 +2847,19 @@ const offDayNote = computed(() => {
 });
 
 const loadAttendance = async () => {
+    const date = attDate.value;
     registerAllergies.value = {};
     attLoading.value = true;
     attError.value = '';
     attSaved.value = false;
     try {
-        const res = await TeacherApiService.get(`${base.value}/attendance?date=${attDate.value}`);
+        const res = await TeacherApiService.get(`${base.value}/attendance?date=${date}`);
+        if (date !== attDate.value) return;
         const data = res.data?.data ?? {};
+        attRevision.value = res.headers?.['x-attendance-revision'] ?? '';
+        attLoadedDate.value = date;
+        attConflicts.value = {};
+        attNotes.value = Object.fromEntries((data.students ?? []).map((s: any) => [s.membership_id, s.note ?? null]));
         registerAllergies.value = Object.fromEntries((data.students ?? []).map((s: any) => [s.membership_id, s.student_allergy]));
         const day = data.school_day;
         schoolDay.value = day && typeof day === 'object'
@@ -2866,6 +2879,7 @@ const loadAttendance = async () => {
             if (s.status) next[s.membership_id] = s.status;
         }
         marks.value = next;
+        attBaseline.value = { ...next };
     } catch {
         schoolDay.value = null;
         attError.value = 'Could not load the register.';
@@ -2881,18 +2895,27 @@ const markAllPresent = () => {
 };
 
 const saveAttendance = async () => {
+    if (attLoading.value || attSaving.value || attDate.value !== attLoadedDate.value) return;
+    const date = attDate.value;
+    const choices = Object.fromEntries(Object.entries(marks.value).filter(([id, status]) => status !== attBaseline.value[Number(id)]));
     attSaving.value = true;
     attError.value = '';
     attSaved.value = false;
     try {
         const payload = {
-            session_date: attDate.value,
+            session_date: date,
             marks: Object.entries(marks.value).map(([membership_id, status]) => ({
                 membership_id: Number(membership_id),
                 status,
+                note: attNotes.value[Number(membership_id)] ?? null,
             })),
         };
-        const res = await TeacherApiService.put(`${base.value}/attendance`, payload);
+        const res = await TeacherApiService.put(`${base.value}/attendance`, payload, { 'X-Attendance-Revision': attRevision.value });
+        if (date !== attDate.value) return;
+        attRevision.value = res.headers?.['x-attendance-revision'] ?? '';
+        attNotes.value = Object.fromEntries((res.data?.data?.students ?? []).map((s: any) => [s.membership_id, s.note ?? null]));
+        attBaseline.value = { ...marks.value };
+        attConflicts.value = {};
         registerAllergies.value = Object.fromEntries((res.data?.data?.students ?? []).map((s: any) => [s.membership_id, s.student_allergy]));
         attTaken.value = !!res.data?.data?.taken;
         attSaved.value = true;
@@ -2901,6 +2924,17 @@ const saveAttendance = async () => {
         // 422 {status:'failed', data:{session_date:["There was no school on …"]}}.
         const message = apiErrorText(e, 'Could not save the register.');
         attError.value = message;
+        if (e?.response?.status === 409) {
+            await loadAttendance();
+            if (date !== attDate.value) return;
+            for (const [id, status] of Object.entries(choices)) {
+                const member = Number(id);
+                if (!(member in attNotes.value) || status === marks.value[member]) continue;
+                attConflicts.value[member] = `Your unsaved choice (${status}) is shown. Saved mark: ${marks.value[member] ?? 'unmarked'}. Review it before saving.`;
+                marks.value[member] = status;
+            }
+            attError.value = message;
+        }
 
         // A refusal about the DAY means the calendar changed under this screen
         // (the office closed it after the register opened). Re-read it, so the

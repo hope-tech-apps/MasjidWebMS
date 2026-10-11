@@ -106,7 +106,7 @@ for (const surface of ['office','teacher','register'] as const) {
             const record={...note,allergies: allergies==='none'?null:allergies};
             const row={id:3,membership_id:3,role:'member',contact:{first_name:'Robin',last_name:'Willow'},student_allergy:record};
             const ctx={membership:row,s:row,students:[row],allergiesEnabled:true,activeTab:'roster',sheetFor:null,
-                registerAllergies:{3:record},fullName:(c:any)=>`${c.first_name} ${c.last_name}`,name:(c:any)=>`${c.first_name} ${c.last_name}`,
+                attConflicts:{},registerAllergies:{3:record},fullName:(c:any)=>`${c.first_name} ${c.last_name}`,name:(c:any)=>`${c.first_name} ${c.last_name}`,
                 isStudentRow:()=>true,openStudent:()=>{},ageLabel:()=>'',
             };
             const s=mountTemplate(fragments[surface],ctx,{AllergyBadge,PersonAvatar:vue.defineComponent({render:()=>null})});
@@ -140,7 +140,7 @@ for (const surface of ['office','teacher','register'] as const) {
         const AllergyBadge=await compileSfc('components/classes/AllergyBadge.vue',{vue});
         const record={unavailable:true,allergies:null};
         const row={id:3,membership_id:3,role:'member',contact:{first_name:'Robin',last_name:'Willow'},student_allergy:record};
-        const ctx={membership:row,s:row,students:[row],activeTab:'roster',sheetFor:null,registerAllergies:{3:record},fullName:()=> 'Robin Willow',name:()=> 'Robin Willow',isStudentRow:()=>true,openStudent:()=>{},ageLabel:()=>''};
+        const ctx={membership:row,s:row,students:[row],activeTab:'roster',sheetFor:null,attConflicts:{},registerAllergies:{3:record},fullName:()=> 'Robin Willow',name:()=> 'Robin Willow',isStudentRow:()=>true,openStudent:()=>{},ageLabel:()=>''};
         const s=mountTemplate(fragments[surface],ctx,{AllergyBadge,PersonAvatar:vue.defineComponent({render:()=>null})});
         assert.match(s.text(),/Allergy note unavailable: ask the office/);
         s.unmount();
@@ -148,7 +148,7 @@ for (const surface of ['office','teacher','register'] as const) {
 }
 test('register shows the response note with no roster allergy key', async () => {
     const AllergyBadge=await compileSfc('components/classes/AllergyBadge.vue',{vue});
-    const s=mountTemplate(fragments.register,{s:{membership_id:3,contact:{}},registerAllergies:{3:note},name:()=> 'Robin Willow'},{AllergyBadge});
+    const s=mountTemplate(fragments.register,{s:{membership_id:3,contact:{}},attConflicts:{},registerAllergies:{3:note},name:()=> 'Robin Willow'},{AllergyBadge});
     assert.ok(s.all(n=>n.props.role==='button')[0]);
     s.unmount();
 });

@@ -9620,3 +9620,10 @@ Restore TeacherController and AttendanceController byte-for-byte from main 52daa
 
 ## 2026-10-11 — Office attendance (owner build brief)
 The owner now authorizes taking/correcting a class register in the office realm, superseding earlier teacher-only attendance wording. Reuse manage contacts for GET/PUT/overview under admin/tenant/CRM. Both index and save teacher bodies are frozen; the shared AttendanceRegister wraps/calls them, preserving suffix contracts, SQL and payload. Office dates use school today and reject non-meeting/out-of-year dates when a calendar exists; teacher keeps existing permissive hints and app-clock future validation. No new switch, migration or model.
+
+## 2026-10-11 — Office attendance review corrections
+- Owner's correction supersedes the previous office-only non-meeting/out-of-year refusal: refuse starting a register there, but allow reads/corrections when that class has marks. Future and closure rules remain.
+- Both realms carry X-Attendance-Revision in response/request headers. Hash all stored mark fields (exclude joined display name/type), use the existing class PK mutex as the first transaction statement, compare before the frozen writer. Older tabs can start/add unmarked cells, but cannot overwrite submitted existing cells without a revision. CORS exposes the header. No schema change.
+- Teacher round-trips loaded notes, with no editor. After 409 clients reload and overlay only locally changed fields that differ, show saved values per student, and keep refreshed notes for teacher status changes. Office drafts stay visible on failed conflict reload.
+- Bulk office present asks before touching saved Late/Excused; its count is based on loaded on-file marks even after local edits. Cancelling leaves choices intact. Notes are retained.
+- Original 84 frozen source bodies and all 117 existing fixture files remain literal. Two teacher-register wrapper SQL additions are explicitly spliced into old comparisons, at fixed positions; repeat-save tests return their read revision. Allergy OFF coverage needs no production behavior change.

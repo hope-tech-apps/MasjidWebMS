@@ -86,7 +86,12 @@ class StudentAllergiesTest extends TestCase
             $actual[$name]=['sql'=>array_column(DB::getQueryLog(),'query'),'payload'=>$r->json()];
             DB::disableQueryLog();
         }
-        $this->assertSame(json_decode(file_get_contents(base_path('tests/fixtures/student-allergies-off-52daab37.json')), true), $actual);
+        $expected=json_decode(file_get_contents(base_path('tests/fixtures/student-allergies-off-52daab37.json')), true);
+        // The revision wrapper adds these two reads; the frozen allergy fixture
+        // and every original reader statement/payload stay literal.
+        array_splice($expected['teacher-attendance']['sql'], 3, 0, ['select * from "groups" where "groups"."id" = ? and "masjid_id" = ? and "groups"."deleted_at" is null and "groups"."masjid_id" = ? limit 1']);
+        array_splice($expected['teacher-attendance']['sql'], -1, 0, ['select "marks".*, "marker"."name", "marker"."type" from "attendance_records" as "marks" left join "users" as "marker" on "marker"."id" = "marks"."marked_by_user_id" where "marks"."masjid_id" = ? and "marks"."group_id" = ? and strftime(\'%Y-%m-%d\', "marks"."session_date") = cast(? as text) order by "marks"."id" asc']);
+        $this->assertSame($expected, $actual);
     }
 
     public static function noneAnswers(): array
@@ -680,13 +685,14 @@ class StudentAllergiesTest extends TestCase
         foreach ([false,true] as $configured) {
             $this->school->forceFill(['capability_overrides'=>['student_allergies'=>true,'class_subjects'=>$configured,'school_calendar'=>true,'school_calendar_terms'=>$configured]])->save();
             foreach ([$this->teacherClass(),$this->teacherClass().'/attendance?date=2026-10-11'] as $url) {
-                $rows=collect($this->getJson($url)->assertOk()->json('data.students'))->keyBy('membership_id');
+                $response=$this->getJson($url)->assertOk();
+                $rows=collect($response->json('data.students'))->keyBy('membership_id');
                 $this->assertSame('Peanuts',$rows[$this->member->id]['student_allergy']['allergies']);
                 $this->assertArrayNotHasKey('student_allergy',$rows[$leader->id]);
                 $this->assertArrayHasKey('student_allergy',$rows[$unflaggedMember->id]);
                 $this->assertNull($rows[$unflaggedMember->id]['student_allergy']);
             }
-            $this->putJson($this->teacherClass().'/attendance',['session_date'=>'2026-10-11','marks'=>[['membership_id'=>$this->member->id,'status'=>'present']]])->assertOk()->assertJsonPath('data.students.0.student_allergy.allergies','Peanuts');
+            $this->putJson($this->teacherClass().'/attendance',['session_date'=>'2026-10-11','marks'=>[['membership_id'=>$this->member->id,'status'=>'present']]], ['X-Attendance-Revision'=>$response->headers->get('X-Attendance-Revision')])->assertOk()->assertJsonPath('data.students.0.student_allergy.allergies','Peanuts');
         }
         $this->class->forceFill(['kind'=>'general'])->save();
         foreach ([$this->teacherClass(),$this->teacherClass().'/attendance?date=2026-10-11'] as $url) {

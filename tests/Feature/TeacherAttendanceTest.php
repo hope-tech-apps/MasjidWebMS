@@ -151,7 +151,7 @@ class TeacherAttendanceTest extends TestCase
         $mark = fn (string $status) => $this->putJson($this->url().'/attendance', [
             'session_date' => $today,
             'marks' => [['membership_id' => $this->kg->id, 'status' => $status]],
-        ])->assertOk();
+        ], ['X-Attendance-Revision' => $this->getJson($this->url().'/attendance?date='.$today)->assertOk()->headers->get('X-Attendance-Revision')])->assertOk();
 
         // Marked absent at 9:05, walks in at 9:20 — the SAME cell changes.
         $mark('absent');

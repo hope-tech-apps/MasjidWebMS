@@ -8,23 +8,71 @@ use App\Models\Group;
 use App\Support\{SchoolCalendar, SchoolCalendarReaders};
 use Illuminate\Http\{JsonResponse, Request};
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /** Both realms call the frozen reader and the same atomic register writer. */
 class AttendanceRegister
 {
+    public const REVISION_HEADER = 'X-Attendance-Revision';
+
+    /** Keep the frozen payload and revision in one locked snapshot. */
     public function read(AttendanceController $reader, Request $request, $masjid_id, $group_id): JsonResponse
     {
-        return $reader->readFrozen($request, $masjid_id, $group_id);
+        return DB::transaction(function () use ($reader, $request, $masjid_id, $group_id) {
+            $this->lockClass((int) $masjid_id, (int) $group_id);
+            $response = $reader->readFrozen($request, $masjid_id, $group_id);
+            $date = $response->getData(true)['data']['session_date'];
+            $response->headers->set(self::REVISION_HEADER, $this->revision($this->marks((int) $masjid_id, (int) $group_id, $date)));
+            return $response;
+        });
     }
 
+    /** Reject changed revisions before the atomic frozen writer touches a cell. */
     public function save(AttendanceController $writer, SaveAttendanceRequest $request, $masjid_id, $group_id): JsonResponse
     {
-        return $writer->saveFrozen($request, $masjid_id, $group_id);
+        return DB::transaction(function () use ($writer, $request, $masjid_id, $group_id) {
+            // The first statement must be the mutex: InnoDB then creates its read
+            // view only after the preceding register writer has committed.
+            $this->lockClass((int) $masjid_id, (int) $group_id);
+            $date = $request->validated('session_date');
+            $marks = $this->marks((int) $masjid_id, (int) $group_id, $date);
+            $revision = $request->header(self::REVISION_HEADER);
+            $overwrites = $marks->whereIn('group_membership_id', collect($request->validated('marks'))->pluck('membership_id')->all())->isNotEmpty();
+            if (($revision === null && $overwrites) || ($revision !== null && ! hash_equals($this->revision($marks), $revision))) {
+                $latest = $marks->sortByDesc(fn ($m) => [$m->updated_at, $m->id])->first();
+                $marker = $latest ? self::marker($latest->name, $latest->type) : 'another staff member';
+                $time = $latest ? Carbon::parse($latest->updated_at)->setTimezone(SchoolCalendarReaders::for((int) $masjid_id)->timezone())->format('F j, Y, g:i A') : 'an earlier time';
+                return response()->json(['status' => 'failed', 'message' => "This register was changed by {$marker} at {$time}. Reload it, then make your change."], 409);
+            }
+            return $writer->saveFrozen($request, $masjid_id, $group_id);
+        });
     }
 
-    /** Office dates are school-local and restricted to the school's open meeting dates. */
-    public function officeDay(int $school, string $date): array
+    private function lockClass(int $school, int $class): void
+    {
+        Group::query()->whereKey($class)->where('masjid_id', $school)->lockForUpdate()->firstOrFail();
+    }
+
+    private function marks(int $school, int $class, string $date): Collection
+    {
+        return DB::table('attendance_records as marks')
+            ->leftJoin('users as marker', 'marker.id', '=', 'marks.marked_by_user_id')
+            ->where('marks.masjid_id', $school)->where('marks.group_id', $class)->whereDate('marks.session_date', $date)
+            ->orderBy('marks.id')->get(['marks.*', 'marker.name', 'marker.type']);
+    }
+
+    private function revision(Collection $marks): string
+    {
+        return hash('sha256', $marks->map(function ($mark) {
+            $row = (array) $mark;
+            unset($row['name'], $row['type']);
+            return $row;
+        })->toJson());
+    }
+
+    /** New office registers need an open meeting date; retained make-up marks remain correctable. */
+    public function officeDay(int $school, string $date, bool $taken = false): array
     {
         $calendar = SchoolCalendarReaders::for($school);
         $day = $calendar->schoolDay($date);
@@ -34,7 +82,7 @@ class AttendanceRegister
         } elseif ($day['closed']) {
             $closure = $calendar->years()->flatMap(fn ($y) => $y->closures)->first(fn ($c) => $c->closed_on->toDateString() === $date);
             $refusal = SchoolCalendar::noRegisterMessage($closure);
-        } elseif ($day['has_calendar'] && ! $day['meeting_day']) {
+        } elseif (! $taken && $day['has_calendar'] && ! $day['meeting_day']) {
             $refusal = $day['in_year']
                 ? "This isn't one of the school's meeting days on the calendar, so there is no register to take."
                 : 'This day is outside the school year on the calendar, so there is no register to take.';

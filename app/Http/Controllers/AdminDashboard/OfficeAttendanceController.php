@@ -21,9 +21,9 @@ class OfficeAttendanceController extends Controller
         $group = $this->classroom($group_id);
         $request->validate(['date' => ['sometimes', 'date_format:Y-m-d']]);
         $date = $request->query('date', SchoolCalendarReaders::for((int) $group->masjid_id)->today());
-        $day = $this->register->officeDay((int) $group->masjid_id, $date);
         $response = $this->register->read(app(AttendanceController::class), new Request(['date' => $date]), $masjid_id, $group_id);
         $payload = $response->getData(true);
+        $day = $this->register->officeDay((int) $group->masjid_id, $date, $payload['data']['taken']);
         $payload['data'] = $day + $payload['data'];
         if ($day['refusal'] !== null) {
             $payload['data']['students'] = [];
@@ -44,7 +44,8 @@ class OfficeAttendanceController extends Controller
     public function save(SaveOfficeAttendanceRequest $request, $masjid_id, $group_id): JsonResponse
     {
         $group = $this->classroom($group_id);
-        $day = $this->register->officeDay((int) $group->masjid_id, $request->validated('session_date'));
+        $taken = AttendanceRecord::query()->where('group_id', $group->id)->whereDate('session_date', $request->validated('session_date'))->exists();
+        $day = $this->register->officeDay((int) $group->masjid_id, $request->validated('session_date'), $taken);
         if ($day['refusal'] !== null) throw ValidationException::withMessages(['session_date' => $day['refusal']]);
         $response = $this->register->save(app(AttendanceController::class), $request, $masjid_id, $group_id);
         if ($response->getStatusCode() !== 200) return $response;

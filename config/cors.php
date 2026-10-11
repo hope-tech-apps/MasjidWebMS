@@ -32,7 +32,7 @@ return [
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    'exposed_headers' => ['X-Attendance-Revision'],
 
     'max_age' => 0,
 
