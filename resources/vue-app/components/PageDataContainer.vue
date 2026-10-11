@@ -1,8 +1,8 @@
 <template>
     <div class="card border-0 py-4 px-3 w-100">
         <div class="card-header bg-white border-0 d-flex flex-column flex-sm-row align-items-start justify-content-between">
-            <div class="card-title fs-4 fw-semibold">
-                {{ title }}
+            <div class="card-title fs-4 fw-semibold" :class="{ 'mw-100 text-break': $slots.headerDetail }">
+                <HeaderTitle />
             </div>
             <div class="card-toolbar d-flex gap-2">
                 <slot name="headerButtons"></slot>
@@ -27,7 +27,7 @@
 import Pagination from '@/components/partials/Pagination.vue';
 import { ButtonProps } from '@/core/types/elements/Buttons';
 import { PaginationIndicies, PaginationOptions } from '@/core/types/elements/Pagination';
-import { PropType, toRefs } from 'vue';
+import { Fragment, h, PropType, toRefs, useSlots } from 'vue';
 
 // Props
 const props = defineProps({
@@ -60,6 +60,12 @@ const props = defineProps({
 const emits = defineEmits(['headerButtonClick', 'pageChange']);
 
 const { title, paginationOptions, buttonProps, hideButton } = toRefs(props);
+const slots = useSlots();
+
+// A conditional template slot emits an OFF comment; retain the original text-only title.
+function HeaderTitle() {
+    return slots.headerDetail ? h(Fragment, [title.value, ...slots.headerDetail()]) : title.value;
+}
 
 function headerButtonClick() {
     emits('headerButtonClick');

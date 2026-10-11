@@ -449,3 +449,7 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Assigned worktree authorization makes this session the sole writer; initial tracked diff was empty at f68d9221, inherited untracked artifacts retained.
 - 8000 code points is a conservative plaintext bound for the encrypted TEXT column, proved locally with four-byte Unicode (57088 ciphertext bytes). MySQL runtime remains unverified.
 - Direct bulk SQL maintenance bypasses model hint events and must refresh the school retention hint; ordinary writers/erasure/merge are covered. Unmatched children remain unresolved for office review, never guessed.
+## Class location visibility — 2026-10-11
+- The usual location is the existing undated class assignment, independent of slot overrides and selected school year. Verified in the existing timetable reader and class Location endpoints.
+- Setup printing is outside the trivial case: its root has no print style; Schedules owns a separate print surface. Skipped under the brief's explicit allowance.
+- Mounted width checks prove wrapping classes and separate lines, not real CSS geometry. The local Chrome/CDP attempt aborted with SIGABRT before connecting; browser phone/RTL remains unverified.

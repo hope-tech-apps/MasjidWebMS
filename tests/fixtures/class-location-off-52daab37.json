@@ -1,0 +1,218 @@
+{
+    "office-list": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"permissions\"",
+            "select \"roles\".*, \"role_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"role_has_permissions\".\"role_id\" as \"pivot_role_id\" from \"roles\" inner join \"role_has_permissions\" on \"roles\".\"id\" = \"role_has_permissions\".\"role_id\" where \"role_has_permissions\".\"permission_id\" in (1, 2, 3, 4, 5, 6, 7, 8)",
+            "select \"permissions\".*, \"model_has_permissions\".\"model_id\" as \"pivot_model_id\", \"model_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"model_has_permissions\".\"model_type\" as \"pivot_model_type\" from \"permissions\" inner join \"model_has_permissions\" on \"permissions\".\"id\" = \"model_has_permissions\".\"permission_id\" where \"model_has_permissions\".\"model_id\" in (1) and \"model_has_permissions\".\"model_type\" = ?",
+            "select \"roles\".*, \"model_has_roles\".\"model_id\" as \"pivot_model_id\", \"model_has_roles\".\"role_id\" as \"pivot_role_id\", \"model_has_roles\".\"model_type\" as \"pivot_model_type\" from \"roles\" inner join \"model_has_roles\" on \"roles\".\"id\" = \"model_has_roles\".\"role_id\" where \"model_has_roles\".\"model_id\" in (1) and \"model_has_roles\".\"model_type\" = ?",
+            "select count(*) as aggregate from \"groups\" where \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ?",
+            "select \"groups\".*, (select count(*) from \"group_memberships\" where \"groups\".\"id\" = \"group_memberships\".\"group_id\" and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?) as \"participants_count\" from \"groups\" where \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? order by position IS NULL, \"position\" asc, \"name\" asc, \"id\" asc limit 15 offset 0",
+            "select \"group_staff\".\"group_id\", \"group_staff\".\"user_id\", \"group_staff\".\"subjects\", \"users\".\"name\" from \"group_staff\" inner join \"users\" on \"users\".\"id\" = \"group_staff\".\"user_id\" where \"users\".\"deleted_at\" is null and \"group_staff\".\"role\" = ? and \"group_staff\".\"group_id\" in (?) and \"group_staff\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "current_page": 1,
+                "data": [
+                    {
+                        "id": 1,
+                        "masjid_id": 1,
+                        "name": "Practice Class",
+                        "slug": "practice-class",
+                        "kind": "class",
+                        "description": null,
+                        "is_active": true,
+                        "starts_on": null,
+                        "ends_on": null,
+                        "created_at": "2026-10-11T16:00:00.000000Z",
+                        "updated_at": "2026-10-11T16:00:00.000000Z",
+                        "deleted_at": null,
+                        "arabic_stage": null,
+                        "position": null,
+                        "points_period": null,
+                        "participants_count": 0,
+                        "teachers": [
+                            {
+                                "id": 2,
+                                "name": "Practice Teacher",
+                                "subjects": null
+                            }
+                        ]
+                    }
+                ],
+                "first_page_url": "http:\/\/localhost\/api\/admin\/masjids\/1\/groups?page=1",
+                "from": 1,
+                "last_page": 1,
+                "last_page_url": "http:\/\/localhost\/api\/admin\/masjids\/1\/groups?page=1",
+                "links": [
+                    {
+                        "url": null,
+                        "label": "&laquo; Previous",
+                        "page": null,
+                        "active": false
+                    },
+                    {
+                        "url": "http:\/\/localhost\/api\/admin\/masjids\/1\/groups?page=1",
+                        "label": "1",
+                        "page": 1,
+                        "active": true
+                    },
+                    {
+                        "url": null,
+                        "label": "Next &raquo;",
+                        "page": null,
+                        "active": false
+                    }
+                ],
+                "next_page_url": null,
+                "path": "http:\/\/localhost\/api\/admin\/masjids\/1\/groups",
+                "per_page": 15,
+                "prev_page_url": null,
+                "to": 1,
+                "total": 1
+            },
+            "meta": {
+                "group_label": "Classrooms",
+                "kinds": [
+                    "general",
+                    "class",
+                    "halaqa",
+                    "team"
+                ],
+                "roles": [
+                    "leader",
+                    "member",
+                    "guardian"
+                ]
+            }
+        }
+    },
+    "office-page": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select \"permissions\".*, \"model_has_permissions\".\"model_id\" as \"pivot_model_id\", \"model_has_permissions\".\"permission_id\" as \"pivot_permission_id\", \"model_has_permissions\".\"model_type\" as \"pivot_model_type\" from \"permissions\" inner join \"model_has_permissions\" on \"permissions\".\"id\" = \"model_has_permissions\".\"permission_id\" where \"model_has_permissions\".\"model_id\" in (1) and \"model_has_permissions\".\"model_type\" = ?",
+            "select \"roles\".*, \"model_has_roles\".\"model_id\" as \"pivot_model_id\", \"model_has_roles\".\"role_id\" as \"pivot_role_id\", \"model_has_roles\".\"model_type\" as \"pivot_model_type\" from \"roles\" inner join \"model_has_roles\" on \"roles\".\"id\" = \"model_has_roles\".\"role_id\" where \"model_has_roles\".\"model_id\" in (1) and \"model_has_roles\".\"model_type\" = ?",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" in (1) and \"group_memberships\".\"masjid_id\" = ?",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select \"id\", \"email\" from \"contacts\" where \"email\" is not null and LOWER(email) = ? and \"contacts\".\"deleted_at\" is null and \"contacts\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "masjid_id": 1,
+                "name": "Practice Class",
+                "slug": "practice-class",
+                "kind": "class",
+                "description": null,
+                "is_active": true,
+                "starts_on": null,
+                "ends_on": null,
+                "created_at": "2026-10-11T16:00:00.000000Z",
+                "updated_at": "2026-10-11T16:00:00.000000Z",
+                "deleted_at": null,
+                "arabic_stage": null,
+                "position": null,
+                "points_period": null,
+                "unread_messages": 0,
+                "memberships": []
+            },
+            "meta": {
+                "group_label": "Classrooms",
+                "kinds": [
+                    "general",
+                    "class",
+                    "halaqa",
+                    "team"
+                ],
+                "roles": [
+                    "leader",
+                    "member",
+                    "guardian"
+                ]
+            }
+        }
+    },
+    "teacher-list": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where exists (select * from \"users\" inner join \"group_staff\" on \"users\".\"id\" = \"group_staff\".\"user_id\" where \"groups\".\"id\" = \"group_staff\".\"group_id\" and \"users\".\"id\" = ? and \"users\".\"deleted_at\" is null) and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? order by position IS NULL, \"position\" asc, \"name\" asc, \"id\" asc",
+            "select \"t\".\"group_id\", \"t\".\"id\" as \"thread_id\", count(*) as unread from \"group_messages\" inner join \"group_threads\" as \"t\" on \"t\".\"id\" = \"group_messages\".\"group_thread_id\" and \"t\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"t\".\"deleted_at\" is null left join \"group_thread_reads\" as \"r\" on \"r\".\"group_thread_id\" = \"t\".\"id\" and \"r\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"r\".\"user_id\" = ? where (\"group_messages\".\"author_user_id\" is null or \"group_messages\".\"author_user_id\" <> ?) and ((\"r\".\"id\" is not null and ((\"r\".\"last_read_message_id\" is not null and \"group_messages\".\"id\" > \"r\".\"last_read_message_id\") or (\"r\".\"last_read_message_id\" is null and (\"r\".\"last_read_at\" is null or \"group_messages\".\"created_at\" > \"r\".\"last_read_at\")))) or (\"r\".\"id\" is null and \"group_messages\".\"created_at\" >= ?)) and \"t\".\"group_id\" in (?) and \"group_messages\".\"masjid_id\" = ? group by \"t\".\"group_id\", \"t\".\"id\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+            "select name, type, not \"notnull\" as \"nullable\", dflt_value as \"default\", pk as \"primary\", hidden as \"extra\" from pragma_table_xinfo('contacts', 'main') order by cid asc",
+            "select \"sql\" from \"main\".sqlite_master where type = 'table' and name = 'contacts'",
+            "select \"subjects\" from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": [
+                {
+                    "id": 1,
+                    "name": "Practice Class",
+                    "kind": "class",
+                    "description": null,
+                    "is_active": true,
+                    "arabic_stage": "letters",
+                    "points_period": "running",
+                    "my_subjects": null,
+                    "subject_labels": {
+                        "quran": "Qur'an",
+                        "arabic": "Arabic",
+                        "islamic_studies": "Islamic Studies"
+                    },
+                    "students": [],
+                    "unread_messages": 0
+                }
+            ]
+        }
+    },
+    "teacher-page": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select exists(select * from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ?) as \"exists\"",
+            "select * from \"groups\" where \"groups\".\"id\" = ? and \"groups\".\"deleted_at\" is null and \"groups\".\"masjid_id\" = ? limit 1",
+            "select \"t\".\"group_id\", \"t\".\"id\" as \"thread_id\", count(*) as unread from \"group_messages\" inner join \"group_threads\" as \"t\" on \"t\".\"id\" = \"group_messages\".\"group_thread_id\" and \"t\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"t\".\"deleted_at\" is null left join \"group_thread_reads\" as \"r\" on \"r\".\"group_thread_id\" = \"t\".\"id\" and \"r\".\"masjid_id\" = \"group_messages\".\"masjid_id\" and \"r\".\"user_id\" = ? where (\"group_messages\".\"author_user_id\" is null or \"group_messages\".\"author_user_id\" <> ?) and ((\"r\".\"id\" is not null and ((\"r\".\"last_read_message_id\" is not null and \"group_messages\".\"id\" > \"r\".\"last_read_message_id\") or (\"r\".\"last_read_message_id\" is null and (\"r\".\"last_read_at\" is null or \"group_messages\".\"created_at\" > \"r\".\"last_read_at\")))) or (\"r\".\"id\" is null and \"group_messages\".\"created_at\" >= ?)) and \"t\".\"group_id\" in (?) and \"group_messages\".\"masjid_id\" = ? group by \"t\".\"group_id\", \"t\".\"id\"",
+            "select \"id\", \"org_type\", \"capability_overrides\", \"deleted_at\" from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+            "select * from \"group_memberships\" where \"group_memberships\".\"group_id\" = ? and \"group_memberships\".\"group_id\" is not null and \"role\" in (?, ?) and \"left_on\" is null and \"group_memberships\".\"masjid_id\" = ?",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ? order by \"first_day\" asc",
+            "select name, type, not \"notnull\" as \"nullable\", dflt_value as \"default\", pk as \"primary\", hidden as \"extra\" from pragma_table_xinfo('contacts', 'main') order by cid asc",
+            "select \"sql\" from \"main\".sqlite_master where type = 'table' and name = 'contacts'",
+            "select \"subjects\" from \"group_staff\" where \"group_id\" = ? and \"user_id\" = ? and \"group_staff\".\"masjid_id\" = ? limit 1",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "id": 1,
+                "name": "Practice Class",
+                "kind": "class",
+                "description": null,
+                "is_active": true,
+                "arabic_stage": "letters",
+                "points_period": "running",
+                "my_subjects": null,
+                "subject_labels": {
+                    "quran": "Qur'an",
+                    "arabic": "Arabic",
+                    "islamic_studies": "Islamic Studies"
+                },
+                "students": [],
+                "unread_messages": 0
+            }
+        }
+    }
+}

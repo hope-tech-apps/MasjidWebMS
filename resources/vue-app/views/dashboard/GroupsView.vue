@@ -124,11 +124,18 @@
                                 <td>
                                     <router-link
                                         class="fw-semibold text-decoration-none"
+                                        :class="{ 'text-break': group.location_name !== undefined }"
                                         :to="{ name: 'masjid.groupDetail', params: { groupId: group.id } }"
                                     >
                                         {{ group.name }}
                                     </router-link>
                                     <div class="text-muted small font-monospace">{{ group.slug }}</div>
+                                    <div v-for="locatedClass in group.kind === 'class' && masjidStore.masjid?.capabilities?.school_timetable === true ? [group] : []" :key="locatedClass.id">
+                                        <!-- A zero-row repeat preserves literal OFF HTML without a conditional placeholder. -->
+                                        <span v-if="group.location_name" data-class-location class="d-block text-muted small text-break">Location: {{ group.location_name }}</span>
+                                        <router-link v-else data-class-location class="d-block text-muted small text-break"
+                                            :to="{ name: 'masjid.groupDetail', params: { groupId: group.id }, hash: '#class-location' }">No location set</router-link>
+                                    </div>
                                 </td>
                                 <!-- Who teaches it (owner, 2026-10-04): one line per teacher,
                                      the subjects they teach in THIS class beside the name and

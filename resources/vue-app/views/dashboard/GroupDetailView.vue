@@ -1,6 +1,9 @@
 <template>
     <div :class="{ 'class-subjects-enabled': classSubjects.enabled.value }">
         <PageDataContainer :title="pageTitle" :hideButton="true">
+            <template v-if="timetableOn" #headerDetail>
+                <span data-class-location class="d-block text-muted small fw-normal text-break">{{ group?.location_name ? `Location: ${group.location_name}` : 'No location set' }}</span>
+            </template>
             <template #headerButtons>
                 <router-link class="btn btn-outline-secondary" :to="{ name: 'masjid.groups' }">
                     <i class="bi bi-arrow-left me-1"></i>
@@ -40,7 +43,7 @@
                         <span v-else class="badge bg-secondary-subtle text-secondary">Inactive</span>
                         <span class="text-muted small font-monospace">{{ group.slug }}</span>
                         <span v-if="group.description" class="text-muted small ms-2">{{ group.description }}</span>
-                        <ClassLocationField :base="subjectBase" />
+                        <ClassLocationField :base="subjectBase" :focus-on-load="route.hash === '#class-location'" @changed="group.location_name = $event" />
                     </div>
                     <div v-else class="d-flex flex-wrap align-items-center gap-2 mb-4">
                         <span class="badge bg-light text-dark border text-capitalize">{{ group.kind }}</span>

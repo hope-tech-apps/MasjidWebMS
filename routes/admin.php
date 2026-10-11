@@ -1116,9 +1116,9 @@ Route::prefix('admin')->group(function () {
                     ->middleware('permission:manage contacts');
 
                 Route::prefix('{masjid_id}/groups')->controller(GroupsController::class)->group(function () {
-                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::get('/', 'index')->middleware(['permission:view contacts', \App\Http\Middleware\AppendClassLocation::class]);
                     Route::post('/', 'store')->middleware('permission:manage contacts');
-                    Route::get('/{group_id}', 'show')->middleware('permission:view contacts');
+                    Route::get('/{group_id}', 'show')->middleware(['permission:view contacts', \App\Http\Middleware\AppendClassLocation::class]);
                     Route::put('/{group_id}', 'update')->middleware('permission:manage contacts');
                     Route::delete('/{group_id}', 'destroy')->middleware('permission:manage contacts');
                 });
