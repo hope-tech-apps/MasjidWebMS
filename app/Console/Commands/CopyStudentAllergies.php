@@ -22,9 +22,9 @@ class CopyStudentAllergies extends Command
         $tenant->set($school->id);
         try {
             $result = $service->copy($form, $this->option('field'), (bool) $this->option('dry-run'), null);
-            $this->table(['Count', 'Total'], collect($result['counts'])->map(fn ($value, $key) => [$key, $value])->values()->all());
+            $this->table(['Count', 'Total'], collect($result['counts'])->map(fn ($value, $key) => [$key === 'blank_answer' ? 'left unchanged: blank answer' : $key, $value])->values()->all());
             // No notes, names or guardian details in command output (often retained as logs).
-            $unresolved = array_filter($result['children'], fn ($row) => in_array($row['outcome'], ['unmatched', 'ambiguous', 'too_long', 'invalid'], true));
+            $unresolved = array_filter($result['children'], fn ($row) => in_array($row['outcome'], ['unmatched', 'ambiguous', 'too_long', 'too long: enter by hand', 'invalid'], true));
             $this->table(['Response', 'Child entry (zero-based)', 'Outcome'], array_map(fn ($row) => [$row['response_id'], $row['entry_index'], $row['outcome']], $unresolved));
             $this->info($result['message']);
             return self::SUCCESS;

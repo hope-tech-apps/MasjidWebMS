@@ -334,6 +334,10 @@ class ProvisionResponseSnapshotTest extends TestCase
                 $row=(array)$row;
                 if (in_array($table,['masjids','users'],true)) {
                     // New hidden bookkeeping has its own OFF assertion; preserve every legacy column.
+                    if ($table === 'masjids') {
+                        $this->assertSame(0,(int)$row['has_student_allergy_records']);
+                        unset($row['has_student_allergy_records']);
+                    }
                     $this->assertSame(0,(int)$row['has_timetable_records']);
                     unset($row['has_timetable_records']);
                 }

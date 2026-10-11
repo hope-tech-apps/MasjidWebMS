@@ -88,6 +88,7 @@ class Masjid extends Model implements HasMedia
      */
     protected $hidden = [
         'has_timetable_records',
+        'has_student_allergy_records',
         'active_owner_user_id',
     ];
 
@@ -121,6 +122,7 @@ class Masjid extends Model implements HasMedia
     public const PUBLIC_DIRECTORY_DENYLIST = [
         // Internal timetable retention state; never part of a public identity.
         'has_timetable_records',
+        'has_student_allergy_records',
         // Credentials and money identifiers.
         'google_maps_key',
         'stripe_account_id',

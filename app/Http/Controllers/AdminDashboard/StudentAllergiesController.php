@@ -34,8 +34,8 @@ class StudentAllergiesController extends Controller
     public function forms()
     {
         return response()->json(['status' => 'success', 'data' => Form::query()->where('masjid_id', app(\App\Support\TenantContext::class)->get())->get(['id', 'name', 'schema'])->filter(function ($form) {
-            $section = $form->repeatableSection();
-            $fields = collect($section['fields'] ?? collect($form->sections())->flatMap(fn ($s) => $s['fields'] ?? [])->all())->pluck('name');
+            $section = StudentAllergies::childSection($form);
+            $fields = collect($section['fields'] ?? collect($form->sections())->reject(fn ($s) => ! empty($s['repeatable']))->flatMap(fn ($s) => $s['fields'] ?? [])->all())->pluck('name');
             return $fields->contains($section ? 'firstName' : 'studentFirstName') && $fields->contains($section ? 'lastName' : 'studentLastName');
         })->map(fn ($form) => ['id' => $form->id, 'name' => $form->name])->values()])->header('Cache-Control', 'no-store');
     }
@@ -57,7 +57,7 @@ class StudentAllergiesController extends Controller
             $out = SchoolRecordsCsv::open();
             SchoolRecordsCsv::row($out, ['First name', 'Last name', 'Grade', 'Allergies']);
             foreach ($members as $m) {
-                SchoolRecordsCsv::row($out, array_map(SchoolRecordsCsv::text(...), [$m->contact?->first_name, $m->contact?->last_name, $m->grade_label, $notes[$m->id]['allergies'] ?? null]));
+                SchoolRecordsCsv::row($out, array_map(SchoolRecordsCsv::text(...), [$m->contact?->first_name, $m->contact?->last_name, $m->grade_label, $notes[$m->id]['unavailable'] ?? false ? 'Allergy note unavailable: ask the office' : ($notes[$m->id]['allergies'] ?? null)]));
             }
             fclose($out);
         }, 'class-roster.csv', ['Content-Type' => 'text/csv; charset=UTF-8', 'Cache-Control' => 'no-store']);

@@ -22,6 +22,8 @@
                 <span>Children read: {{ result.counts.children_read }}</span>
                 <span>With an allergy: {{ result.counts.with_allergy }}</span>
                 <span>Matched: {{ result.counts.matched }}</span>
+                <span>Left unchanged: blank answer: {{ result.counts.blank_answer ?? 0 }}</span>
+                <span>Too long: enter by hand: {{ result.counts.too_long ?? 0 }}</span>
                 <span>Already set: {{ result.counts.already_set }}</span>
                 <span>Unmatched: {{ result.counts.unmatched }}</span>
                 <span>Ambiguous: {{ result.counts.ambiguous }}</span>
@@ -51,7 +53,7 @@ const busy = ref(false), copied = ref(false), error = ref('');
 let active = true;
 onBeforeUnmount(() => { active = false; });
 watch([formId, field], () => { result.value = null; copied.value = false; });
-const unresolved = computed(() => (result.value?.children ?? []).filter(c => ['unmatched', 'ambiguous', 'too_long', 'invalid'].includes(c.outcome)));
+const unresolved = computed(() => (result.value?.children ?? []).filter(c => ['unmatched', 'ambiguous', 'too_long', 'too long: enter by hand', 'invalid'].includes(c.outcome)));
 onMounted(async () => {
     try {
         const response = await ApiService.get(`/api/admin/masjids/${props.masjidId}/students/allergy-forms` as BackendApiRoute);

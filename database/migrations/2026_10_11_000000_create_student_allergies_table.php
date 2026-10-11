@@ -8,6 +8,9 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::table('masjids', function (Blueprint $table) {
+            $table->boolean('has_student_allergy_records')->default(false);
+        });
         Schema::create('student_allergies', function (Blueprint $table) {
             $table->id();
             $table->foreignId('masjid_id')->constrained()->cascadeOnDelete();
@@ -25,5 +28,6 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('student_allergies');
+        Schema::table('masjids', fn (Blueprint $table) => $table->dropColumn('has_student_allergy_records'));
     }
 };

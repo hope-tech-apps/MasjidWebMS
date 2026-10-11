@@ -283,6 +283,8 @@ class ContactsController extends Controller
         $birthDate = null;
 
         \Illuminate\Support\Facades\DB::transaction(function () use ($source, $target, $actor, $request, &$familyLogin, &$roster, &$birthDate) {
+            \App\Support\StudentAllergies::merge($source, $target, $actor?->id);
+
             // Before anything is destroyed: the survivor takes the more
             // restrictive SMS consent state (T-009).
             app(\App\Services\Sms\SmsConsentService::class)->reconcileOnMerge($source, $target);

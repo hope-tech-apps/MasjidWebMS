@@ -118,6 +118,14 @@ final class ClassSubjectMode
         return StudentAllergies::enabled($org);
     }
 
+    /** Reuse the tenant row already loaded by HTTP middleware; no unused-school query. */
+    public static function allergyRecordsHeld(int $id): bool
+    {
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::withTrashed()->find($id);
+        return (bool) $org?->getAttribute('has_student_allergy_records');
+    }
+
     /** No schema lookup: an old SELECT * row simply has no hint before migration. */
     public static function timetableRecordsHeld(int $id): bool
     {

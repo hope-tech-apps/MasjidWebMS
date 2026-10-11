@@ -251,7 +251,7 @@ export type MoveRequest = {
  * holds two children of one parent. One row = one (guardian, ward, group) edge.
  */
 export type GroupMembership = {
-    student_allergy?: { allergies: string | null; source?: 'form' | 'office' | null; form_response_id?: number | null; changed_at?: string | null } | null;
+    student_allergy?: { allergies: string | null; unavailable?: boolean; source?: 'form' | 'office' | null; form_response_id?: number | null; changed_at?: string | null } | null;
     id: number;
     masjid_id: number;
     group_id: number;

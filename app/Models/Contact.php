@@ -668,6 +668,12 @@ class Contact extends Model implements AuthenticatableContract
      */
     protected static function booted(): void
     {
+        static::forceDeleted(function (Contact $contact): void {
+            if (\App\Support\ClassSubjectMode::allergyRecordsHeld((int) $contact->masjid_id)) {
+                \App\Support\StudentAllergies::refreshRetention((int) $contact->masjid_id);
+            }
+        });
+
         static::deleting(function (Contact $contact) {
             if (! $contact->isForceDeleting()) {
                 return;

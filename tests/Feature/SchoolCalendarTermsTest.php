@@ -344,6 +344,8 @@ class SchoolCalendarTermsTest extends TestCase
             $responses[$key] = ['status'=>$r->status(),'body'=>$r->json(),'rows'=>array_map(function ($row) {
                 $row=(array)$row;
                 // Additive bookkeeping is independently pinned OFF; all legacy columns stay literal.
+                $this->assertSame(0,(int)$row['has_student_allergy_records']);
+                unset($row['has_student_allergy_records']);
                 $this->assertSame(0,(int)$row['has_timetable_records']);
                 unset($row['has_timetable_records']); return $row;
             },\Illuminate\Support\Facades\DB::table('masjids')->get()->all())];

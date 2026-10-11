@@ -177,10 +177,10 @@
                              class="list-group-item d-flex align-items-center gap-3 flex-wrap tc-att-row">
                             <PersonAvatar :avatar="s.contact?.avatar"
                                           :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="36" />
-                            <div class="flex-grow-1" :class="{ 'tc-allergy-name': s.student_allergy !== undefined }">
-                                <div class="d-flex gap-2" :class="s.student_allergy !== undefined ? 'align-items-start' : 'align-items-center'">
-                                    <span class="fw-semibold small" :class="{ 'tc-allergy-student-name': s.student_allergy !== undefined }">{{ name(s.contact) }}</span>
-                                    <AllergyBadge v-if="s.student_allergy !== undefined" :note="registerAllergies[s.membership_id]" />
+                            <div class="flex-grow-1" :class="{ 'tc-allergy-name': registerAllergies[s.membership_id] !== undefined }">
+                                <div class="d-flex gap-2" :class="registerAllergies[s.membership_id] !== undefined ? 'align-items-start' : 'align-items-center'">
+                                    <span class="fw-semibold small" :class="{ 'tc-allergy-student-name': registerAllergies[s.membership_id] !== undefined }">{{ name(s.contact) }}</span>
+                                    <AllergyBadge v-if="registerAllergies[s.membership_id] !== undefined" :note="registerAllergies[s.membership_id]" />
                                     <span v-if="s.grade_label"
                                           class="badge bg-primary-subtle text-primary-emphasis fw-normal">
                                         {{ s.grade_label }}

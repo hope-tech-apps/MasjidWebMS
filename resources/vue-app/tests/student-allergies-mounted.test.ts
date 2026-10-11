@@ -26,7 +26,7 @@ test('Allergy badge is named, reachable by keyboard and shows the words on focus
 
 for (const allergies of [null, '', 'none', '(NONE)!', 'no allergies', 'N/A']) {
     test(`Allergy badge absent for ${String(allergies)}`, async () => {
-        const s = await mount('components/classes/AllergyBadge.vue', { note: { ...note, allergies } }, { vue });
+        const s = await mount('components/classes/AllergyBadge.vue', { note: { ...note, allergies: null } }, { vue });
         assert.equal(s.find(n => n.props?.role === 'button'), undefined);
         s.unmount();
     });
@@ -43,7 +43,7 @@ test('Student allergy field loads source, edits and clears through office route'
     assert.match(s.text(), /from the enrolment form/);
     assert.match(s.text(), /2026-10-11/);
     const area = s.find(n => n.tag === 'textarea')!;
-    assert.equal(area.props.maxlength, '500');
+    assert.equal(area.props.maxlength, undefined);
     await type(area, '');
     click(s.find(n => n.tag === 'button' && n.textContent.includes('Save'))!); await flush();
     assert.equal(calls[0][1].allergies, '');
@@ -97,13 +97,13 @@ const teacherSource=source('views/teacher/TeacherClass.vue');
 const fragments={
     office:elementFrom(officeSource,'<span class="student-name-with-allergy">','span'),
     teacher:elementFrom(teacherSource,'<section v-if="activeTab === \'roster\'">','section'),
-    register:elementFrom(teacherSource,'<div class="flex-grow-1" :class="{ \'tc-allergy-name\': s.student_allergy !== undefined }">','div'),
+    register:elementFrom(teacherSource,'<div class="flex-grow-1" :class="{ \'tc-allergy-name\': registerAllergies[s.membership_id] !== undefined }">','div'),
 };
 for (const surface of ['office','teacher','register'] as const) {
     for (const allergies of ['Peanuts: use care','none',null]) {
         test(`${surface} name row mounts the real badge: ${String(allergies)}`,async()=>{
             const AllergyBadge=await compileSfc('components/classes/AllergyBadge.vue',{vue});
-            const record={...note,allergies};
+            const record={...note,allergies: allergies==='none'?null:allergies};
             const row={id:3,membership_id:3,role:'member',contact:{first_name:'Robin',last_name:'Willow'},student_allergy:record};
             const ctx={membership:row,s:row,students:[row],allergiesEnabled:true,activeTab:'roster',sheetFor:null,
                 registerAllergies:{3:record},fullName:(c:any)=>`${c.first_name} ${c.last_name}`,name:(c:any)=>`${c.first_name} ${c.last_name}`,
@@ -133,4 +133,72 @@ test('office panel replaces the footer only while enabled and copy requires a pr
     assert.match(teacherSource,/registerAllergies\.value = Object\.fromEntries\(\(data\.students/);
     assert.match(officeSource,/max-inline-size: 11rem/);
     assert.match(officeSource,/min-inline-size: 0; white-space: normal; overflow-wrap: anywhere; text-align: start/);
+});
+
+for (const surface of ['office','teacher','register'] as const) {
+    test(`${surface} shows an unreadable allergy warning`, async () => {
+        const AllergyBadge=await compileSfc('components/classes/AllergyBadge.vue',{vue});
+        const record={unavailable:true,allergies:null};
+        const row={id:3,membership_id:3,role:'member',contact:{first_name:'Robin',last_name:'Willow'},student_allergy:record};
+        const ctx={membership:row,s:row,students:[row],activeTab:'roster',sheetFor:null,registerAllergies:{3:record},fullName:()=> 'Robin Willow',name:()=> 'Robin Willow',isStudentRow:()=>true,openStudent:()=>{},ageLabel:()=>''};
+        const s=mountTemplate(fragments[surface],ctx,{AllergyBadge,PersonAvatar:vue.defineComponent({render:()=>null})});
+        assert.match(s.text(),/Allergy note unavailable: ask the office/);
+        s.unmount();
+    });
+}
+test('register shows the response note with no roster allergy key', async () => {
+    const AllergyBadge=await compileSfc('components/classes/AllergyBadge.vue',{vue});
+    const s=mountTemplate(fragments.register,{s:{membership_id:3,contact:{}},registerAllergies:{3:note},name:()=> 'Robin Willow'},{AllergyBadge});
+    assert.ok(s.all(n=>n.props.role==='button')[0]);
+    s.unmount();
+});
+test('office retains overlong paste and refuses save with its live count', async () => {
+    let writes=0;
+    const s=await mount('views/dashboard/groups/StudentAllergyField.vue',{masjidId:1,groupId:2,membershipId:3},{vue,'@/core/services/ApiService':{default:{get:async()=>({data:{data:note}}),put:async()=>{writes++;}}}});
+    await flush();
+    const area=s.find(n=>n.tag==='textarea')!;
+    assert.equal(area.props.maxlength,undefined);
+    const text='x'.repeat(500)+' Peanuts';
+    await type(area,text); await flush();
+    assert.match(s.text(),/508 \/ 500/);
+    click(s.find(n=>n.tag==='button' && n.textContent.includes('Save'))!); await flush();
+    assert.equal(writes,0);
+    assert.match(s.text(),/508 characters.*500/s);
+    assert.equal(area.value,text);
+    s.unmount();
+});
+for (const allergies of ['🥜','🥜 🥛','none🥜']) test(`badge preserves server answer ${allergies}`,async()=>{
+    const s=await mount('components/classes/AllergyBadge.vue',{note:{allergies}},{vue});
+    assert.ok(s.find(n=>n.props?.role==='button')); s.unmount();
+});
+
+test('merge dialog shows the allergy reconciliation refusal in words', async () => {
+    const { modulesFor, page } = await import('./support/batch3Modules.ts');
+    const doc = (globalThis as any).document;
+    doc.addEventListener ??= () => {}; doc.removeEventListener ??= () => {};
+    doc.body = { style: {} };
+    (globalThis as any).window ??= { addEventListener() {}, removeEventListener() {} };
+    const alerts: any[] = [];
+    const refusal = 'Both records have allergy notes too long to combine. Shorten one, then merge.';
+    const source = { id: 3, first_name: 'Source record', last_name: '', email: 'source@example.invalid', cards: [], donations: [] };
+    const target = { id: 4, first_name: 'Kept record', last_name: '', email: 'kept@example.invalid' };
+    const store = { contactsPaginated: { data: [source], current_page: 1, total: 1, per_page: 25 }, tags: [], fetchContacts: async () => {}, fetchTags: async () => {}, fetchContact: async () => source };
+    const screen = await mountSfc('views/dashboard/ContactsView.vue', {}, await modulesFor('views/dashboard/ContactsView.vue', {
+        '@/components/PageDataContainer.vue': { default: page },
+        '@/stores/masjid/contactsStore': { useContactsStore: () => store },
+        '@/stores/masjidStore': { useMasjidStore: () => ({ masjid: { id: 1 }, term: () => 'Members' }) },
+        'vue-router': { useRoute: () => ({ params: {}, query: { contact: '3' } }), useRouter: () => ({ replace: async () => {}, resolve: () => ({ href: '/' }) }) },
+        '@/core/services/ApiService': { default: {
+            get: async (url: string) => ({ data: { data: url.includes('search=') ? { data: [target] } : {} } }),
+            post: async () => { throw { response: { data: { status: 'failed', data: { allergies: [refusal] } } } }; },
+        } },
+        sweetalert2: { default: { fire: async (options: any) => { alerts.push(options); return { isConfirmed: alerts.length === 1 }; } } },
+    }));
+    try {
+        await flush(); click(screen.button('Merge into another member')); await flush();
+        type(screen.all(n => n.props.placeholder === 'Name or email…')[0], 'Kept');
+        await new Promise(r => setTimeout(r, 320)); await flush(); click(screen.button('Kept record')); await flush();
+        click(screen.all(n => n.tag === 'button' && n.textContent === 'Merge')[0]); await flush(12);
+        assert.equal(alerts.at(-1).text, refusal);
+    } finally { screen.unmount(); }
 });

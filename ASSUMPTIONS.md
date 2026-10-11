@@ -435,3 +435,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 
 - Named child forms are either repeatable firstName/lastName or flat studentFirstName/studentLastName. Reject incompatible selected fields/forms explicitly.
 - Existing guardian edges are matching evidence, not a credential grant. Class membership must be role member; source answers are only copied by authenticated office/explicit CLI.
+
+## 2026-10-11 Student allergy review fixes
+- Assigned worktree authorization makes this session the sole writer; initial tracked diff was empty at f68d9221, inherited untracked artifacts retained.
+- 8000 code points is a conservative plaintext bound for the encrypted TEXT column, proved locally with four-byte Unicode (57088 ciphertext bytes). MySQL runtime remains unverified.
+- Direct bulk SQL maintenance bypasses model hint events and must refresh the school retention hint; ordinary writers/erasure/merge are covered. Unmatched children remain unresolved for office review, never guessed.

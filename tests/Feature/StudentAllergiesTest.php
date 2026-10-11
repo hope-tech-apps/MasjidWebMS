@@ -208,13 +208,13 @@ class StudentAllergiesTest extends TestCase
     }
 
     #[Test]
-    public function allergies_contact_force_delete_and_merge_cascade_without_reassigning_health_record(): void
+    public function allergies_contact_force_delete_and_merge_preserves_health_record(): void
     {
         $this->enabled(); Sanctum::actingAs($this->office,['staff']); $this->putJson($this->rowUrl(),['allergies'=>'Peanuts'])->assertOk();
         app(TenantContext::class)->forgetTenant(); $other=Contact::factory()->create(['masjid_id'=>$this->school->id]);
         $this->postJson("/api/admin/masjids/{$this->school->id}/contacts/{$this->child->id}/merge",['target_contact_id'=>$other->id])->assertOk();
-        $this->assertDatabaseCount('student_allergies',0);
-        StudentAllergy::create(['masjid_id'=>$this->school->id,'contact_id'=>$other->id,'allergies'=>'Dairy','source'=>'office']);
+        $this->assertAllergyRecord(['contact_id'=>$other->id,'allergies'=>'Peanuts','changed_by_user_id'=>$this->office->id]);
+        StudentAllergies::edit($other, 'Dairy', $this->office->id);
         $this->child=$other;
         $this->child->delete(); $this->assertDatabaseCount('student_allergies',1);
         $this->child->forceDelete(); $this->assertDatabaseCount('student_allergies',0);
@@ -281,24 +281,39 @@ class StudentAllergiesTest extends TestCase
         $this->child->forceFill(['login_email'=>'robin.member@example.invalid','verified_at'=>now()])->save();
         $device=\App\Models\MobileAppUser::create(['masjid_id'=>$this->school->id,'contact_id'=>$this->child->id,'device_id'=>'practice-device','user_agent'=>'Practice']);
         config(['member_portal.enabled'=>true,'member_portal.masjid_ids'=>[]]);
-        $params=['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'membership_id'=>$this->member->id,'device_id'=>'practice-device'];
+        $params=$this->seedPrivacyRecords();
         $familyToken=$this->parent->createFamilyToken()->plainTextToken;
         $childToken=$this->parent->createStudentHandoffToken($this->member->id)->plainTextToken;
         $memberToken=$this->child->createMemberToken()->plainTextToken;
         $counts=['family'=>0,'child'=>0,'member'=>0];
+        $walk=[];
         foreach (\Illuminate\Support\Facades\Route::getRoutes() as $route) {
-            if (!in_array('GET',$route->methods(),true) || preg_match('#/(pdf|download|document|playback)$|/attachments/#',$route->uri())) continue;
+            if (!in_array('GET',$route->methods(),true)) continue;
             $realm=null;
+            if ($route->uri()==='api/family/me') $realm='family';
             if (str_starts_with($route->uri(),'api/family/masjids/{masjid_id}')) $realm=str_contains($route->uri(),'/student/')?'child':'family';
             if (str_starts_with($route->getActionName(),'App\\Http\\Controllers\\Mobile\\Member\\')) $realm='member';
             if ($realm===null) continue;
-            $uri=preg_replace_callback('/\{(\w+)\??\}/',fn($m)=>(string)($params[$m[1]]??1),$route->uri());
+            if (str_contains($route->uri(),'/messages/')) $params['attachment_id']=$params['message_attachment_id'];
+            if (str_contains($route->uri(),'/receipts/')) $params['id']=$params['gift_uuid'];
+            $uri=preg_replace_callback('/\{(\w+)\??\}/',fn($m)=>(string)($params[$m[1]]??throw new \RuntimeException('Unseeded privacy route parameter: '.$m[1])),$route->uri());
             \Illuminate\Support\Facades\Auth::forgetGuards(); app(TenantContext::class)->forgetTenant();
             $token=['family'=>$familyToken,'child'=>$childToken,'member'=>$memberToken][$realm];
             $response=$this->withHeader('Authorization','Bearer '.$token)->get('/'.$uri,['Accept'=>'application/json']);
-            $this->assertLessThan(500,$response->status(),$uri);
-            $body=$response->baseResponse instanceof \Symfony\Component\HttpFoundation\StreamedResponse ? $response->streamedContent() : (string)$response->getContent();
+            $this->assertSame(200,$response->getStatusCode(),$uri);
+            $body=($response->baseResponse instanceof \Symfony\Component\HttpFoundation\StreamedResponse || $response->baseResponse instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse) ? $response->streamedContent() : (string)$response->getContent();
+            $this->assertNotSame('', $body, $uri);
+            if (str_ends_with($uri,'/pdf')) {
+                $this->assertStringStartsWith('%PDF-', $body, $uri);
+                // PDF text may be compressed: inspect decoded Flate streams as well as the bytes.
+                preg_match_all('/stream\r?\n(.*?)\r?\nendstream/s', $body, $streams);
+                foreach ($streams[1] as $stream) {
+                    $decoded = @gzuncompress($stream);
+                    if ($decoded !== false) $this->assertAllergyClean($decoded, $uri.' decoded stream');
+                }
+            }
             $this->assertAllergyClean($body,$uri); $counts[$realm]++;
+            $walk[]=['route'=>$uri,'status'=>$response->getStatusCode(),'bytes'=>strlen($body)];
         }
         $this->assertGreaterThan(10,$counts['family']); $this->assertGreaterThan(0,$counts['child']); $this->assertGreaterThan(0,$counts['member']);
         \Illuminate\Support\Facades\Auth::forgetGuards(); app(TenantContext::class)->forgetTenant();
@@ -308,7 +323,7 @@ class StudentAllergiesTest extends TestCase
         \Illuminate\Support\Facades\Auth::forgetGuards(); app(TenantContext::class)->forgetTenant();
         $this->withHeader('Authorization','');
         foreach ([$this->postJson('/api/mobile/user',['device_id'=>'practice-device','masjid_id'=>$this->school->id])->assertOk(),$this->putJson('/api/mobile/user',['device_id'=>'practice-device','masjid_id'=>$this->school->id])->assertOk(),$this->getJson('/api/mobile/user/masjid?device_id=practice-device')->assertOk(),$this->getJson("/api/mobile/masjids/{$this->school->id}")->assertOk()] as $response) {
-            $this->assertLessThan(500,$response->status()); $this->assertAllergyClean((string)$response->getContent(),'device/public');
+            $response->assertOk(); $this->assertAllergyClean((string)$response->getContent(),'device/public');
         }
         $this->assertAllergyClean($this->child->fresh()->toJson(),'Contact');
         Sanctum::actingAs($this->office,['staff']);
@@ -317,12 +332,43 @@ class StudentAllergiesTest extends TestCase
         foreach ($datasets as $dataset) $this->assertAllergyClean($this->get("/api/admin/masjids/{$this->school->id}/records/export?dataset={$dataset}")->assertOk()->streamedContent(),$dataset);
         $csv=$this->get("/api/admin/masjids/{$this->school->id}/groups/{$this->class->id}/roster.csv")->assertOk()->streamedContent();
         $this->assertStringContainsString('Allergies',$csv); $this->assertStringContainsString('PRIVATE_HEALTH_SENTINEL_Peanuts',$csv);
-        file_put_contents('/private/tmp/student-allergies-privacy-walk.json',json_encode($counts));
+        file_put_contents('/private/tmp/student-allergies-privacy-walk.json',json_encode(['counts'=>$counts,'routes'=>$walk],JSON_PRETTY_PRINT));
+    }
+
+    /** Real child-scoped records for every successful family/member detail and download. */
+    private function seedPrivacyRecords(): array
+    {
+        $this->school->forceFill(['capability_overrides'=>['student_allergies'=>true,'class_subjects'=>true,'class_subject_work'=>true,'class_subject_sharing'=>true,'class_store'=>true]])->save();
+        GroupMembership::where('role','guardian')->where('guardian_of_contact_id',$this->child->id)->update(['consent_scope'=>'media','consent_granted_at'=>now()]);
+        $post=\App\Models\GroupPost::factory()->create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'author_user_id'=>$this->teacher->id,'title'=>'Practice story','body'=>'Practice words']);
+        $thread=\App\Models\GroupThread::factory()->create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'scope'=>'participant','about_membership_id'=>$this->member->id,'subject'=>'Practice conversation']);
+        $message=\App\Models\GroupMessage::create(['masjid_id'=>$this->school->id,'group_thread_id'=>$thread->id,'author_user_id'=>$this->teacher->id,'body'=>'Practice message']);
+        \Illuminate\Support\Facades\Storage::fake('local');
+        $png=base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD1sAAAAASUVORK5CYII=');
+        \Illuminate\Support\Facades\Storage::disk('local')->put('practice/story.png',$png);
+        \Illuminate\Support\Facades\Storage::disk('local')->put('practice/message.png',$png);
+        \Illuminate\Support\Facades\Storage::disk('local')->put('practice/handout.txt','Practice handout');
+        $postAttachment=\App\Models\GroupPostAttachment::create(['masjid_id'=>$this->school->id,'group_post_id'=>$post->id,'original_name'=>'story.png','mime_type'=>'image/png','size_bytes'=>strlen($png),'disk'=>'local','path'=>'practice/story.png']);
+        $messageAttachment=\App\Models\GroupMessageAttachment::create(['masjid_id'=>$this->school->id,'group_message_id'=>$message->id,'original_name'=>'message.png','mime_type'=>'image/png','size_bytes'=>strlen($png),'disk'=>'local','path'=>'practice/message.png']);
+        $resource=\App\Models\GroupResource::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'uploaded_by_user_id'=>$this->teacher->id,'title'=>'Practice handout','visibility'=>'families','original_name'=>'handout.txt','mime_type'=>'text/plain','size_bytes'=>16,'disk'=>'local','path'=>'practice/handout.txt']);
+        $card=\App\Models\ReportCard::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'group_membership_id'=>$this->member->id,'type'=>'report_card','school_year'=>'2026-2027','term'=>1,'grade_label'=>'1st','teacher_comment'=>'Practice progress']);
+        $card->forceFill(['published_at'=>now(),'published_by_user_id'=>$this->teacher->id])->save();
+        $subject=\App\Models\ClassSubject::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'name'=>'Science']);
+        $piece=\App\Models\SubjectPiece::create(['masjid_id'=>$this->school->id,'class_subject_id'=>$subject->id,'source'=>'own','title'=>'Practice piece']);
+        $mark=\App\Models\SubjectPieceMark::create(['masjid_id'=>$this->school->id,'subject_piece_id'=>$piece->id,'group_membership_id'=>$this->member->id,'level'=>3]);
+        $mark->forceFill(['shared_with_family'=>true])->save();
+        $note=\App\Models\SubjectNote::create(['masjid_id'=>$this->school->id,'class_subject_id'=>$subject->id,'group_membership_id'=>$this->member->id,'body'=>'Practice feedback']);
+        $note->forceFill(['shared_with_family'=>true])->save();
+        $order=\App\Models\MealOrder::factory()->paid()->create(['masjid_id'=>$this->school->id,'contact_id'=>$this->child->id,'customer_name'=>'Robin Willow','customer_email'=>$this->child->login_email]);
+        $fund=\App\Models\Fund::factory()->create(['masjid_id'=>$this->school->id,'name'=>'Practice fund']);
+        $gift=\App\Models\Donation::factory()->succeeded()->create(['masjid_id'=>$this->school->id,'contact_id'=>$this->child->id,'fund_id'=>$fund->id]);
+        \App\Models\DonationReceipt::create(['masjid_id'=>$this->school->id,'donation_id'=>$gift->id,'serial_number'=>1,'issue_date'=>'2026-10-11','gross_amount'=>5000,'advantage_amount'=>0,'eligible_amount'=>5000,'currency'=>'usd','jurisdiction'=>'US','status'=>'issued']);
+        return ['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'membership_id'=>$this->member->id,'device_id'=>'practice-device','post_id'=>$post->id,'thread_id'=>$thread->id,'message_id'=>$message->id,'attachment_id'=>$postAttachment->id,'message_attachment_id'=>$messageAttachment->id,'resource_id'=>$resource->id,'report_card_id'=>$card->id,'subject_id'=>$subject->id,'mark_id'=>$mark->id,'note_id'=>$note->id,'source'=>'meal','id'=>$order->id,'gift_uuid'=>$gift->uuid];
     }
 
     private function assertAllergyClean(string $body,string $what): void
     {
-        foreach (['PRIVATE_HEALTH_SENTINEL_Peanuts','student_allergy','"allergies"'] as $forbidden) $this->assertStringNotContainsString($forbidden,$body,$what);
+        foreach (['private_health_sentinel_peanuts','student_allergy','allerg'] as $forbidden) $this->assertStringNotContainsString($forbidden,strtolower($body),$what);
     }
 
     #[Test]
@@ -441,6 +487,182 @@ class StudentAllergiesTest extends TestCase
         Sanctum::actingAs($this->teacher,['staff']);
         $this->getJson($this->teacherClass())->assertOk()->assertJsonPath('data.students.0.student_allergy.allergies','Peanuts');
         $this->getJson($this->teacherClass().'/attendance')->assertOk()->assertJsonPath('data.students.0.student_allergy.allergies','Peanuts');
+    }
+
+    #[Test]
+    public function allergies_review_merge_moves_combines_refuses_and_runs_without_switch(): void
+    {
+        Sanctum::actingAs($this->office,['staff']);
+        $form=$this->form(); $response=$this->response($form,[]);
+        $source=StudentAllergy::create(['masjid_id'=>$this->school->id,'contact_id'=>$this->child->id,'allergies'=>'Peanuts','source'=>'form','form_response_id'=>$response->id]);
+        $target=Contact::factory()->create(['masjid_id'=>$this->school->id]);
+        $url="/api/admin/masjids/{$this->school->id}/contacts/{$this->child->id}/merge";
+        $this->postJson($url,['target_contact_id'=>$target->id])->assertOk();
+        $this->assertAllergyRecord(['contact_id'=>$target->id,'allergies'=>'Peanuts','source'=>'form','form_response_id'=>$response->id,'changed_by_user_id'=>$this->office->id]);
+        app(TenantContext::class)->forgetTenant();
+        foreach (['  Peanuts  ', 'Dairy', str_repeat('x',500)] as $text) {
+            $absorbed=Contact::factory()->create(['masjid_id'=>$this->school->id]);
+            StudentAllergy::create(['masjid_id'=>$this->school->id,'contact_id'=>$absorbed->id,'allergies'=>$text,'source'=>'form']);
+            $r=$this->postJson("/api/admin/masjids/{$this->school->id}/contacts/{$absorbed->id}/merge",['target_contact_id'=>$target->id]);
+            if (mb_strlen($text)===500) {
+                $r->assertUnprocessable()->assertSee('Both records have allergy notes too long to combine. Shorten one, then merge.');
+                $this->assertNotNull($absorbed->fresh());
+                $this->assertAllergyRecord(['contact_id'=>$absorbed->id,'allergies'=>$text]);
+            } else {
+                $r->assertOk();
+                $this->assertAllergyRecord(['contact_id'=>$target->id,'allergies'=>$text==='Dairy'?'Peanuts / Dairy':'Peanuts','source'=>$text==='Dairy'?'office':'form']);
+            }
+            app(TenantContext::class)->forgetTenant();
+        }
+    }
+
+    #[Test]
+    public function allergies_review_unused_school_merge_adds_no_health_query(): void
+    {
+        Sanctum::actingAs($this->office,['staff']);
+        $target=Contact::factory()->create(['masjid_id'=>$this->school->id]);
+        DB::flushQueryLog(); DB::enableQueryLog();
+        $this->postJson("/api/admin/masjids/{$this->school->id}/contacts/{$this->child->id}/merge",['target_contact_id'=>$target->id])->assertOk();
+        $queries=array_column(DB::getQueryLog(),'query'); DB::disableQueryLog();
+        file_put_contents('/private/tmp/allergy-unused-merge-sql.json',json_encode($queries,JSON_PRETTY_PRINT));
+        $this->assertSame([],array_values(array_filter($queries,fn($q)=>str_contains($q,'student_allerg'))));
+    }
+
+    #[Test]
+    public function allergies_review_blank_answers_never_clear_or_supersede(): void
+    {
+        $form=$this->form();
+        $real=$this->response($form,[['firstName'=>'Robin','lastName'=>'Willow','allergies'=>'Peanuts']]);
+        foreach ([[],['allergies'=>null],['allergies'=>'  ']] as $blank) $this->response($form,[array_merge(['firstName'=>'Robin','lastName'=>'Willow'],$blank)]);
+        $r=app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+        $this->enabled();
+        $this->artisan('students:copy-allergies',['--masjid'=>$this->school->id,'--form'=>$form->id,'--field'=>'allergies','--dry-run'=>true])->expectsOutputToContain('left unchanged: blank answer')->assertSuccessful();
+        $this->assertSame(3,$r['counts']['blank_answer']);
+        $this->assertSame('left unchanged: blank answer',$r['children'][0]['outcome']);
+        $this->assertAllergyRecord(['contact_id'=>$this->child->id,'allergies'=>'Peanuts','form_response_id'=>$real->id]);
+    }
+
+    #[Test]
+    public function allergies_review_unreadable_record_is_distinct_and_register_saves(): void
+    {
+        $this->enabled();
+        StudentAllergy::create(['masjid_id'=>$this->school->id,'contact_id'=>$this->child->id,'allergies'=>'Peanuts','source'=>'form']);
+        DB::table('student_allergies')->where('contact_id',$this->child->id)->update(['allergies'=>'bad ciphertext']);
+        \Illuminate\Support\Facades\Log::spy();
+        Sanctum::actingAs($this->office,['staff']);
+        $this->getJson($this->officeRoster())->assertOk()->assertJsonPath('data.1.student_allergy.unavailable',true);
+        $this->getJson($this->rowUrl())->assertOk()->assertJsonPath('data.unavailable',true);
+        Sanctum::actingAs($this->teacher,['staff']);
+        $this->getJson($this->teacherClass())->assertOk()->assertJsonPath('data.students.0.student_allergy.unavailable',true);
+        $this->getJson($this->teacherClass().'/attendance')->assertOk()->assertJsonPath('data.students.0.student_allergy.unavailable',true);
+        $this->putJson($this->teacherClass().'/attendance',['session_date'=>'2026-10-11','marks'=>[['membership_id'=>$this->member->id,'status'=>'present']]])->assertOk()->assertJsonPath('data.students.0.student_allergy.unavailable',true);
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('warning')->with('Student allergy note unavailable', ['masjid_id'=>$this->school->id,'contact_id'=>$this->child->id,'student_allergy_id'=>1])->atLeast()->once();
+    }
+
+    #[Test]
+    public function allergies_review_repository_forms_choose_child_fields(): void
+    {
+        $this->enabled(); Sanctum::actingAs($this->office,['staff']);
+        foreach (['biss-2026.json'=>true,'alrazi-website-registration.json'=>false] as $file=>$repeat) {
+            $json=json_decode(file_get_contents(database_path('forms/'.$file)),true);
+            $form=Form::factory()->create(['masjid_id'=>$this->school->id,'schema'=>$json['schema']]);
+            $entry=[$repeat?'firstName':'studentFirstName'=>'Robin',$repeat?'lastName':'studentLastName'=>'Willow','allergies'=>'Peanuts'];
+            FormResponse::create(['masjid_id'=>$this->school->id,'form_id'=>$form->id,'respondent_email'=>$this->parent->email,'status'=>'new','submitted_at'=>now(),'data'=>$repeat?['children'=>[$entry]]:$entry]);
+            $this->getJson("/api/admin/masjids/{$this->school->id}/students/allergy-forms")->assertOk()->assertJsonFragment(['id'=>$form->id]);
+            app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+            $this->assertAllergyRecord(['contact_id'=>$this->child->id,'allergies'=>'Peanuts']);
+        }
+    }
+
+    #[Test]
+    public function allergies_review_registration_link_precedes_household_and_is_tenant_fenced(): void
+    {
+        $form=$this->form();
+        $response=$this->response($form,[['firstName'=>'Robin','lastName'=>'Willow','allergies'=>'Peanuts']], 'new', null);
+        $response->update(['respondent_phone'=>null]);
+        $registration=\App\Models\Registration::factory()->create(['masjid_id'=>$this->school->id,'form_response_id'=>$response->id]);
+        \App\Models\Registrant::create(['masjid_id'=>$this->school->id,'registration_id'=>$registration->id,'contact_id'=>$this->child->id]);
+        $result=app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+        $this->assertSame(1,$result['counts']['written']);
+        $this->assertAllergyRecord(['contact_id'=>$this->child->id,'allergies'=>'Peanuts']);
+        StudentAllergy::query()->delete();
+        $other=Masjid::create(['name'=>'Other Practice','email'=>'other@example.invalid','phone'=>'+15555550900','country_id'=>'1','city_id'=>'1','address'=>'Practice','latitude'=>0,'longitude'=>0]);
+        $registration->update(['masjid_id'=>$other->id]);
+        $result=app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+        $this->assertSame(1,$result['counts']['unmatched']);
+    }
+
+    #[Test]
+    public function allergies_review_symbols_digits_and_other_letters_are_kept(): void
+    {
+        foreach (['🥜','🥜 🥛','🥜none','none🥜','$','+none','^none','none~','`none','none€','none1','noneñ','—none—','！none！'] as $answer) $this->assertSame($answer,StudentAllergies::normalise($answer));
+    }
+
+    #[Test]
+    public function allergies_review_long_form_answer_is_flagged_without_truncation(): void
+    {
+        $form=$this->form();
+        $this->response($form,[['firstName'=>'Robin','lastName'=>'Willow','allergies'=>str_repeat('x',500).' Peanuts']]);
+        $result=app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+        $this->assertSame(1,$result['counts']['written']);
+        $this->assertNotNull(StudentAllergy::where('contact_id',$this->child->id)->first());
+        $this->assertSame(str_repeat('x',500).' Peanuts', StudentAllergy::first()->allergies);
+    }
+
+    #[Test]
+    public function allergies_review_form_text_capacity_and_oversize_warning_guarantee_a_flag(): void
+    {
+        $this->enabled(); $form=$this->form();
+        $answer=str_repeat('🥜',8000);
+        $response=$this->response($form,[['firstName'=>'Robin','lastName'=>'Willow','allergies'=>$answer]]);
+        app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+        $this->assertAllergyRecord(['contact_id'=>$this->child->id,'allergies'=>$answer]);
+        $this->assertSame('text',\Illuminate\Support\Facades\Schema::getColumnType('student_allergies','allergies'));
+        $bytes=strlen(DB::table('student_allergies')->value('allergies'));
+        $this->assertLessThanOrEqual(65535,$bytes);
+        file_put_contents('/private/tmp/allergy-text-capacity.json',json_encode(['characters'=>8000,'plaintext_bytes'=>strlen($answer),'encrypted_bytes'=>$bytes]));
+        $this->response($form,[['firstName'=>'Robin','lastName'=>'Willow','allergies'=>$answer.'🥛']]);
+        $preview=app(StudentAllergies::class)->copy($form,'allergies',true,$this->office->id);
+        $this->assertSame(1,$preview['counts']['too_long']);
+        $this->assertAllergyRecord(['contact_id'=>$this->child->id,'allergies'=>$answer]);
+        $result=app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+        $this->assertSame('too long: enter by hand',$result['children'][0]['outcome']);
+        $this->assertAllergyRecord(['contact_id'=>$this->child->id,'allergies'=>'See enrolment form: answer too long','source'=>'form']);
+        Sanctum::actingAs($this->teacher,['staff']);
+        $this->getJson($this->teacherClass())->assertOk()->assertJsonPath('data.students.0.student_allergy.allergies','See enrolment form: answer too long');
+        Sanctum::actingAs($this->office,['staff']);
+        $this->put($this->rowUrl(),['allergies'=>str_repeat('x',501)],['Accept'=>'application/json'])->assertUnprocessable()->assertSee('501 characters');
+    }
+
+    #[Test]
+    public function allergies_review_linked_children_require_unique_child_association(): void
+    {
+        $form=$this->form();
+        $other=Contact::factory()->create(['masjid_id'=>$this->school->id,'first_name'=>'Alex','last_name'=>'Willow']);
+        GroupMembership::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'contact_id'=>$other->id,'role'=>'member']);
+        $response=$this->response($form,[['firstName'=>'Robin','lastName'=>'Willow','allergies'=>'Peanuts'],['firstName'=>'Alex','lastName'=>'Willow','allergies'=>'Dairy']], 'new', null);
+        $response->update(['respondent_phone'=>null]);
+        $registration=\App\Models\Registration::factory()->create(['masjid_id'=>$this->school->id,'form_response_id'=>$response->id]);
+        foreach ([$this->child,$other] as $child) \App\Models\Registrant::create(['masjid_id'=>$this->school->id,'registration_id'=>$registration->id,'contact_id'=>$child->id]);
+        $r=app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+        $this->assertSame(2,$r['counts']['written']);
+        $this->assertAllergyRecord(['contact_id'=>$this->child->id,'allergies'=>'Peanuts']);
+        $this->assertAllergyRecord(['contact_id'=>$other->id,'allergies'=>'Dairy']);
+        StudentAllergy::query()->delete();
+        $other->update(['first_name'=>'Robin']);
+        $r=app(StudentAllergies::class)->copy($form,'allergies',false,$this->office->id);
+        $this->assertSame(1,$r['counts']['ambiguous']);
+        $this->assertSame(0,$r['counts']['written']);
+    }
+
+    #[Test]
+    public function allergies_review_last_note_erasure_restores_query_free_merge(): void
+    {
+        StudentAllergies::edit($this->child,'Peanuts',$this->office->id);
+        $this->child->forceDelete();
+        $this->assertFalse((bool)$this->school->fresh()->getAttribute('has_student_allergy_records'));
+        $this->child=Contact::factory()->create(['masjid_id'=>$this->school->id]);
+        $this->allergies_review_unused_school_merge_adds_no_health_query();
     }
 
 }

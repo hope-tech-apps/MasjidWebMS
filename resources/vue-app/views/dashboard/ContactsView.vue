@@ -2342,8 +2342,9 @@ const doMerge = async () => {
                     : 'The record and its giving were moved to the surviving member.'),
             });
         }
-    } catch (e) {
-        Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not attach. Please try again.' });
+    } catch (e: any) {
+        const allergyRefusal = e?.response?.data?.data?.allergies?.[0];
+        Swal.fire({ icon: 'error', title: 'Error!', text: typeof allergyRefusal === 'string' ? allergyRefusal : 'Could not attach. Please try again.' });
     } finally { merging.value = false; }
 };
 
