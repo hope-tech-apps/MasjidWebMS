@@ -181,7 +181,7 @@ it('Timetable all routes fence teacher family foreign year class period set room
 it('Timetable dated remove edit in place copy atomic duplicates and room case uniqueness hold', function () {
     $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1,2]); $g=($this->class)();
     $id=($this->place)($g,$set['periods'][0]['id'],1)->assertCreated()->json('data.id');
-    $this->putJson($this->base.'/meetings/'.$id,['group_id'=>$g->id,'period_id'=>$set['periods'][0]['id'],'weekday'=>1,'kind'=>'activity','activity_name'=>'Revised','teacher_ids'=>[],'effective_from'=>'2026-10-10'])->assertOk(); expect(DB::table('timetable_meetings')->count())->toBe(1);
+    $id=$this->putJson($this->base.'/meetings/'.$id,['group_id'=>$g->id,'period_id'=>$set['periods'][0]['id'],'weekday'=>1,'kind'=>'activity','activity_name'=>'Revised','teacher_ids'=>[],'effective_from'=>'2026-10-10'])->assertOk()->json('data.id'); expect(DB::table('timetable_meetings')->count())->toBe(1);
     $this->postJson($this->base.'/copy-day',['group_id'=>$g->id,'source_weekday'=>1,'target_weekdays'=>[2],'as_of'=>'2026-10-10','effective_from'=>'2026-10-10'])->assertCreated();
     $this->postJson($this->base.'/copy-day',['group_id'=>$g->id,'source_weekday'=>1,'target_weekdays'=>[2],'as_of'=>'2026-10-10','effective_from'=>'2026-10-10'])->assertUnprocessable(); expect(DB::table('timetable_meetings')->count())->toBe(2);
     $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-11-01'])->assertOk(); expect(DB::table('timetable_meetings')->where('id',$id)->value('effective_until'))->toBe('2026-10-31');
@@ -190,7 +190,7 @@ it('Timetable dated remove edit in place copy atomic duplicates and room case un
 });
 
 it('Timetable referenced class subject room staff school membership deletes refuse and keep records', function () {
-    $g=($this->class)(); $t=($this->teacher)(); $s=($this->subject)($g); $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]);
+    $g=($this->class)(); $t=($this->teacher)(); $s=($this->subject)($g); $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1,2]);
     $room=$this->postJson($this->base.'/rooms',['name'=>'Practice Room'])->assertCreated()->json('data.id'); $this->putJson($this->base.'/classes/'.$g->id.'/room',['room_id'=>$room])->assertOk();
     ($this->place)($g,$set['periods'][0]['id'],1,['kind'=>'subject','activity_name'=>null,'class_subject_id'=>$s->id,'teacher_ids'=>[$t->id]])->assertCreated();
     $this->deleteJson($this->base.'/rooms/'.$room)->assertUnprocessable();
@@ -256,7 +256,7 @@ it('Timetable HTTP setup week and clashes have constant query counts at two and 
         }
     }
     file_put_contents(base_path('artifacts/timetable-http-query-counts.json'),json_encode($counts,JSON_PRETTY_PRINT)."\n");
-    expect($counts[2])->toBe($counts[12])->toBe(['setup'=>19,'week'=>11,'clashes'=>7]);
+    expect($counts[2])->toBe($counts[12])->toBe(['setup'=>19,'week'=>12,'clashes'=>7]);
 });
 
 it('Timetable changing a referenced teacher away from teacher access is a refused removal', function () {
@@ -276,7 +276,7 @@ it('Timetable changing a referenced teacher away from teacher access is a refuse
 it('Timetable changes before an original start edit its row from the chosen date and removal closes the chosen day before', function () {
     $set=($this->set)('Regular',[['P1','08:00','09:00']]); ($this->days)($set['id'],[1]); $g=($this->class)();
     $id=($this->place)($g,$set['periods'][0]['id'],1)->assertCreated()->json('data.id');
-    $this->putJson($this->base.'/meetings/'.$id,['group_id'=>$g->id,'weekday'=>1,'period_id'=>$set['periods'][0]['id'],'kind'=>'activity','activity_name'=>'Earlier routine','teacher_ids'=>[],'effective_from'=>'2026-10-01'])->assertOk();
+    $id=$this->putJson($this->base.'/meetings/'.$id,['group_id'=>$g->id,'weekday'=>1,'period_id'=>$set['periods'][0]['id'],'kind'=>'activity','activity_name'=>'Earlier routine','teacher_ids'=>[],'effective_from'=>'2026-10-01'])->assertOk()->json('data.id');
     expect(DB::table('timetable_meetings')->count())->toBe(1); expect(DB::table('timetable_meetings')->where('id',$id)->value('effective_from'))->toBe('2026-10-01');
     $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-09-15'])->assertOk();
     expect(DB::table('timetable_meetings')->where('id',$id)->value('effective_until'))->toBe('2026-09-14');
@@ -459,4 +459,72 @@ it('Timetable retention hints are persisted on a later write after a tentative t
     expect((int)DB::table('users')->where('id',$t->id)->value('has_timetable_records'))->toBe(1);
     expect(array_key_exists('has_timetable_records',$t->fresh()->toArray()))->toBeFalse();
     expect(array_key_exists('has_timetable_records',$this->school->fresh()->toArray()))->toBeFalse();
+});
+
+it('Timetable walkfix bounds word all as-of refusals and return day states', function () {
+    $g=($this->class)();
+    foreach (['0002-10-10','252026-11-01','2026-08-01','2027-07-01'] as $date) {
+        foreach (['/week?group_id='.$g->id.'&as_of=', '/clashes?as_of='] as $path) {
+            $this->getJson($this->base.$path.$date)->assertUnprocessable()->assertJsonPath('data.as_of.0','Pick a date between September 7, 2026 and June 25, 2027.');
+        }
+    }
+    $this->getJson($this->base.'/week?group_id='.$g->id.'&as_of=2026-10-10')->assertOk()->assertJsonPath('data.state','non_meeting');
+    \App\Models\SchoolClosure::create(['masjid_id'=>$this->school->id,'school_year_id'=>$this->year->id,'closed_on'=>'2026-10-12','reason'=>'Planning day']);
+    $this->getJson($this->base.'/week?group_id='.$g->id.'&as_of=2026-10-12')->assertOk()->assertJsonPath('data.state','closure')->assertJsonPath('data.reason','Planning day');
+});
+
+it('Timetable walkfix placed today removed today frees period and set outright', function () {
+    $this->travelTo(\Carbon\Carbon::parse('2026-10-12 16:00:00','UTC'));
+    $set=($this->set)('Regular',[['P1','08:00','08:45'],['P2','08:45','09:30']]); ($this->days)($set['id'],[1]); $g=($this->class)();
+    $teacher=($this->teacher)();
+    $id=($this->place)($g,$set['periods'][1]['id'],1,['effective_from'=>'2026-10-12','teacher_ids'=>[$teacher->id]])->assertCreated()->json('data.id');
+    $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-10-12'])->assertOk();
+    expect(DB::table('timetable_meetings')->where('id',$id)->exists())->toBeFalse();
+    expect(DB::table('timetable_meeting_teachers')->where('meeting_id',$id)->count())->toBe(0);
+    expect((bool)$teacher->fresh()->has_timetable_records)->toBeFalse();
+    $this->putJson($this->base.'/sets/'.$set['id'],['name'=>'Regular','periods'=>[$set['periods'][0]]])->assertOk();
+    $this->deleteJson($this->base.'/sets/'.$set['id'])->assertOk();
+});
+
+it('Timetable walkfix no past open day replaces old row while actual past day preserves history', function () {
+    $this->travelTo(\Carbon\Carbon::parse('2026-10-12 16:00:00','UTC'));
+    $set=($this->set)('Regular',[['P1','08:00','08:45']]); ($this->days)($set['id'],[1]); $g=($this->class)();
+    $body=['group_id'=>$g->id,'period_id'=>$set['periods'][0]['id'],'weekday'=>1,'kind'=>'activity','activity_name'=>'Corrected','teacher_ids'=>[],'effective_from'=>'2026-10-12'];
+    $id=($this->place)($g,$set['periods'][0]['id'],1,['effective_from'=>'2026-10-12'])->assertCreated()->json('data.id');
+    $new=$this->putJson($this->base.'/meetings/'.$id,$body)->assertOk()->json('data.id');
+    expect($new)->not->toBe($id); expect(DB::table('timetable_meetings')->where('id',$id)->exists())->toBeFalse();
+    $this->deleteJson($this->base.'/meetings/'.$new,['effective_from'=>'2026-10-12'])->assertOk();
+    $past=($this->place)($g,$set['periods'][0]['id'],1,['effective_from'=>'2026-10-05'])->assertCreated()->json('data.id');
+    $this->putJson($this->base.'/meetings/'.$past,array_replace($body,['effective_from'=>'2026-10-05']))->assertOk();
+    expect(DB::table('timetable_meetings')->where('id',$past)->exists())->toBeTrue();
+    $this->deleteJson($this->base.'/meetings/'.$past,['effective_from'=>'2026-10-05'])->assertOk();
+    expect(DB::table('timetable_meetings')->where('id',$past)->exists())->toBeTrue();
+    $this->deleteJson($this->base.'/sets/'.$set['id'])->assertUnprocessable()->assertJsonPath('data.set.0','This period set has 1 meeting. Remove its meetings first.');
+});
+
+it('Timetable walkfix closure and wrong weekday before today do not invent past history', function () {
+    $this->travelTo(\Carbon\Carbon::parse('2026-10-12 16:00:00','UTC'));
+    \App\Models\SchoolClosure::create(['masjid_id'=>$this->school->id,'school_year_id'=>$this->year->id,'closed_on'=>'2026-10-05','reason'=>'Closed']);
+    $set=($this->set)('Regular',[['P1','08:00','08:45']]); ($this->days)($set['id'],[1]); $g=($this->class)();
+    $id=($this->place)($g,$set['periods'][0]['id'],1,['effective_from'=>'2026-10-05'])->assertCreated()->json('data.id');
+    $this->deleteJson($this->base.'/meetings/'.$id,['effective_from'=>'2026-10-05'])->assertOk();expect(DB::table('timetable_meetings')->where('id',$id)->exists())->toBeFalse();
+});
+
+it('Timetable walkfix period and location refusals pluralize one and two meetings', function () {
+    $set=($this->set)('Regular',[['P1','08:00','08:45'],['P2','08:45','09:30']]); ($this->days)($set['id'],[1,2]);
+    $room=$this->postJson($this->base.'/rooms',['name'=>'Practice Hall'])->assertCreated()->json('data.id');
+    foreach ([1,2] as $count) {
+        ($this->place)(($this->class)('Class '.$count),$set['periods'][1]['id'],$count,['room_id'=>$room])->assertCreated();
+        $this->putJson($this->base.'/sets/'.$set['id'],['name'=>'Regular','periods'=>[$set['periods'][0]]])->assertUnprocessable()->assertJsonPath('data.periods.0',"These period rows have {$count} ".($count===1?'meeting':'meetings').'. Keep them to preserve the timetable.');
+        $this->deleteJson($this->base.'/rooms/'.$room)->assertUnprocessable()->assertJsonPath('data.room.0',"This location has {$count} ".($count===1?'meeting':'meetings').'. Keep it to preserve the timetable.');
+        try { \App\Support\TimetableDeletion::refuseRoom($room,$this->school->id); $this->fail('Deleted referenced location'); }
+        catch (\Illuminate\Validation\ValidationException $error) { expect($error->errors()['room'][0])->toBe("This location has {$count} timetable meeting".($count===1?'':'s').'. Keep it to preserve the timetable.'); }
+    }
+});
+it('Timetable walkfix combined dated read returns clashes with the class week', function () {
+    $g=($this->class)();
+    $this->getJson($this->base.'/week?group_id='.$g->id.'&as_of=2026-10-12&include_clashes=1')->assertOk()->assertJsonPath('data.clashes',[]);
+    DB::enableQueryLog(); DB::flushQueryLog();
+    $this->getJson($this->base.'/week?group_id='.$g->id.'&as_of=2026-10-12&include_clashes=1')->assertOk();
+    $count=count(DB::getQueryLog()); DB::disableQueryLog(); expect($count)->toBe(15);
 });

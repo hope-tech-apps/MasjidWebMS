@@ -73,7 +73,7 @@ router.beforeEach((to, from, next) => {
                         } else if (to.meta.requiresCapability === 'school_timetable'
                             && masjidStore.masjid?.capabilities
                             && masjidStore.masjid.capabilities.school_timetable !== true) {
-                            next('/auth/401');
+                            next('/auth/404');
                         } else if (to.meta.requiresCapability && authStore.user.type !== 'SuperAdmin'
                             && masjidStore.masjid?.capabilities
                             && masjidStore.masjid.capabilities[to.meta.requiresCapability] !== true) {

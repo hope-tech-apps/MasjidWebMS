@@ -410,3 +410,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Explicit Arabic requirement takes precedence over the English-only existing teacher portal. Reuse existing family locale layer for this new surface, preserving existing teacher screens and OFF menu.
 - Schedule placement does not widen existing class/subject permissions. Teachers without class staff assignment still see their named slots; class destination may refuse under the existing gate.
 - Headless browser aborted; CSS constraints and mounted semantic tests do not prove actual phone layout. No external deployment, MySQL server, fluent translation review, touch or assistive-tech validation performed.
+
+## Timetable browser-walk fixes — 2026-10-11
+- The owner explicitly assigns this isolated tree, authorizing writes here; no inherited tracked edits at start.
+- “Past school day” is an open calendar day before school-local today on the meeting's own weekday, within its effective range. Closures do not create history.
+- As-of keeps its existing recurring-snapshot meaning; the new empty-day wording applies when the snapshot contains no placed meetings.

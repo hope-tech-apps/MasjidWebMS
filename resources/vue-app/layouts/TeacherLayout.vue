@@ -29,8 +29,8 @@
                     </router-link>
                     <router-link v-if="timetableEnabled" to="/teacher/schedule"
                                  class="nav-link mn-topbar-link teacher-tap" :class="{ 'is-active': route.name === 'teacherSchedule' }"
-                                 :aria-label="t('schedule_title')" :title="t('schedule_title')">
-                        <i class="bi bi-calendar-week" aria-hidden="true"></i><span class="d-none d-sm-inline">{{ t('schedule_title') }}</span>
+                                 aria-label="My schedule" title="My schedule">
+                        <i class="bi bi-calendar-week" aria-hidden="true"></i><span class="d-none d-sm-inline">My schedule</span>
                     </router-link>
                     <!-- Only with 2+ schools (memberships[] on /api/teacher/user). A
                          teacher at one school sees the header they always saw. -->
@@ -78,7 +78,6 @@ import { landingSchoolId, schoolChoices, switchTarget } from '@/core/helpers/tea
 import { clearTeacherSchoolNotices, provideSelectedSchool, teacherSchoolMismatch, teacherSchoolRefused } from '@/core/tenancy/teacherSchoolGuard';
 import { bumpTenantEpoch, forgetServerTenant } from '@/core/tenancy/tenantRequests';
 import { resetTenantScopedStores } from '@/stores/plugins/tenantStoreReset';
-import { useFamilyLang } from '@/views/family/familyI18n';
 import { useStaffChrome } from '@/core/helpers/staffChrome';
 
 // The staff theme (resources/css/custom/theme.css) for as long as this shell is up.
@@ -101,7 +100,6 @@ const signingOut = ref(false);
 /** True only when the self payload says so; missing, false or a failed read hide the link. */
 const calendarPublished = ref(false);
 const timetableEnabled = ref(false);
-const { t } = useFamilyLang();
 
 // The classes list is the shell's home; keep its nav pill lit while browsing it.
 const isClassesActive = computed(() => route.path === '/teacher');

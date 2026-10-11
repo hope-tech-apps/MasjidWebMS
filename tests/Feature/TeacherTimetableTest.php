@@ -201,6 +201,8 @@ it('Teacher Timetable empty named meetings and many meeting versions keep the sa
 });
 
 it('Teacher Timetable OFF literal base home header and class list payload and SQL pins', function () {
+    // Faker unique state survives seed resets; pin the fixture's optional description explicitly.
+    $this->class->update(['description'=>null]);
     $this->school->forceFill(['capability_overrides'=>[]])->save(); StudentAge::forget();
     $actual=[];
     foreach(['home'=>'/api/teacher/user','school'=>"/api/teacher/masjids/{$this->school->id}/school",'classes'=>"/api/teacher/masjids/{$this->school->id}/groups"] as $key=>$url) {

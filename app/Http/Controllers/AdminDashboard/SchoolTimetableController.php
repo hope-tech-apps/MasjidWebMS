@@ -25,8 +25,12 @@ class SchoolTimetableController extends Controller
     }
     private function date(Request $r, string $key = 'as_of', ?SchoolYear $year = null): string
     {
-        $data=$r->validate([$key=>'nullable|date_format:Y-m-d']);
-        return $data[$key]??$this->today((int)($year?->masjid_id??$r->route('masjid_id')));
+        $bounds=$year ? 'Pick a date between '.$year->first_day->format('F j, Y').' and '.$year->last_day->format('F j, Y').'.' : 'Pick a valid date.';
+        $rules='nullable|date_format:Y-m-d'.($year ? '|after_or_equal:'.$year->first_day->toDateString().'|before_or_equal:'.$year->last_day->toDateString() : '');
+        $data=$r->validate([$key=>$rules],[$key.'.date_format'=>$bounds,$key.'.after_or_equal'=>$bounds,$key.'.before_or_equal'=>$bounds]);
+        $date=$data[$key]??$this->today((int)($year?->masjid_id??$r->route('masjid_id')));
+        if ($year && ($date<$year->first_day->toDateString() || $date>$year->last_day->toDateString())) $this->refuse($key,$bounds);
+        return $date;
     }
     private function write($school, $yearId, callable $fn): mixed
     {
@@ -75,7 +79,7 @@ class SchoolTimetableController extends Controller
                 if($p->exists && $row['kind']==='block' && TimetableMeeting::where('period_id',$p->id)->where('kind','subject')->exists()) $this->refuse('periods','A period with subject meetings must remain a teaching period.');
                 unset($row['id']); $p->fill($row); $p->name=trim($p->name); if($p->name==='') $this->refuse('periods','Choose a period name.'); $p->save(); $keep[]=$p->id;
             }
-            $removed=$existing->keys()->diff($keep)->all(); $count=TimetableMeeting::whereIn('period_id',$removed)->count(); if($count) $this->refuse('periods',"These period rows have {$count} meetings. Keep them to preserve the timetable.");
+            $removed=$existing->keys()->diff($keep)->all(); $count=TimetableMeeting::whereIn('period_id',$removed)->count(); if($count) $this->refuse('periods',"These period rows have {$count} meeting".($count===1?'':'s').". Keep them to preserve the timetable.");
             TimetablePeriod::whereIn('id',$removed)->delete(); return $this->result($this->setResult($s),$set===null?201:200);
         });
     }
@@ -133,7 +137,7 @@ class SchoolTimetableController extends Controller
         return $this->write($masjid_id,$year_id,function () use($room_id) {
             $room=TimetableRoom::findOrFail($room_id);
             $count=TimetableMeeting::where('room_id',$room_id)->orWhere(fn($q)=>$q->whereNull('room_id')->whereIn('group_id',TimetableClassRoom::where('room_id',$room_id)->select('group_id')))->count();
-            if($count) $this->refuse('room',"This location has {$count} meetings. Keep it to preserve the timetable.");
+            if($count) $this->refuse('room',"This location has {$count} meeting".($count===1?'':'s').". Keep it to preserve the timetable.");
             TimetableClassRoom::where('room_id',$room_id)->update(['room_id'=>null]); $room->delete(); return $this->result(null);
         });
     }
@@ -187,7 +191,12 @@ class SchoolTimetableController extends Controller
         $year=$this->year($year_id); $d=$r->validate(['group_id'=>'required|integer']); $g=$this->group($d['group_id']); $date=$this->date($r,'as_of',$year);
         $days=TimetableDay::where('school_year_id',$year_id)->get()->keyBy('weekday'); $overrides=TimetableClassDay::where('school_year_id',$year_id)->where('group_id',$g->id)->get()->keyBy('weekday');
         $periods=TimetablePeriod::whereIn('period_set_id',TimetablePeriodSet::where('school_year_id',$year_id)->select('id'))->orderBy('position')->get()->groupBy('period_set_id');
-        return $this->result(['as_of'=>$date,'group_id'=>$g->id,'group_name'=>$g->name,'days'=>array_map(function ($day) use($days,$overrides,$periods) { $sid=$overrides[$day]->period_set_id??$days[$day]->period_set_id??null; return ['weekday'=>$day,'period_set_id'=>$sid,'periods'=>($periods[$sid]??collect())->map(fn($p)=>$this->period($p))->all()]; },$this->weekdays($year)), 'meetings'=>$this->reader->meetings((int)$masjid_id,(int)$year_id,$date,'class',$g->id)]);
+        $closure=$year->closures->first(fn($c)=>$c->closed_on->toDateString()===$date);
+        $weekdays=$this->weekdays($year);
+        $state=$closure ? 'closure' : (in_array(\App\Support\SchoolCalendar::day($date)->dayOfWeek,$weekdays,true) ? 'meetings' : 'non_meeting');
+        $payload=['state'=>$state,'reason'=>$closure?->reason,'as_of'=>$date,'group_id'=>$g->id,'group_name'=>$g->name,'days'=>array_map(function ($day) use($days,$overrides,$periods) { $sid=$overrides[$day]->period_set_id??$days[$day]->period_set_id??null; return ['weekday'=>$day,'period_set_id'=>$sid,'periods'=>($periods[$sid]??collect())->map(fn($p)=>$this->period($p))->all()]; },$weekdays), 'meetings'=>$this->reader->meetings((int)$masjid_id,(int)$year_id,$date,'class',$g->id)];
+        if ($r->boolean('include_clashes')) $payload['clashes']=$this->reader->clashes((int)$masjid_id,(int)$year_id,$date);
+        return $this->result($payload);
     }
     public function clashes(Request $r,$masjid_id,$year_id): JsonResponse
     {
@@ -230,11 +239,12 @@ class SchoolTimetableController extends Controller
     private function saveMeeting(array $data,SchoolYear $year,?TimetableMeeting $old=null,bool $copy=false): array
     {
         $all=$this->reader->meetings($year->masjid_id,$year->id,null);
-        $inPlace=$old!==null && $data['effective_from']<=$old->effective_from;
+        $replace=$old!==null && $data['effective_from']<=$old->effective_from && ! $this->hasPastSchoolDay($old,$year);
+        $inPlace=$old!==null && $data['effective_from']<=$old->effective_from && ! $replace;
         $candidate=$this->candidate($data,$year);
         $others=[];
         foreach($all as $m) {
-            if($old && $m['id']===$old->id) { if($inPlace) continue; $m['effective_until']=\Carbon\CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(); }
+            if($old && $m['id']===$old->id) { if($inPlace || $replace) continue; $m['effective_until']=\Carbon\CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(); }
             if($m['group_id']===$candidate['group_id'] && $m['weekday']===$candidate['weekday'] && $m['period_id']===$candidate['period_id'] && max($m['effective_from'],$candidate['effective_from'])<=min($m['effective_until']??$m['year_last_day'],$candidate['effective_until']??$candidate['year_last_day'])) $this->refuse('meeting','This class already has a meeting in this weekday and period on overlapping dates.');
             $others[]=$m;
         }
@@ -243,7 +253,8 @@ class SchoolTimetableController extends Controller
         if (!$copy && ($clashes || ($data['confirm_clashes'] && $data['clash_fingerprint'] !== null)) && (! $data['confirm_clashes'] || ! hash_equals($fingerprint, $data['clash_fingerprint'] ?? ''))) return ['clashes'=>$clashes,'clash_fingerprint'=>$fingerprint];
         $previousTeachers=$inPlace?array_column(collect($all)->firstWhere('id',$old->id)['teachers']??[],'id'):[];
         $teachers=$data['teacher_ids']; unset($data['teacher_ids'],$data['confirm_clashes'],$data['clash_fingerprint']);
-        if($old && !$inPlace) { $old->effective_until=\Carbon\CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(); $old->save(); }
+        if($replace) $old->delete();
+        if($old && !$inPlace && !$replace) { $old->effective_until=\Carbon\CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(); $old->save(); }
         $row=$inPlace?$old:new TimetableMeeting(); $row->fill($data); $row->save();
         TimetableMeetingTeacher::where('meeting_id',$row->id)->delete(); foreach($teachers as $id) TimetableMeetingTeacher::create(['masjid_id'=>$year->masjid_id,'meeting_id'=>$row->id,'user_id'=>$id]);
         $row->setAttribute('group_name',$candidate['group_name']); $row->setAttribute('label',$candidate['label']);
@@ -260,12 +271,22 @@ class SchoolTimetableController extends Controller
             return isset($saved['clashes'])?response()->json(['status'=>'clashes','clashes'=>$saved['clashes'],'clash_fingerprint'=>$saved['clash_fingerprint']],409):$this->result($saved['meeting'],$id===null?201:200);
         });
     }
+    /** A date range alone is not history: only an earlier open occurrence of this weekday counts. */
+    private function hasPastSchoolDay(TimetableMeeting $meeting, SchoolYear $year): bool
+    {
+        $authority=SchoolDateAuthority::for($year->masjid_id);
+        $last=min($meeting->effective_until??$year->last_day->toDateString(), \Carbon\CarbonImmutable::parse($authority->today())->subDay()->toDateString());
+        foreach ($authority->openDaysBetween(max($meeting->effective_from,$year->first_day->toDateString()),$last) as $date) {
+            if (\App\Support\SchoolCalendar::day($date)->dayOfWeek===(int)$meeting->weekday) return true;
+        }
+        return false;
+    }
     public function destroyMeeting(Request $r,$masjid_id,$year_id,$meeting_id): JsonResponse
     {
         return $this->write($masjid_id,$year_id,function($year) use($r,$meeting_id) {
             $m=TimetableMeeting::where('school_year_id',$year->id)->findOrFail($meeting_id); $data=$r->validate(['effective_from'=>'required|date_format:Y-m-d']); $date=$data['effective_from'];
             if($date<$year->first_day->toDateString() || $date>$year->last_day->toDateString()) $this->refuse('effective_from','Choose a date within this school year.');
-            if($date<=$m->effective_from && $m->effective_from>$this->today($year->masjid_id)) $m->delete();
+            if($date<=$m->effective_from && ! $this->hasPastSchoolDay($m,$year)) $m->delete();
             else { $until=\Carbon\CarbonImmutable::parse($date)->subDay()->toDateString(); if ($m->effective_until === null || $until < $m->effective_until) { $m->effective_until=$until; $m->save(); } }
             return $this->result(null);
         });

@@ -9547,3 +9547,10 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Teacher portal was verified English-only; explicit Arabic requirement is met by reusing the family six-language mechanism for new schedule and menu label, including its persisted preference and self-hosted Urdu font. New strings marked MACHINE-DRAFTED.
 - Device instant converted with Intl using the calendar's resolved zone; no change to calendar fallback or school-local slot times. Markers update every 30 seconds; midnight requires a page/this-week read, avoiding background requests.
 - Work remains uncommitted; report artifacts/school-timetable-step2-report.md. Real browser probe SIGABRT, no geometry claim.
+
+## Timetable browser-walk fixes — 2026-10-11
+- Owner's new brief supersedes the earlier “nothing started is hard-deleted” decision: on/before-start corrections hard-delete rows with no earlier open occurrence on their own weekday; real past occurrences keep the existing history behavior.
+- My schedule and its menu are English, matching the entire teacher portal. Family locales and Help harness restore HEAD~1 byte-for-byte. Translating the teacher portal is separate work; logical CSS stays.
+- Reuse Bootstrap school calendar modal/form conventions, formatSchoolDay and describeSchoolTime; add shared clock range wrapper for suffix elision. No standalone plural helper exists; use the timetable's existing count===1 suffix convention.
+- Office as-of remains a recurring snapshot: empty snapshots on non-meeting days/closures explain their state. Dates commit on blur, bounded within year; teacher dates normalize to a UTC Monday. No per-key HTTP reads. The office requests include_clashes=1 on its week read, combining week and clashes in one HTTP response (15 queries; plain week stays 12).
+- This isolated assigned worktree is the writer; HEAD 1db7cebc unchanged. No commit, capture variables or fixture regeneration.

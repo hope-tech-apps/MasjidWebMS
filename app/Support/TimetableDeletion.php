@@ -21,7 +21,7 @@ final class TimetableDeletion
         $count = DB::table('timetable_meetings')->where('masjid_id', $school)
             ->where(fn ($q) => $q->where('room_id', $id)->orWhere(fn ($q) => $q->whereNull('room_id')
                 ->whereIn('group_id', DB::table('timetable_class_rooms')->where('masjid_id', $school)->where('room_id', $id)->select('group_id'))))->count();
-        if ($count) throw ValidationException::withMessages(['room'=>["This location has {$count} timetable meetings. Keep it to preserve the timetable."]]);
+        if ($count) throw ValidationException::withMessages(['room'=>["This location has {$count} timetable meeting".($count===1?'':'s').". Keep it to preserve the timetable."]]);
         // A usual location with no meetings may be cleared; the location's deletion is explicit.
         DB::table('timetable_class_rooms')->where('masjid_id', $school)->where('room_id', $id)->update(['room_id'=>null]);
     }

@@ -1,42 +1,40 @@
 <template>
-    <div class="teacher-schedule" :dir="dir" :lang="lang">
+    <div class="teacher-schedule" lang="en">
         <div class="schedule-heading">
-            <h1 class="h4 mb-0">{{ t('schedule_title') }}</h1>
-            <select class="form-select form-select-sm schedule-language" :value="lang" :aria-label="t('switch_lang_title')"
-                    @change="setLang(($event.target as HTMLSelectElement).value)">
-                <option v-for="option in languages" :key="option.code" :value="option.code" :lang="option.code" :dir="option.dir">{{ option.label }}</option>
-            </select>
+            <h1 class="h4 mb-0">My schedule</h1>
         </div>
-        <p v-if="loading && !page" role="status">{{ t('schedule_loading') }}</p>
+        <p v-if="loading && !page" role="status">Loading your schedule…</p>
         <div v-if="error" role="alert" class="alert alert-danger">
-            {{ t(unavailable ? 'schedule_unavailable' : 'schedule_error') }}
-            <button v-if="!unavailable" type="button" class="btn btn-outline-secondary" @click="load(requestedWeek)">{{ t('schedule_retry') }}</button>
+            {{ unavailable ? 'My schedule is not available at this school.' : 'Your schedule could not be loaded.' }}
+            <button v-if="!unavailable" type="button" class="btn btn-outline-secondary" @click="load(requestedWeek)">Try again</button>
         </div>
         <template v-if="page">
             <section class="mt-3" aria-labelledby="schedule-today">
-                <h2 id="schedule-today" class="h5">{{ t('schedule_today') }} <span class="small text-muted">{{ dateLabel(page.today.date) }}</span></h2>
-                <p v-if="page.today.state !== 'meetings'" role="status">{{ t(`schedule_${page.today.state}`, page.today.reason ?? '') }}</p>
+                <h2 id="schedule-today" class="h5">Today <span class="small text-muted">{{ dateLabel(page.today.date) }}</span></h2>
+                <p v-if="page.today.state !== 'meetings'" role="status">{{ todayWords(page.today.state, page.today.reason) }}</p>
                 <div v-else class="today-meetings">
                     <ScheduleMeeting v-for="meeting in page.today.meetings" :key="meeting.id" :meeting="meeting"
                                      :week-start="page.week_start" :week-end="page.week_end" :status="status(meeting)" data-test="today-meeting" />
                 </div>
             </section>
             <section class="mt-4" aria-labelledby="schedule-week" :aria-busy="loading">
-                <h2 id="schedule-week" class="h5">{{ t('schedule_week') }}</h2>
+                <h2 id="schedule-week" class="h5">Week</h2>
                 <div class="week-picker">
-                    <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="move(-7)">{{ t('schedule_previous') }}</button>
-                    <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="load(null)">{{ t('schedule_this_week') }}</button>
-                    <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="move(7)">{{ t('schedule_next_week') }}</button>
+                    <label for="schedule-week-date">Week containing</label>
+                    <input id="schedule-week-date" v-model="weekDate" type="date" class="form-control" @blur="commitWeek" />
+                    <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="move(-7)">Previous week</button>
+                    <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="load(null)">This week</button>
+                    <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="move(7)">Next week</button>
                 </div>
                 <p class="small text-muted mt-2"><bdi>{{ dateLabel(page.week_start) }} – {{ dateLabel(page.week_end) }}</bdi></p>
-                <p v-if="loading" role="status">{{ t('schedule_loading') }}</p>
-                <p v-if="page.days.length === 0">{{ t('schedule_unplaced') }}</p>
-                <div v-else class="schedule-week-scroll" tabindex="0" :aria-label="t('schedule_week')">
+                <p v-if="loading" role="status">Loading your schedule…</p>
+                <p v-if="page.days.length === 0">Nothing is placed for you yet.</p>
+                <div v-else class="schedule-week-scroll" tabindex="0" aria-label="Week">
                     <div class="schedule-week" :style="{ '--schedule-days': page.days.length }">
                         <section v-for="day in page.days" :key="day.date" class="schedule-day" data-test="week-day">
                             <h3 class="h6">{{ dateLabel(day.date, true) }}</h3>
-                            <p v-if="day.reason" class="small">{{ t('schedule_closure', day.reason) }}</p>
-                            <p v-else-if="day.date === page.today.date && !day.meetings.length" class="small">{{ t(`schedule_${page.today.state}`, page.today.reason ?? '') }}</p>
+                            <p v-if="day.reason" class="small">No school: {{ day.reason }}</p>
+                            <p v-else-if="day.date === page.today.date && !day.meetings.length" class="small">{{ todayWords(page.today.state, page.today.reason) }}</p>
                             <div class="day-meetings">
                                 <ScheduleMeeting v-for="meeting in day.meetings" :key="meeting.id" :meeting="meeting"
                                                  :week-start="page.week_start" :week-end="page.week_end" />
@@ -53,12 +51,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import TeacherApiService from '@/core/services/TeacherApiService';
 import { useAuthStore } from '@/stores/authStore';
-import { useFamilyLang } from '@/views/family/familyI18n';
+import { formatSchoolDay, weekdayOfIso } from '@/core/types/data/masjid-related/SchoolCalendar';
 import ScheduleMeeting, { type ScheduleSlot } from './ScheduleMeeting.vue';
 
 interface ScheduleDay { date: string; weekday: number; reason: string | null; meetings: ScheduleSlot[]; }
 interface SchedulePage { timezone: string; week_start: string; week_end: string; today: ScheduleDay & { state: string }; days: ScheduleDay[]; }
-const { lang, locale, dir, t, setLang, languages } = useFamilyLang();
+const weekDate = ref('');
+const todayWords = (state: string, reason?: string | null) => ({ non_meeting: 'The school does not meet today.', closure: `No school today: ${reason ?? ''}`, not_started: 'The school year has not started.', ended: 'The school year has ended.', unplaced: 'Nothing is placed for you yet.' }[state] ?? '');
 const auth = useAuthStore();
 const page = ref<SchedulePage | null>(null);
 const loading = ref(false); const error = ref(false); const unavailable = ref(false);
@@ -80,14 +79,22 @@ const status = (meeting: ScheduleSlot): 'now' | 'next' | null => {
     if (meeting.starts_at <= schoolClock.value.time && schoolClock.value.time < meeting.ends_at) return 'now';
     return meeting.id === nextId.value ? 'next' : null;
 };
-const dateLabel = (date: string, weekday = false) => new Intl.DateTimeFormat(lang.value === 'en' ? 'en-GB' : locale.value,
-    {timeZone:'UTC',month:'long',day:'numeric',...(weekday ? {weekday:'long' as const} : {})}).format(new Date(`${date}T12:00:00Z`));
+const dateLabel = (date: string, weekday = false) => formatSchoolDay(date, 'en-US',
+    { month: 'long', day: 'numeric', year: 'numeric', ...(weekday ? { weekday: 'long' as const } : {}) });
+function commitWeek(): void {
+    if (weekdayOfIso(weekDate.value) === null) return;
+    const date = new Date(`${weekDate.value}T12:00:00Z`);
+    date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+    const week = date.toISOString().slice(0,10);
+    if (week !== (requestedWeek.value ?? page.value?.week_start)) void load(week);
+}
 async function load(week: string | null): Promise<void> {
     const school = Number(auth.dashboardMasjidId); if (!Number.isInteger(school) || school < 1) { error.value = true; return; }
+    const enteredDate = weekDate.value;
     const token = ++generation; loading.value = true; error.value = false; unavailable.value = false; requestedWeek.value = week;
     try {
         const response = await TeacherApiService.get(`/api/teacher/masjids/${school}/schedule${week ? `?week=${encodeURIComponent(week)}` : ''}`);
-        if (alive && token === generation) { page.value = response.data.data; clock.value = Date.now(); }
+        if (alive && token === generation) { page.value = response.data.data; if (weekDate.value === enteredDate) weekDate.value = page.value!.week_start; clock.value = Date.now(); }
     } catch (failure: any) {
         if (alive && token === generation) { page.value = null; error.value = true; unavailable.value = failure?.response?.status === 404; }
     } finally { if (alive && token === generation) loading.value = false; }
@@ -101,17 +108,14 @@ onMounted(() => { void load(null); timer = setInterval(() => { clock.value = Dat
 onBeforeUnmount(() => { alive = false; ++generation; if (timer !== undefined) clearInterval(timer); });
 </script>
 
-<style src="../family/urduFont.css"></style>
-
 <style scoped>
 .teacher-schedule { min-width: 0; max-width: 100%; text-align: start; }
 .schedule-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
-.schedule-language { width: auto; max-width: 100%; min-height: 2.75rem; }
 .today-meetings, .day-meetings { display: grid; gap: .5rem; }
 .week-picker { display: flex; flex-wrap: wrap; gap: .5rem; }
+.week-picker input { width: auto; min-height: 2.75rem; }
 .week-picker button { min-height: 2.75rem; white-space: normal; }
 .schedule-week-scroll { width: 100%; max-width: 100%; overflow-x: auto; padding-block-end: .5rem; }
 .schedule-week { display: grid; grid-template-columns: repeat(var(--schedule-days), minmax(12rem, 1fr)); gap: .75rem; }
 .schedule-day { min-width: 0; overflow-wrap: anywhere; }
-[dir="rtl"] .schedule-language { background-position: left .5rem center; padding-left: 2rem; padding-right: .75rem; }
 </style>

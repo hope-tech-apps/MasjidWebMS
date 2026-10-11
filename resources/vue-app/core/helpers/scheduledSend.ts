@@ -82,14 +82,15 @@ export function sendLaterFields(enabled: boolean, value: SchoolLocal | null | un
  * A school-local time in words, from the string's own parts (the browser zone plays no
  * part), with the zone named: "Mon, Oct 5, 10:00 AM (America/New_York)".
  */
-export function describeSchoolTime(value: SchoolLocal | null | undefined, timezone?: string | null): string {
+export function describeSchoolTime(value: SchoolLocal | null | undefined, timezone?: string | null,
+    options: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }): string {
     const m = SHAPE.exec(value ?? '');
 
     if (!m) return '';
 
     const at = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])));
     const text = at.toLocaleString('en-US', {
-        weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC',
+        ...options, timeZone: 'UTC',
     });
 
     return timezone ? `${text} (${timezone})` : text;
@@ -170,4 +171,12 @@ export function failureText(row: Pick<ScheduledRow, 'status' | 'failure'>): stri
     if (row.status !== 'failed') return '';
 
     return row.failure || 'It could not be sent. Edit it to choose a new time and try again.';
+}
+
+/** School wall clocks use the scheduled-list formatter, with a shared AM/PM suffix when possible. */
+export function schoolTimeRange(first: string, last: string): string {
+    const clock = (time: string) => describeSchoolTime(`2000-01-01T${time.slice(0,5)}` as SchoolLocal, null, { hour: 'numeric', minute: '2-digit' });
+    const start = clock(first); const end = clock(last);
+    const sameHalf = start.slice(-2) === end.slice(-2);
+    return `${sameHalf ? start.replace(/ (AM|PM)$/, '') : start} - ${end}`;
 }
