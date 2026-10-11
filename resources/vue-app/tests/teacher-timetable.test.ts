@@ -115,7 +115,7 @@ test('teacher schedule typed date lands on the week typed, asks once typing stop
         for(const date of ['2026-01-05','2026-11-05','2026-11-01','2026-11-15']) {type(input,date);input.props.onChange?.({target:input});await flush();}
         assert.equal(s.calls.length,count);await pause();await flush();
         assert.equal(s.calls.length,count+1);assert.match(String(s.calls.at(-1)),/week=2026-11-09/);
-        assert.equal(s.all(n=>n.props.id==='schedule-week-date')[0].props.value,'2026-11-15','the box keeps what was typed while it has focus');
+        const box:any=s.all(n=>n.props.id==='schedule-week-date')[0];assert.equal(box.value,'2026-11-15','the box keeps what was typed while it has focus');assert.notEqual(box.props.value,'2026-10-12','the answered week\'s Monday is not written into the box');
         type(input,'2026-11-30');input.props.onKeydown?.({key:'Enter',target:input,preventDefault(){}});await flush();assert.equal(s.calls.length,count+2,'Enter loads at once');
         blur(input);await pause();await flush();assert.equal(s.calls.length,count+2,'leaving does not ask again');
     }finally{s.unmount();}
