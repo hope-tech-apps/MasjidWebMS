@@ -4,7 +4,7 @@
         <div class="schedule-controls">
             <button v-for="view in views" :key="view.key" type="button" class="btn btn-outline-primary" :aria-pressed="lens === view.key" @click="chooseView(view.key)">{{ view.label }}</button>
             <label for="schedule-as-of">Showing the timetable as of</label>
-            <input id="schedule-as-of" v-model="date" class="form-control" type="date" :min="setup.year.first_day" :max="setup.year.last_day" @change="commitDate(false)" @blur="commitDate(true)" @keydown.enter.prevent="commitDate(true)" />
+            <input id="schedule-as-of" v-model="date" class="form-control" type="date" :min="setup.year.first_day" :max="setup.year.last_day" @change="typedDate" @blur="commitDate(true)" @keydown.enter.prevent="commitDate(true)" />
             <template v-if="lens === 'teacher'">
                 <label for="schedule-teacher">Teacher</label>
                 <select id="schedule-teacher" v-model="teacherId" class="form-select" @change="load()">
@@ -98,7 +98,10 @@ function clashTitle(meeting: any, rowId: number) {
 }
 let generation = 0; let lastKey = ''; let committedDate = date.value;
 // As on the class week: a complete in-year date loads at once, a half-typed year waits.
+let typing: ReturnType<typeof setTimeout> | undefined;
+function typedDate() { clearTimeout(typing); typing = setTimeout(() => { if (date.value >= '2000-01-01') commitDate(true); }, 400); }
 function commitDate(leaving: boolean) {
+    clearTimeout(typing);
     const inYear = date.value >= props.setup.year.first_day && date.value <= props.setup.year.last_day;
     if (!leaving && !inYear) return;
     if (leaving && date.value === committedDate) return;
@@ -131,7 +134,7 @@ function printSchedule() {
     try { window.print(); } finally { stopPrinting(); }
 }
 onMounted(() => { void load(); if (typeof window !== 'undefined') window.addEventListener('afterprint', stopPrinting); });
-onBeforeUnmount(() => { ++generation; stopPrinting(); if (typeof window !== 'undefined') window.removeEventListener('afterprint', stopPrinting); });
+onBeforeUnmount(() => { ++generation; clearTimeout(typing); stopPrinting(); if (typeof window !== 'undefined') window.removeEventListener('afterprint', stopPrinting); });
 </script>
 
 <style scoped>

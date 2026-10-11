@@ -136,14 +136,19 @@ test('Timetable re-walk: a closure or non-meeting date is said above a class wee
         }finally{s.unmount();}
     }
 });
-test('Timetable re-walk: a typed in-year date loads on change or Enter, a half-typed year waits, and a bounds refusal offers no Retry',async()=>{
+const pause = () => new Promise(r => setTimeout(r, 450));
+test('Timetable re-walk: a typed date loads once typing stops or on Enter, a half-typed year waits, and a bounds refusal offers no Retry',async()=>{
     const s=await screen();try {
         const input=s.all(n=>n.props.id==='as-of')[0];const count=s.calls.length;
         for(const date of ['0002-11-01','0020-11-01','0202-11-01']) {type(input,date);input.props.onChange?.({target:input});await flush();}
-        assert.equal(s.calls.length,count);assert.doesNotMatch(s.text(),/Pick a date/,'typing never flashes the refusal');
-        type(input,'2026-11-02');input.props.onChange?.({target:input});await flush();assert.equal(s.calls.length,count+1);
-        type(input,'2026-11-09');input.props.onKeydown?.({key:'Enter',target:input,preventDefault(){}});await flush();assert.equal(s.calls.length,count+2);
-        type(input,'2030-01-07');blur(input);await flush();assert.equal(s.calls.length,count+2);assert.match(s.text(),/Pick a date between/);assert.doesNotMatch(s.text(),/Retry/);
+        await pause();await flush();assert.equal(s.calls.length,count);assert.doesNotMatch(s.text(),/Pick a date/,'a year still being typed is never refused');
+        // Typing 11/15 over another date passes through other complete dates: only the last is asked for.
+        for(const date of ['2026-01-10','2026-11-01','2026-11-15']) {type(input,date);input.props.onChange?.({target:input});await flush();}
+        assert.equal(s.calls.length,count,'nothing is asked while keys are still arriving');
+        await pause();await flush();assert.equal(s.calls.length,count+1);assert.match(String(s.calls.at(-1).url),/as_of=2026-11-15/);
+        type(input,'2026-11-09');input.props.onChange?.({target:input});input.props.onKeydown?.({key:'Enter',target:input,preventDefault(){}});await flush();assert.equal(s.calls.length,count+2);
+        await pause();await flush();assert.equal(s.calls.length,count+2,'Enter is not followed by a second read');
+        type(input,'2030-01-07');input.props.onChange?.({target:input});await pause();await flush();assert.equal(s.calls.length,count+2);assert.match(s.text(),/Pick a date between/);assert.doesNotMatch(s.text(),/Retry/);
     }finally{s.unmount();}
 });
 test('Timetable closed and non-meeting as-of states explain empty week without placement buttons',async()=>{
@@ -194,13 +199,13 @@ test('Timetable committed as-of date fetches week and clashes in one HTTP read',
         assert.equal(s.calls.length,count+1);assert.match(s.calls.at(-1).url,/\/week\?.*include_clashes=1/);assert.match(s.text(),/Clashes \(1\)/);
     }finally{s.unmount();}
 });
-test('Timetable date asks once per complete in-year date and never again on leaving the box',async()=>{
+test('Timetable date asks once for the date left in the box and never again on leaving it',async()=>{
     const s=await screen();try {
         const input=s.all(n=>n.props.id==='as-of')[0];const count=s.calls.length;
         for(const date of ['2026-11-01','2026-11-02','2026-11-22']) {
             type(input,date);input.props.onChange?.({target:input});await flush();
         }
-        assert.equal(s.calls.length,count+3);blur(input);await flush();assert.equal(s.calls.length,count+3);
+        blur(input);await flush();assert.equal(s.calls.length,count+1);await pause();await flush();assert.equal(s.calls.length,count+1);
     }finally{s.unmount();}
 });
 

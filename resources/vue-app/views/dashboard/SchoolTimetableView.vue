@@ -53,7 +53,7 @@
             <div v-else-if="panel === 'week'">
                 <div class="tt-toolbar">
                     <label for="tt-class">Class</label><select class="form-select" id="tt-class" v-model="classId" @change="loadWeek"><option v-for="g in setup.classes" :key="g.id" :value="g.id">{{ g.name }}</option></select>
-                    <label for="as-of">Showing the timetable as of</label><input class="form-control" id="as-of" v-model="asOf" type="date" :min="setup.year.first_day" :max="setup.year.last_day" @change="commitAsOf(false)" @blur="commitAsOf(true)" @keydown.enter.prevent="commitAsOf(true)" />
+                    <label for="as-of">Showing the timetable as of</label><input class="form-control" id="as-of" v-model="asOf" type="date" :min="setup.year.first_day" :max="setup.year.last_day" @change="typedAsOf" @blur="commitAsOf(true)" @keydown.enter.prevent="commitAsOf(true)" />
                 </div>
                 <h2 v-if="selectedClass">{{ selectedClass.name }}</h2>
                 <p v-if="!setup.classes.length">Add a class first.</p>
@@ -187,7 +187,13 @@ function showPanel(view: string) { panel.value = view; if (view === 'week' || vi
 function editClassWeek(id: number, date: string) { classId.value = id; asOf.value = date; showPanel('week'); }
 // A complete in-year date loads as soon as the box reports it; a half-typed year waits for
 // Enter or leaving the box before it is refused, so typing never flashes the refusal.
+// A date box reports a "complete" date at several keys while one is typed over another
+// (11/15 passes through 1 Jan and 1 Nov), so a change waits for the typing to stop; Enter
+// and leaving the box load at once.
+let typing: ReturnType<typeof setTimeout> | undefined;
+function typedAsOf() { clearTimeout(typing); typing = setTimeout(() => { if (asOf.value >= '2000-01-01') commitAsOf(true); }, 400); }
 function commitAsOf(leaving: boolean) {
+    clearTimeout(typing);
     if (!leaving && !inYear(asOf.value)) return;
     const key = `${base.value}:${classId.value}:${asOf.value}`;
     if (key !== lastWeekKey) void loadWeek();
@@ -291,7 +297,7 @@ function keydown(e: KeyboardEvent) {
 watch(root, () => { ++generation; ++weekGeneration; closeEditor(); setup.value = null; years.value = []; week.value = { days: [], meetings: [] }; clashes.value = []; yearId.value = null; classId.value = null; asOf.value = ''; load(); });
 watch(enabled, on => { if (on) load(); else { ++generation; ++weekGeneration; closeEditor(); setup.value = null; years.value = []; week.value = { days: [], meetings: [] }; clashes.value = []; } });
 onMounted(() => { load(); if (typeof document !== 'undefined') document.addEventListener?.('keydown',keydown); });
-onBeforeUnmount(() => { ++generation; ++weekGeneration; if (typeof document !== 'undefined') document.removeEventListener?.('keydown',keydown); });
+onBeforeUnmount(() => { ++generation; ++weekGeneration; clearTimeout(typing); if (typeof document !== 'undefined') document.removeEventListener?.('keydown',keydown); });
 </script>
 
 <style scoped>
@@ -322,5 +328,6 @@ input, select { min-width: 0; }
 .tt-check { display: flex !important; gap: .5rem; align-items: center; }
 .tt-check input { flex-shrink: 0; }
 .tt-clash-list { padding-inline-start: 1.25rem; }
-@media (max-width: 400px) { .timetable-page { padding: .5rem; } .tt-toolbar > select, .tt-toolbar > input { flex: 1 1 100%; width: 100%; } .tt-dialog { padding: .65rem; } }
+@media (max-width: 820px) { .tt-toolbar h1, .tt-toolbar > label, .tt-toolbar > .form-select, .tt-toolbar > .form-control { flex: 1 1 100%; width: 100%; } }
+@media (max-width: 400px) { .timetable-page { padding: .5rem; } .tt-dialog { padding: .65rem; } }
 </style>

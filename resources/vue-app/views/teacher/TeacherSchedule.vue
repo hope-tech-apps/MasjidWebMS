@@ -21,7 +21,7 @@
                 <h2 id="schedule-week" class="h5">Week</h2>
                 <div class="week-picker">
                     <label for="schedule-week-date">Week containing</label>
-                    <input id="schedule-week-date" v-model="weekDate" type="date" class="form-control" @change="commitWeek(false)" @blur="commitWeek(true)" @keydown.enter.prevent="commitWeek(true)" />
+                    <input id="schedule-week-date" v-model="weekDate" type="date" class="form-control" @focus="inBox = true" @change="typedWeek" @blur="inBox = false; commitWeek(true)" @keydown.enter.prevent="commitWeek(true)" />
                     <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="move(-7)">Previous week</button>
                     <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="load(null)">This week</button>
                     <button type="button" class="btn btn-outline-secondary" :disabled="loading" @click="move(7)">Next week</button>
@@ -73,7 +73,14 @@ const dateLabel = (date: string, weekday = false) => formatSchoolDay(date, 'en-U
     { month: 'long', day: 'numeric', year: 'numeric', ...(weekday ? { weekday: 'long' as const } : {}) });
 // A complete date loads as soon as the box reports it. While a year is still being typed the
 // box reports years like 0002 and 0020; those wait for Enter or leaving the box.
+// A date box reports a "complete" date at several keys while one is typed over another
+// (11/15 passes through 1 Jan and 1 Nov), so a change waits for the typing to stop; Enter
+// and leaving the box load at once.
+let typing: ReturnType<typeof setTimeout> | undefined;
+function typedWeek(): void { clearTimeout(typing); typing = setTimeout(() => commitWeek(false), 400); }
+let inBox = false;
 function commitWeek(leaving: boolean): void {
+    clearTimeout(typing);
     if (weekdayOfIso(weekDate.value) === null) return;
     if (!leaving && weekDate.value < '2000-01-01') return;
     const date = new Date(`${weekDate.value}T12:00:00Z`);
@@ -87,7 +94,8 @@ async function load(week: string | null): Promise<void> {
     const token = ++generation; loading.value = true; error.value = false; unavailable.value = false; requestedWeek.value = week;
     try {
         const response = await TeacherApiService.get(`/api/teacher/masjids/${school}/schedule${week ? `?week=${encodeURIComponent(week)}` : ''}`);
-        if (alive && token === generation) { page.value = response.data.data; if (weekDate.value === enteredDate) weekDate.value = page.value!.week_start; clock.value = Date.now(); }
+        if (alive && token === generation) { page.value = response.data.data; // Never rewrite the box under someone typing in it; the range line names the week.
+            if (weekDate.value === enteredDate && !inBox) weekDate.value = page.value!.week_start; clock.value = Date.now(); }
     } catch (failure: any) {
         if (alive && token === generation) { page.value = null; error.value = true; unavailable.value = failure?.response?.status === 404; }
     } finally { if (alive && token === generation) loading.value = false; }
@@ -98,7 +106,7 @@ function move(days: number): void {
     void load(date.toISOString().slice(0,10));
 }
 onMounted(() => { void load(null); timer = setInterval(() => { clock.value = Date.now(); }, 30000); });
-onBeforeUnmount(() => { alive = false; ++generation; if (timer !== undefined) clearInterval(timer); });
+onBeforeUnmount(() => { alive = false; ++generation; clearTimeout(typing); if (timer !== undefined) clearInterval(timer); });
 </script>
 
 <style scoped>
