@@ -1,0 +1,211 @@
+{
+    "submit": {
+        "sql": [
+            "select exists(select * from \"masjids\" where \"masjids\".\"id\" = ? and \"deleted_at\" is null and \"masjids\".\"deleted_at\" is null) as \"exists\"",
+            "select * from \"forms\" where \"masjid_id\" = ? and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+            "select * from \"forms\" where \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+            "select name, type, not \"notnull\" as \"nullable\", dflt_value as \"default\", pk as \"primary\", hidden as \"extra\" from pragma_table_xinfo('form_responses', 'main') order by cid asc",
+            "select \"sql\" from \"main\".sqlite_master where type = 'table' and name = 'form_responses'",
+            "select * from \"forms\" where \"forms\".\"id\" = ? limit 1",
+            "insert into \"form_responses\" (\"form_id\", \"masjid_id\", \"data\", \"entry_count\", \"amount_due\", \"status\", \"device_id\", \"ip_address\", \"user_agent\", \"submitted_at\", \"respondent_name\", \"respondent_email\", \"respondent_phone\", \"answers_text\", \"uuid\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "update \"forms\" set \"response_count\" = \"response_count\" + 1, \"updated_at\" = ? where \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null",
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"form_date_reservations\" where \"form_id\" = ? and \"form_response_id\" = ? order by \"id\" desc limit 1",
+            "select * from \"form_date_reservations\" where \"form_id\" = ? and \"form_response_id\" = ? order by \"id\" desc limit 1",
+            "select * from \"form_date_reservations\" where \"form_id\" = ? and \"form_response_id\" = ? order by \"id\" desc limit 1",
+            "select * from \"form_date_reservations\" where \"form_id\" = ? and \"form_response_id\" = ? order by \"id\" desc limit 1"
+        ],
+        "payload": {
+            "status": "success",
+            "message": "Thank you \u2014 your response has been received.",
+            "data": {
+                "id": 1,
+                "amount_due": null,
+                "entry_count": 1,
+                "success_title": null,
+                "success_body": null,
+                "success_next_steps": []
+            }
+        }
+    },
+    "list": {
+        "sql": [
+            "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+            "select * from \"forms\" where \"forms\".\"masjid_id\" = ? and \"forms\".\"masjid_id\" is not null and \"forms\".\"id\" = ? and \"forms\".\"deleted_at\" is null limit 1",
+            "select count(*) as aggregate from \"form_responses\" where \"form_responses\".\"form_id\" = ? and \"form_responses\".\"form_id\" is not null and \"masjid_id\" = ?",
+            "select * from \"form_responses\" where \"form_responses\".\"form_id\" = ? and \"form_responses\".\"form_id\" is not null and \"masjid_id\" = ? order by \"submitted_at\" desc, \"id\" desc limit 25 offset 0",
+            "select * from \"form_staff_codes\" where \"form_staff_codes\".\"form_id\" = ? and \"form_staff_codes\".\"form_id\" is not null and \"form_staff_codes\".\"masjid_id\" = ? order by \"holder_name\" asc, \"id\" asc"
+        ],
+        "payload": {
+            "status": "success",
+            "data": {
+                "current_page": 1,
+                "data": [
+                    {
+                        "id": 1,
+                        "form_id": 1,
+                        "respondent_name": "Maple Family",
+                        "respondent_email": "maple@example.invalid",
+                        "respondent_phone": null,
+                        "entry_count": 1,
+                        "amount_due": null,
+                        "status": "new",
+                        "admin_notes": null,
+                        "submitted_at": "2026-10-11T18:00:00+00:00",
+                        "uuid": "11111111-1111-4111-8111-111111111111",
+                        "payment_method": null,
+                        "payment_status": null,
+                        "delete_refusal": null,
+                        "payment_state": null,
+                        "settled": null,
+                        "currency": null,
+                        "amount_due_minor": null,
+                        "fee_covered_minor": 0,
+                        "total_minor": null,
+                        "paid_at": null,
+                        "paid_via": null,
+                        "card_page_opened": false,
+                        "charged_through": null,
+                        "stripe_payment_intent_id": null,
+                        "charge_flag": null,
+                        "charge_flagged_at": null,
+                        "charge_refunded_minor": null,
+                        "page_unreachable": false,
+                        "staff_code": null,
+                        "marked_paid_by": null,
+                        "collected_at": null,
+                        "collected_by": null,
+                        "status_changed_at": null,
+                        "status_changed_by": null,
+                        "price_breakdown": null
+                    }
+                ],
+                "first_page_url": "http://localhost/api/admin/masjids/1/forms/1/responses?page=1",
+                "from": 1,
+                "last_page": 1,
+                "last_page_url": "http://localhost/api/admin/masjids/1/forms/1/responses?page=1",
+                "links": [
+                    {
+                        "url": null,
+                        "label": "&laquo; Previous",
+                        "page": null,
+                        "active": false
+                    },
+                    {
+                        "url": "http://localhost/api/admin/masjids/1/forms/1/responses?page=1",
+                        "label": "1",
+                        "page": 1,
+                        "active": true
+                    },
+                    {
+                        "url": null,
+                        "label": "Next &raquo;",
+                        "page": null,
+                        "active": false
+                    }
+                ],
+                "next_page_url": null,
+                "path": "http://localhost/api/admin/masjids/1/forms/1/responses",
+                "per_page": 25,
+                "prev_page_url": null,
+                "to": 1,
+                "total": 1
+            },
+            "meta": {
+                "form": {
+                    "id": 1,
+                    "name": "Practice registration",
+                    "response_count": 1,
+                    "capacity": null
+                },
+                "columns": [
+                    {
+                        "key": "name",
+                        "label": "Name",
+                        "section": null,
+                        "repeatable": false,
+                        "field": "name"
+                    },
+                    {
+                        "key": "email",
+                        "label": "Email",
+                        "section": null,
+                        "repeatable": false,
+                        "field": "email"
+                    }
+                ],
+                "statuses": [
+                    "new",
+                    "confirmed",
+                    "waitlisted",
+                    "cancelled"
+                ],
+                "sortable": [
+                    "submitted_at",
+                    "respondent_name",
+                    "respondent_email",
+                    "status",
+                    "entry_count",
+                    "amount_due"
+                ],
+                "payment_filters": [
+                    "paid",
+                    "unpaid",
+                    "settled",
+                    "cash",
+                    "online",
+                    "external",
+                    "office"
+                ],
+                "collected_filters": [
+                    "yes",
+                    "no"
+                ],
+                "payment": {
+                    "enabled": false,
+                    "charges_fee": false,
+                    "online": false,
+                    "staff_codes": false,
+                    "office": false,
+                    "paid_via": [
+                        {
+                            "value": "zelle",
+                            "label": "Zelle"
+                        },
+                        {
+                            "value": "cashapp",
+                            "label": "Cash App"
+                        },
+                        {
+                            "value": "venmo",
+                            "label": "Venmo"
+                        },
+                        {
+                            "value": "check",
+                            "label": "Check"
+                        },
+                        {
+                            "value": "square",
+                            "label": "Square"
+                        },
+                        {
+                            "value": "bank_transfer",
+                            "label": "Bank transfer"
+                        },
+                        {
+                            "value": "other",
+                            "label": "Other"
+                        }
+                    ],
+                    "codes": []
+                },
+                "reservations": false,
+                "reservation_conflicts": 0,
+                "price_breakdown": false
+            }
+        }
+    },
+    "points:weekly-report": "points:weekly-report: 1 organisation(s), 0 class(es) sent, 0 family notice(s), 0 teacher notice(s), 0 already sent, 0 with nobody to tell, 0 undelivered (retried next run), 0 failure(s).\n",
+    "bucks:mint": "bucks:mint: 1 organisation(s), 0 class(es), 0 week(s), 0 student(s) minted 0 buck(s), 0 adjusted by 0, 0 failure(s).\n",
+    "bucks:expire": "bucks:expire: 1 organisation(s), 0 class(es), 0 student(s) expired 0 buck(s), 0 student(s) restored 0 buck(s), 0 failure(s).\n"
+}

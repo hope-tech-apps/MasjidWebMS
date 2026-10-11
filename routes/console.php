@@ -917,3 +917,6 @@ Schedule::command('bucks:expire')->hourlyAt(40)->withoutOverlapping(50);
 
 // Platform guide feedback may contain personal data entered in questions.
 Schedule::command('guides:ask-prune')->dailyAt('03:47')->withoutOverlapping();
+
+// School-local email hour; stamps make missed and repeated runs safe.
+Schedule::command('duties:remind')->hourly()->withoutOverlapping(50);

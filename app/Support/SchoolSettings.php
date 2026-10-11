@@ -156,6 +156,8 @@ final class SchoolSettings
         return self::classSubjectWork($school) && (bool) $school?->hasCapability('class_subject_report_summary');
     }
 
+    public static function familyDutyRota(?Masjid $school): bool { return DutyRotaMode::enabled($school); }
+
     public static function timetable(?Masjid $school): bool
     {
         return $school?->deleted_at === null && $school?->orgType() === 'school'
@@ -165,6 +167,12 @@ final class SchoolSettings
     /** Evaluate the intended map under the organisation mutex, before any writes. */
     public static function assertSubjectWorkChange(Masjid $school, array $changes): void
     {
+        if (($changes['family_duty_rota'] ?? false) === true && ($school->orgType() !== 'school' || ! ($changes['school_calendar'] ?? $school->hasCapability('school_calendar')))) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>['Switch on the school calendar at a school before enabling its family duty rota.']]);
+        }
+        if (($changes['school_calendar'] ?? null) === false && ($changes['family_duty_rota'] ?? $school->hasCapability('family_duty_rota'))) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>['Switch off the family duty rota before switching off its calendar.']]);
+        }
         if (($changes['school_timetable'] ?? false) === true
             && ($school->orgType() !== 'school' || ! ($changes['school_calendar'] ?? $school->hasCapability('school_calendar')))) {
             throw \Illuminate\Validation\ValidationException::withMessages(['capability' => ['Switch on the school calendar at a school before enabling its timetable.']]);

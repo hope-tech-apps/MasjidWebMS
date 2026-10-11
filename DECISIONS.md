@@ -9573,3 +9573,13 @@ Timetable final review: account delete/access guards return without timetable SQ
 - Reuse the neighbouring FormResponsesView btn-primary/btn-outline-primary selection idiom plus active/aria-pressed; no theme changes or literal colors. Group labels and controls, stacking below the page's 820px breakpoint.
 - Print overrides the app table's rem-based typography/spacing; protects only grid rows, not the enclosing document row. Normal wrapping preserves whole words. Closure is a single dated sentence; unplaced teacher list is school/teacher only. Phone columns use 96/150px and half-rem strip gutter expansion at <=400px.
 - No commit, CHANGELOG.md or CAPTURE_* variables per owner. Real-browser geometry/pagination cannot be claimed: dedicated local headless Chrome aborted before about:blank (exit 134).
+
+## Family duty rota — 2026-10-11
+- Save the free dates in a partial claim and return named refusals plus fresh choices. Successful choices remain held, reducing what must be re-picked.
+- Derive the current bearer from a random issuance nonce using APP_KEY-domain-separated HMAC; retain its separate hash only, and encrypt queued mail content. Copy/reminders preserve the issued link; explicit reissue rotates it.
+- Closure reconciliation runs under the rota mutex on the next read/build/claim/reminder sweep, without email. A removed closure does not resurrect a released assignment.
+- Last live registration cancellation/deletion withdraws the family's remaining obligation, releases future form assignments and keeps past/claim/office rows. A later live registration restores the obligation.
+- Retain forms/years referenced by a rota, including while OFF; refuse deletion and year date/weekday changes in words. After families exist, freeze year/source; create another rota to change them. OFF retains rows and stops routes/source builds/delivery. Reduced capacity keeps existing assignments.
+- An explicit office/claim re-add reactivates the same family/date row and retains its once-only reminder stamp. Closure notices remain on the copied family record. No rota/family delete endpoint.
+- Use daily school-local PointsReportSchedule time (default 3:00 PM) in an hourly sweep. Unique reminder keys/stamps plus atomic queued-to-sending claims and one attempt ensure at-most-once sends; a crash may lose a notice. Office pick resends are deliberate separate sends.
+- Responses with neither email nor phone stay separate by response identity. Exclude repeatable source fields; bound owed turns to 1–1000. Preview counts already-held picks as placed and rolls all writes back.

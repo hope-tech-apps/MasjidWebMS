@@ -172,7 +172,7 @@ class SchoolCalendarTermsTest extends TestCase
         // Form encoding is what ApiService sends; GET carries no body.
         $response = $method === 'GET' ? $this->getJson($this->url()) : $this->call($method, $this->url($suffix), $body, [], [], ['HTTP_ACCEPT' => 'application/json']);
         $response->assertStatus($status); $this->assertSame($expected, $response->json());
-        $this->assertSame([['id' => 101, 'masjid_id' => $this->school->id, 'label' => 'Test year', 'first_day' => '2026-10-11 00:00:00', 'last_day' => '2026-10-25 00:00:00', 'created_at' => '2026-10-08 16:00:00', 'updated_at' => '2026-10-08 16:00:00', 'meeting_weekdays' => $dormant ? '[1,2,3,4,5]' : null, 'term_system' => $dormant ? 'semesters' : null]], array_map(fn ($r) => (array) $r, \Illuminate\Support\Facades\DB::table('school_years')->get()->all()));
+        $this->assertSame([['id' => 101, 'masjid_id' => $this->school->id, 'label' => 'Test year', 'first_day' => '2026-10-11 00:00:00', 'last_day' => '2026-10-25 00:00:00', 'created_at' => '2026-10-08 16:00:00', 'updated_at' => '2026-10-08 16:00:00', 'meeting_weekdays' => $dormant ? '[1,2,3,4,5]' : null, 'term_system' => $dormant ? 'semesters' : null, 'has_duty_rota_records' => 0]], array_map(fn ($r) => (array) $r, \Illuminate\Support\Facades\DB::table('school_years')->get()->all()));
         $this->assertSame([['id' => 201, 'masjid_id' => $this->school->id, 'school_year_id' => 101, 'closed_on' => '2026-10-18 00:00:00', 'reason' => 'Staff day', 'created_at' => '2026-10-08 16:00:00', 'updated_at' => '2026-10-08 16:00:00']], array_map(fn ($r) => (array) $r, \Illuminate\Support\Facades\DB::table('school_closures')->get()->all()));
     }
 

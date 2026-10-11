@@ -430,3 +430,8 @@ Written 2026-09-30 with the group A fixes off the ship-critic (`design/ship-crit
 - Equal fallback clocks share one column with both names/IDs. Tied overlaps choose the earlier displayed row, consistently and deterministically. Teacher grids retain one card in each assigned teacher's row, while class grids have one card per meeting.
 - Phone gutter expansion uses 8px on either side so the observed 240px strip at 320 becomes 256px (96 + 150 + 10); this is CSS intent, not a measured browser result.
 - SQLite/mounted Vue/source and compiled CSS checks are local evidence only. Real browser geometry, print pagination, assistive technology, MySQL, CI, staging and production remain unchecked.
+
+## Family duty rota — 2026-10-11
+- Named isolated worktree on feature/family-duty-rota at 52daab37 authorizes writing; inherited tracked diff empty. HANDOFF.md absent; inherited artifacts preserved.
+- Save free claims and report refused dates; retain released assignments and suppress form rebuild from undoing a give-back or office move.
+- Queue private mail content encrypted; token hash only on the family row. Reminder hour follows the existing points-email time setting (default 3:00 PM), daily on school-local time.

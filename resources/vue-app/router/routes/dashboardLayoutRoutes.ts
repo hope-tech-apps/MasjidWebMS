@@ -267,6 +267,12 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/SchoolCalendarView.vue")
             },
             {
+                path: 'duty-rota',
+                name: 'masjid.dutyRota',
+                meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresCapability: 'family_duty_rota', pageTitle: 'Duty rota' },
+                component: () => import('@/views/dashboard/DutyRotaView.vue')
+            },
+            {
                 path: 'timetable',
                 name: 'masjid.schoolTimetable',
                 meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresCapability: 'school_timetable', pageTitle: 'Timetable' },

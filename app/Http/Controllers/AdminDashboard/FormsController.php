@@ -318,6 +318,7 @@ class FormsController extends Controller
     {
         $masjid = Masjid::findOrFail($masjid_id);
         $form = $masjid->forms()->findOrFail($form_id);
+        \App\Support\DutyRotaMode::refuseDeletion($form, 'source_form_id');
 
         // Explicit masjid filter and an explicit scope bypass: this must not depend on
         // whether TenantContext happens to be bound on this request, because a query
