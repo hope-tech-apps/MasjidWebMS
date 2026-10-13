@@ -44,13 +44,18 @@ final class AppBottomTabs
         if (! self::enabled($org)) return null;
         $out = [];
         foreach ($rows as $row) {
+            if ($row->saved_key === 'menu') {
+                $out['menu'] = ['id'=>null,'key'=>'menu','name'=>'Menu'];
+                if (count($out) === 4) break;
+                continue;
+            }
             if ($row->saved_key === 'volunteer') {
                 if (!$withVolunteer || $volunteerSnapshot === null || !AppVolunteer::enabled($org) || !filled($row->volunteer_url)) continue;
                 $out['volunteer'] = ['id'=>null, 'key'=>'volunteer', 'name'=>$volunteerSnapshot['title']];
                 if (count($out) === 4) break;
                 continue;
             }
-            if ($row->id === null || ! $row->is_available || self::isHome($row)) continue;
+            if ($row->id === null || ! $row->is_available || (self::isHome($row) || in_array($row->key,['menu','volunteer'],true))) continue;
             if (isset($out[(int) $row->id])) continue;
             $out[(int) $row->id] = ['id' => (int) $row->id, 'key' => $row->key, 'name' => $row->name];
             if (count($out) === 4) break;
@@ -67,14 +72,15 @@ final class AppBottomTabs
             ->join('masjid_mobile_app_features as pivot', 'pivot.feature_id', '=', 'mobile_app_features.id')
             ->where('pivot.masjid_id', $orgId)->where('pivot.is_available', true)
             ->orderBy('mobile_app_features.id')->get(['mobile_app_features.id', 'key', 'name'])
-            ->reject(fn ($feature) => self::isHome($feature))->values();
+            ->reject(fn ($feature) => self::isHome($feature) || in_array($feature->key,['menu','volunteer'],true))->values();
+        $features->push((object)['id'=>'menu','key'=>'menu','name'=>'Menu']);
         $org = ClassSubjectMode::loadedOrganisation($orgId) ?? Masjid::findOrFail($orgId);
         $volunteer = AppVolunteer::payload($org);
         if ($volunteer !== null) $features->push((object)['id'=>'volunteer','key'=>'volunteer','name'=>$volunteer['title']]);
         $byId = $features->keyBy('id');
         $chosen = AppBottomTab::orderBy('position')->get()->map(function ($tab) use ($byId) {
-            $live = $byId->get($tab->saved_key === 'volunteer' ? 'volunteer' : $tab->feature_id);
-            return ['id' => $tab->id, 'feature_id' => $tab->saved_key === 'volunteer' ? 'volunteer' : $tab->feature_id, 'key' => $live?->key ?? $tab->saved_key,
+            $live = $byId->get(in_array($tab->saved_key,['menu','volunteer'],true) ? $tab->saved_key : $tab->feature_id);
+            return ['id' => $tab->id, 'feature_id' => in_array($tab->saved_key,['menu','volunteer'],true) ? $tab->saved_key : $tab->feature_id, 'key' => $live?->key ?? $tab->saved_key,
                 'name' => $live?->name ?? $tab->saved_title, 'available' => $live !== null];
         });
         return ['features' => $features, 'chosen' => $chosen];
@@ -91,26 +97,27 @@ final class AppBottomTabs
             DB::transaction(function () use ($orgId, $ids) {
                 $locked = Masjid::whereKey($orgId)->lockForUpdate()->firstOrFail();
                 abort_unless(self::enabled($locked), 404);
-                $ids = array_map(fn ($id) => $id === 'volunteer' ? $id : (int)$id, $ids);
+                $ids = array_map(fn ($id) => in_array($id,['menu','volunteer'],true) ? $id : (int)$id, $ids);
                 if (count($ids) > 4 || count(array_unique($ids)) !== count($ids)) {
                     throw ValidationException::withMessages(['feature_ids' => ['Choose up to four different features.']]);
                 }
                 $features = MobileAppFeature::query()
                     ->join('masjid_mobile_app_features as pivot', 'pivot.feature_id', '=', 'mobile_app_features.id')
                     ->where('pivot.masjid_id', $orgId)->where('pivot.is_available', true)
-                    ->whereIn('mobile_app_features.id', array_filter($ids,fn($id)=>$id !== 'volunteer'))->get(['mobile_app_features.id', 'key', 'name'])->keyBy('id');
+                    ->whereIn('mobile_app_features.id', array_filter($ids,fn($id)=>!in_array($id,['menu','volunteer'],true)))->get(['mobile_app_features.id', 'key', 'name'])->keyBy('id');
                 if (in_array('volunteer',$ids,true)) {
                     $volunteer=AppVolunteer::payload($locked);
                     if ($volunteer !== null) $features->put('volunteer',(object)['id'=>null,'key'=>'volunteer','name'=>$volunteer['title']]);
                 }
+                $features->put('menu',(object)['id'=>null,'key'=>'menu','name'=>'Menu']);
                 foreach ($ids as $id) {
-                    if (! isset($features[$id]) || ($id !== 'volunteer' && self::isHome($features[$id]))) {
+                    if (! isset($features[$id]) || (!in_array($id,['menu','volunteer'],true) && (self::isHome($features[$id]) || in_array($features[$id]->key,['menu','volunteer'],true)))) {
                         throw ValidationException::withMessages(['feature_ids' => ['That feature is no longer available. Choose from this organisation’s switched-on app features. Home is always first.']]);
                     }
                 }
                 AppBottomTab::query()->delete();
                 foreach ($ids as $position => $id) {
-                    AppBottomTab::create(['masjid_id' => $orgId, 'feature_id' => $id === 'volunteer' ? null : $id, 'position' => $position + 1,
+                    AppBottomTab::create(['masjid_id' => $orgId, 'feature_id' => in_array($id,['menu','volunteer'],true) ? null : $id, 'position' => $position + 1,
                         'saved_key' => $features[$id]->key, 'saved_title' => $features[$id]->name]);
                 }
             });

@@ -143,7 +143,10 @@ class MasjidsController extends Controller
         );
 
         $data = $masjid->toArray();
-        if (\App\Support\MemberQuestions::enabled($masjid)) $data['onboarding'] = ['questions'=>true] + \App\Support\MemberQuestions::options((int)$masjid->id);
+        if (\App\Support\MemberQuestions::enabled($masjid)) {
+            $onboarding=\App\Support\MemberQuestions::onboarding((int)$masjid->id);
+            if ($onboarding !== null) $data['onboarding']=$onboarding;
+        }
         $volunteer = \App\Support\AppVolunteer::payload($masjid);
         if ($volunteer !== null) $data['volunteer'] = $volunteer;
         if (\App\Support\AppBottomTabs::enabled($masjid)) {

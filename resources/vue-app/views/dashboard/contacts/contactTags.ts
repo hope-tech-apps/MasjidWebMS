@@ -96,6 +96,6 @@ export function contactsListUrl(
     if (search) url += `&search=${encodeURIComponent(search)}`;
     if (trashed) url += `&trashed=${trashed}`;
     if (tagId) url += `&tag_id=${tagId}`;
-    for (const key of ['occupation_id','help_id','interest_id']) if (appFilters[key]) url += `&${key}=${encodeURIComponent(appFilters[key]!)}`;
+    for (const key of ['field_id','occupation_id','help_id','interest_id']) if (appFilters[key]) url += `&${key}=${encodeURIComponent(appFilters[key]!)}`;
     return url;
 }

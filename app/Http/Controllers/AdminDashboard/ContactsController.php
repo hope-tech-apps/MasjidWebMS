@@ -60,10 +60,14 @@ class ContactsController extends Controller
         $trashed = (string) $request->query('trashed', '');
         $tagId = (int) $request->query('tag_id', 0);
 
-        $appFilters = $request->only(['occupation_id','help_id','interest_id']);
+        $appFilters = $request->only(['field_id','occupation_id','help_id','interest_id']);
         if ($appFilters !== []) {
             $org=\App\Support\ClassSubjectMode::loadedOrganisation((int)$masjid_id) ?? \App\Models\Masjid::find($masjid_id);
             if (!\App\Support\MemberQuestions::enabled($org)) $appFilters=[];
+            elseif (array_filter(array_intersect_key($appFilters,array_flip(['field_id','occupation_id','help_id'])))) {
+                $asked=array_column(\App\Support\MemberQuestions::options((int)$masjid_id)['questions'],'kind');
+                foreach (['field'=>'field_id','occupation'=>'occupation_id','help'=>'help_id'] as $kind=>$key) if (!in_array($kind,$asked,true)) unset($appFilters[$key]);
+            }
         }
 
         $contacts = Contact::query()
@@ -71,6 +75,7 @@ class ContactsController extends Controller
             ->when($trashed === 'with', fn ($query) => $query->withTrashed())
             ->when($trashed === 'only', fn ($query) => $query->onlyTrashed())
             ->when($tagId > 0, fn ($query) => $query->whereHas('tags', fn ($tags) => $tags->whereKey($tagId)))
+            ->when(!empty($appFilters['field_id']), fn($q)=>$q->whereIn('contacts.id', \Illuminate\Support\Facades\DB::table('member_question_answers')->where('masjid_id',$masjid_id)->where('field_id',(int)$appFilters['field_id'])->select('contact_id')))
             ->when(!empty($appFilters['occupation_id']), fn($q)=>$q->whereIn('contacts.id', \Illuminate\Support\Facades\DB::table('member_question_answers')->where('masjid_id',$masjid_id)->where('occupation_id',(int)$appFilters['occupation_id'])->select('contact_id')))
             ->when(!empty($appFilters['help_id']), fn($q)=>$q->whereIn('contacts.id', \Illuminate\Support\Facades\DB::table('member_question_answers as answer')->join('member_question_helps as help','help.answer_id','=','answer.id')->where('answer.masjid_id',$masjid_id)->where('help.masjid_id',$masjid_id)->where('help.option_id',(int)$appFilters['help_id'])->select('answer.contact_id')))
             ->when(!empty($appFilters['interest_id']), fn($q)=>$q->whereIn('contacts.id', \Illuminate\Support\Facades\DB::table('contact_service_interests as interest')->join('services','services.id','=','interest.service_id')->where('interest.masjid_id',$masjid_id)->where('services.masjid_id',$masjid_id)->where('interest.service_id',(int)$appFilters['interest_id'])->select('interest.contact_id')))

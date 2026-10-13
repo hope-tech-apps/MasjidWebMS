@@ -96,6 +96,7 @@
                     </div>
                 </div>
 
+                <MemberQuestionCounts v-if="masjidStore.masjid?.capabilities?.app_member_questions === true" :org-id="masjidStore.masjid.id" />
                 <MemberQuestionFilters v-if="masjidStore.masjid?.capabilities?.app_member_questions === true" :org-id="masjidStore.masjid.id" @change="applyAppFilters" />
 
                 <div v-if="selectedIds.length" class="alert alert-light border d-flex flex-wrap align-items-center gap-2 py-2 mb-3">
@@ -1260,6 +1261,7 @@
 </template>
 
 <script setup lang="ts">
+import MemberQuestionCounts from '@/components/contacts/MemberQuestionCounts.vue';
 import MemberQuestionFilters from '@/components/contacts/MemberQuestionFilters.vue';
 import MemberQuestionsBlock from '@/components/contacts/MemberQuestionsBlock.vue';
 import { ref, onBeforeMount, onBeforeUnmount, computed, watch } from 'vue';

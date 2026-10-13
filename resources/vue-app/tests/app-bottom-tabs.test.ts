@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const vue = require('vue');
 const features = [
     { id: 1, key: 'qur’an', name: 'Qur’an' }, { id: 2, key: 'hadith', name: 'Hadith' },
-    { id: 3, key: 'adhkar', name: 'Adhkar' }, { id: 4, key: 'qibla', name: 'Qibla' }, { id: 5, key: 'tasbih', name: 'Tasbih' },
+    { id: 3, key: 'adhkar', name: 'Adhkar' }, { id: 4, key: 'qibla', name: 'Qibla' }, { id: 5, key: 'tasbih', name: 'Tasbih' }, { id: 'menu', key: 'menu', name: 'Menu' },
 ];
 async function screen(chosen: any[] = [], on = true, refusal = false) {
     const writes: any[] = []; const requests: string[] = []; const guards: any[] = []; const listeners = new Map();
@@ -171,4 +171,8 @@ test('real organisation switch asks registered mounted draft before any reset an
         confirm = true; assert.equal(await switcher.switchTo(2), true);
         assert.equal(prompts, 2); assert.equal(auth.dashboardMasjidId, 2); assert.equal(resets, 1); assert.equal(epoch, 1);
     } finally { screen.unmount(); (globalThis as any).window = originalWindow; }
+});
+
+ test('Menu chooser adds orders and saves virtual Menu once, with placement advice',async()=>{
+    const s=await screen();try{assert.match(s.text(),/Most apps put Menu last\./); const menu=s.all(n=>n.tag==='button'&&n.props['aria-label']==='Add Menu to tabs')[0];click(menu);await flush();assert.equal(s.all(n=>n.props['data-tab-preview']!==undefined).at(-1)?.textContent,'Menu');click(s.all(n=>n.tag==='button'&&n.textContent==='Add to tabs')[0]);await flush();click(s.all(n=>n.props['aria-label']==='Move Menu down')[0]);await flush();click(s.button('Save'));await flush();assert.deepEqual(s.writes[0].body,{feature_ids:[1,'menu']});assert.equal(s.all(n=>n.props['aria-label']==='Add Menu to tabs').length,0);}finally{s.close();}
 });

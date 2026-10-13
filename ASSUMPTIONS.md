@@ -471,3 +471,6 @@ Verified catalogue has no Home row; exact home key/Home name reserved for a futu
 - Array-cache SQL pins measure application queries. Production database-cache infrastructure adds cache operations and has not been benchmarked. Local browser launch is attempted separately; wrapping CSS/mounted tests cannot prove actual phone geometry.
 
 Final cache note: SQLite database-cache infrastructure is now explicitly measured9/1 OFF and ON-empty,10/2 chosen with conditional publication. Actual MySQL execution remains unverified. Ward relationships also identify child records; unknown ages without those record markers retain the stated adult-member assumption.
+
+## Menu and member questions, 2026-10-13
+Owner's production state (859995cc, no live question users/answers) is inherited, not queried. Counts represent answer-bearing current directory contacts, retain revoked-login contacts, exclude soft-deleted contacts; no unanswered row. Unknown ages retain existing adult-member assumption. Native apps and production writes are outside this worktree build.

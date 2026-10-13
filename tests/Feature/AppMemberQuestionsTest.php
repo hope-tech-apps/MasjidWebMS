@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{Contact, Group, GroupMembership, Masjid, MemberQuestionOption, MemberQuestionAnswer, MemberQuestionHelp, AppVolunteerSetting, User, Service};
+use App\Models\{Contact, Group, GroupMembership, Masjid, MemberQuestionOption, MemberQuestionSetting, MemberQuestionAnswer, MemberQuestionHelp, AppVolunteerSetting, User, Service};
 use App\Services\Member\MemberAccountDeletion;
 use App\Support\{CapabilityWriter, TenantContext, MobileCache};
 use Database\Seeders\RolesAndPermissionsSeeder;
@@ -50,8 +50,104 @@ class AppMemberQuestionsTest extends TestCase
     private function office(User $user = null): void { auth()->forgetGuards(); app(TenantContext::class)->forgetTenant(); Sanctum::actingAs($user ?? $this->admin); }
     private function answers(): array
     {
-        return ['occupation_id'=>MemberQuestionOption::where('question','occupation')->where('is_other',true)->value('id'), 'occupation_text'=>'Independent maker', 'help_ids'=>[MemberQuestionOption::where('question','help')->where('is_other',true)->value('id')], 'help_text'=>'Can translate'];
+        DB::table('member_question_settings')->where('masjid_id',$this->org->id)->where('kind','help')->update(['active'=>true]);
+        return ['field_id'=>MemberQuestionOption::where('question','field')->where('is_other',true)->value('id'),'field_text'=>'Creative work','occupation_id'=>MemberQuestionOption::where('question','occupation')->where('is_other',true)->value('id'), 'occupation_text'=>'Independent maker', 'help_ids'=>[MemberQuestionOption::where('question','help')->where('is_other',true)->value('id')], 'help_text'=>'Can translate'];
     }
+    #[Test]
+    public function a_bound_tenant_cannot_read_update_or_delete_another_organisations_member_question_setting(): void
+    {
+        $other=$this->makeMasjid('other'); app(TenantContext::class)->forgetTenant();
+        $foreign=MemberQuestionSetting::create(['masjid_id'=>$other->id,'kind'=>'field','active'=>true,'prompt'=>'Your field?']);
+        app(TenantContext::class)->set($this->org->id);
+        $this->assertNull(MemberQuestionSetting::find($foreign->id));
+        $this->assertSame(0,MemberQuestionSetting::whereKey($foreign->id)->update(['active'=>false]));
+        $this->assertSame(0,MemberQuestionSetting::whereKey($foreign->id)->delete());
+        $own=MemberQuestionSetting::create(['masjid_id'=>$other->id,'kind'=>'field','active'=>true,'prompt'=>'Your field?']);
+        $this->assertSame($this->org->id,$own->masjid_id);
+    }
+
+    #[Test]
+    public function upgrade_preserves_old_field_id_ciphertext_and_help_but_seeds_real_professions(): void
+    {
+        $migration=require database_path('migrations/2026_10_13_020000_shape_member_questions.php');
+        $migration->down();
+        $old=MemberQuestionOption::create(['masjid_id'=>$this->org->id,'question'=>'occupation','label'=>'Healthcare','position'=>1,'active'=>true]);
+        $cipher=encrypt('Independent maker',false);
+        DB::table('member_question_answers')->insert(['masjid_id'=>$this->org->id,'contact_id'=>$this->member->id,'occupation_id'=>$old->id,'occupation_text'=>$cipher]);
+        $migration->up();
+        $this->assertSame('field',$old->fresh()->question);
+        $answer=DB::table('member_question_answers')->first();
+        $this->assertSame($old->id,$answer->field_id); $this->assertSame($cipher,$answer->field_text);
+        $this->assertNull($answer->occupation_id); $this->assertNull($answer->occupation_text);
+        $this->assertSame(18,MemberQuestionOption::where('question','occupation')->count());
+        $this->assertSame(['field','occupation'],DB::table('member_question_settings')->where('masjid_id',$this->org->id)->where('active',true)->orderBy('id')->pluck('kind')->all());
+        $this->assertFalse((bool)DB::table('member_question_settings')->where('kind','help')->value('active'));
+    }
+
+    #[Test]
+    public function organisation_shapes_the_asked_questions_and_unasked_answers_are_refused(): void
+    {
+        $this->enable();
+        $r=$this->mobile()->assertOk();
+        $this->assertSame(['field','occupation'],array_column($r->json('data.questions'),'kind'));
+        $this->assertSame(['What field do you work in?','What is your profession?'],array_column($r->json('data.questions'),'prompt'));
+        $this->assertSame([false,false],array_column($r->json('data.questions'),'multiple'));
+        $this->assertCount(14,$r->json('data.questions.0.options')); $this->assertCount(18,$r->json('data.questions.1.options'));
+        $help=MemberQuestionOption::where('question','help')->value('id');
+        $this->mobile('put',['help_ids'=>[$help]])->assertUnprocessable()->assertSee('not asked');
+        $other=MemberQuestionOption::where('question','field')->where('is_other',true)->value('id');
+        $profession=MemberQuestionOption::where('question','occupation')->where('label','Physician')->value('id');
+        $this->mobile('put',['field_id'=>$other,'field_text'=>'Creative work','occupation_id'=>$profession])->assertOk()->assertJsonPath('data.answers.field_text','Creative work');
+        $this->assertNotSame('Creative work',DB::table('member_question_answers')->value('field_text'));
+        $this->assertSame('text',\Illuminate\Support\Facades\Schema::getColumnType('member_question_answers','field_text'));
+        $this->mobile('put',['field_id'=>$profession])->assertUnprocessable();
+        $this->mobile('put',['field_text'=>'No Other'])->assertUnprocessable();
+        $this->mobile('put',['field_id'=>$other,'field_text'=>str_repeat('a',121)])->assertUnprocessable();
+        $this->office(User::factory()->create(['phone'=>'+15555550131','name'=>'Practice Admin','email'=>'admin@example.invalid','type'=>'SuperAdmin']));
+        $url='/api/admin/masjids/'.$this->org->id.'/member-question-options';
+        $body=$this->getJson($url)->assertOk()->json('data');
+        $body['settings']['field']=['active'=>'false','prompt'=>'Your work field?'];
+        $body['settings']['occupation']=['active'=>'true','prompt'=>'Your profession?'];
+        $body['settings']['help']=['active'=>'true','prompt'=>'Your skills?'];
+        $this->put($url,$body,['Accept'=>'application/json'])->assertOk();
+        $this->assertSame(['occupation','help'],array_column($this->mobile()->assertOk()->json('data.questions'),'kind'));
+        $this->mobile('put',['field_id'=>$other])->assertUnprocessable()->assertSee('not asked');
+        $this->mobile('put',[])->assertOk()->assertJsonPath('data.answers',['field_id'=>null,'field_text'=>null,'occupation_id'=>null,'occupation_text'=>null,'help_ids'=>[],'help_text'=>null]);
+        $body['settings']['field']['prompt']=str_repeat('a',81); $this->office(User::factory()->create(['phone'=>'+15555550132','name'=>'Practice Admin','email'=>'admin-two@example.invalid','type'=>'SuperAdmin'])); $this->putJson($url,$body)->assertUnprocessable();
+        DB::table('member_question_settings')->where('masjid_id',$this->org->id)->update(['active'=>false]);
+        auth()->forgetGuards(); app(TenantContext::class)->forgetTenant(); Cache::flush();
+        foreach (['/api/mobile/masjids/'.$this->org->id,'/api/v1/settings'] as $carrier) $this->getJson($carrier,['masjid-id'=>(string)$this->org->id])->assertOk()->assertJsonMissingPath('data.onboarding');
+    }
+
+    #[Test]
+    public function counts_and_csv_use_two_aggregate_queries_only_and_keep_tenants_and_names_private(): void
+    {
+        $this->enable();
+        $field=MemberQuestionOption::where('question','field')->value('id');
+        $occupation=MemberQuestionOption::where('question','occupation')->where('label','Physician')->value('id');
+        $this->mobile('put',['field_id'=>$field,'occupation_id'=>$occupation])->assertOk();
+        $second=$this->contact($this->org);
+        MemberQuestionAnswer::create(['masjid_id'=>$this->org->id,'contact_id'=>$second->id,'field_id'=>$field]);
+        $other=$this->makeMasjid('other'); $foreign=$this->contact($other);
+        MemberQuestionAnswer::create(['masjid_id'=>$other->id,'contact_id'=>$foreign->id,'field_id'=>$field,'occupation_id'=>$occupation]);
+        $this->office(); $url='/api/admin/masjids/'.$this->org->id.'/contacts/from-app-counts';
+        DB::enableQueryLog(); DB::flushQueryLog();
+        $r=$this->getJson($url)->assertOk(); $queries=DB::getQueryLog(); DB::disableQueryLog();
+        $this->assertSame(2,count(array_filter($queries,fn($q)=>str_contains(strtolower($q['query']),'count(answer.id)'))));
+        $this->assertSame(['id'=>$field,'label'=>'Education','count'=>2],$r->json('data.field.0'));
+        $this->assertSame(['id'=>$occupation,'label'=>'Physician','count'=>1],$r->json('data.occupation.0'));
+        $this->assertStringNotContainsString($this->member->email,$r->getContent());
+        $this->assertStringNotContainsString('contact_id',$r->getContent());
+        MemberQuestionOption::whereKey($field)->update(['label'=>'=SUM(1)']);
+        $csv=$this->get($url.'/csv')->assertOk()->streamedContent();
+        $this->assertStringContainsString('Members by field',$csv); $this->assertStringContainsString('Members by profession',$csv);
+        $this->assertStringContainsString("'=SUM(1)",$csv); $this->assertStringNotContainsString($this->member->email,$csv);
+        $this->getJson('/api/admin/masjids/'.$other->id.'/contacts/from-app-counts')->assertForbidden();
+        $second->delete(); $this->assertSame(1,$this->getJson($url)->assertOk()->json('data.field.0.count'));
+        CapabilityWriter::apply($this->org,['app_member_questions'=>false],null);
+        $this->getJson($url)->assertNotFound(); $this->get($url.'/csv')->assertNotFound();
+    }
+
     #[Test]
     public function dark_grants_hide_everywhere_and_new_routes_404(): void
     {
@@ -81,7 +177,7 @@ class AppMemberQuestionsTest extends TestCase
     {
         $this->office();$url='/api/admin/masjids/'.$this->org->id.'/contacts';$this->getJson($url)->assertOk();
         DB::enableQueryLog();DB::flushQueryLog();$base=$this->getJson($url)->assertOk()->getContent();$sql=array_column(DB::getQueryLog(),'query');DB::flushQueryLog();
-        $this->assertSame($base,$this->getJson($url.'?occupation_id=999&help_id=999&interest_id=999')->assertOk()->getContent());
+        $this->assertSame($base,$this->getJson($url.'?field_id=999&occupation_id=999&help_id=999&interest_id=999')->assertOk()->getContent());
         $this->assertSame($sql,array_column(DB::getQueryLog(),'query'));DB::disableQueryLog();
     }
     #[Test]
@@ -119,7 +215,7 @@ class AppMemberQuestionsTest extends TestCase
         $this->assertFalse($this->member->fresh()->memberAccessIsActive());
         $this->assertSame($data,\App\Support\MemberQuestions::answers($this->member));
         $this->office();$root='/api/admin/masjids/'.$this->org->id.'/contacts/'.$this->member->id;
-        $this->getJson($root.'/from-app')->assertOk()->assertJsonPath('data.help_text',$data['help_text']);
+        $this->getJson($root.'/from-app')->assertOk()->assertJsonPath('data.questions.2.text',$data['help_text']);
         $this->deleteJson($root)->assertOk();$this->postJson($root.'/restore')->assertOk();
         $this->assertSame($data,\App\Support\MemberQuestions::answers($this->member));
     }
@@ -198,18 +294,18 @@ class AppMemberQuestionsTest extends TestCase
     #[Test]
     public function defaults_seed_once_and_super_only_can_rename_reorder_and_deactivate(): void
     {
-        $this->enable(); $this->assertSame(13, MemberQuestionOption::where('question','occupation')->count());
+        $this->enable(); $this->assertSame(18, MemberQuestionOption::where('question','occupation')->count());
         $this->assertSame(8, MemberQuestionOption::where('question','help')->count());
         $occupation = MemberQuestionOption::where('question','occupation')->orderBy('position')->get()->toArray();
         $occupation[0]['label'] = 'Learning'; $occupation[0]['active'] = false;
         $occupation = array_reverse($occupation);
-        $body = ['occupation'=>$occupation, 'help'=>MemberQuestionOption::where('question','help')->orderBy('position')->get()->toArray()];
+        $body = ['settings'=>\App\Support\MemberQuestions::options($this->org->id,true)['settings'],'field'=>MemberQuestionOption::where('question','field')->orderBy('position')->get()->toArray(),'occupation'=>$occupation, 'help'=>MemberQuestionOption::where('question','help')->orderBy('position')->get()->toArray()];
         $url = '/api/admin/masjids/'.$this->org->id.'/member-question-options';
         $this->office(); $this->putJson($url,$body)->assertForbidden();
         $this->office(User::factory()->create(['phone'=>'+15555550101','name'=>'Practice Admin','type'=>'SuperAdmin'])); $this->putJson($url,$body)->assertOk();
         $this->assertFalse(MemberQuestionOption::find($occupation[count($occupation) - 1]['id'])->active);
         CapabilityWriter::apply($this->org,['app_member_questions'=>false],null); $this->enable();
-        $this->assertSame(21,MemberQuestionOption::count()); $this->assertSame('Learning',MemberQuestionOption::find($occupation[count($occupation) - 1]['id'])->label);
+        $this->assertSame(40,MemberQuestionOption::count()); $this->assertSame('Learning',MemberQuestionOption::find($occupation[count($occupation) - 1]['id'])->label);
     }
     #[Test]
     public function member_replace_clear_validation_encryption_and_own_only(): void
@@ -221,6 +317,8 @@ class AppMemberQuestionsTest extends TestCase
         $this->assertSame('text',\Illuminate\Support\Facades\Schema::getColumnType('member_question_answers','occupation_text'));
         $this->mobile()->assertOk()->assertJsonPath('data.answers.help_ids',$data['help_ids']);
         $other=$this->makeMasjid('two'); $otherMember=$this->contact($other);
+        $foreignField=MemberQuestionOption::create(['masjid_id'=>$other->id,'question'=>'field','label'=>'Foreign field','position'=>1,'active'=>true]);
+        $this->mobile('put',['field_id'=>$foreignField->id])->assertUnprocessable();
         $this->mobile('put',$data,$other->id)->assertForbidden();
         foreach ([999999, MemberQuestionOption::where('question','help')->value('id')] as $bad) {
             $this->mobile('put',['occupation_id'=>$bad])->assertUnprocessable();
@@ -285,21 +383,21 @@ class AppMemberQuestionsTest extends TestCase
         $this->enable();
         foreach ($urls as $url) {
             Cache::flush(); DB::enableQueryLog(); DB::flushQueryLog(); $r=$this->getJson($url,['masjid-id'=>(string)$this->org->id])->assertOk(); $sql=array_column(DB::getQueryLog(),'query'); DB::disableQueryLog();
-            $data=$r->json(); $this->assertTrue($data['data']['onboarding']['questions']); $this->assertCount(13,$data['data']['onboarding']['occupation']); unset($data['data']['onboarding']);
+            $data=$r->json(); $this->assertSame(['field','occupation'],array_column($data['data']['onboarding']['questions'],'kind')); $this->assertCount(14,$data['data']['onboarding']['questions'][0]['options']); unset($data['data']['onboarding']);
             $this->assertSame(json_encode($base[$url][0]),json_encode($data));
             $this->assertCount(1,array_filter($sql,fn($q)=>str_contains($q,'member_question_options')));
             $this->assertSame($base[$url][1],array_values(array_filter($sql,fn($q)=>!str_contains($q,'member_question_options'))));
         }
     }
     #[Test]
-    public function office_separate_read_and_three_filters_keep_directory_answers_private_and_queries_fixed(): void
+    public function office_separate_read_and_four_filters_keep_directory_answers_private_and_queries_fixed(): void
     {
         $this->enable(); $data=$this->answers(); $this->mobile('put',$data)->assertOk();
         $service=Service::create(['masjid_id'=>$this->org->id,'title'=>'Practice service','description'=>'Practice','text'=>'Practice','summary'=>'Practice']);
         \App\Models\ContactServiceInterest::create(['masjid_id'=>$this->org->id,'contact_id'=>$this->member->id,'service_id'=>$service->id]);
         $this->office(); $root='/api/admin/masjids/'.$this->org->id.'/contacts';
-        $this->getJson($root.'/'.$this->member->id.'/from-app')->assertOk()->assertJsonPath('data.occupation.label','Other')->assertJsonPath('data.interests.0.title','Practice service');
-        foreach (['occupation_id'=>$data['occupation_id'],'help_id'=>$data['help_ids'][0],'interest_id'=>$service->id] as $filter=>$value) {
+        $this->getJson($root.'/'.$this->member->id.'/from-app')->assertOk()->assertJsonPath('data.questions.1.answer.0.label','Other')->assertJsonPath('data.occupation.label','Other')->assertJsonPath('data.help_text','Can translate')->assertJsonPath('data.interests.0.title','Practice service');
+        foreach (['field_id'=>$data['field_id'],'occupation_id'=>$data['occupation_id'],'help_id'=>$data['help_ids'][0],'interest_id'=>$service->id] as $filter=>$value) {
             $r=$this->getJson($root.'?'.$filter.'='.$value)->assertOk(); $this->assertSame([$this->member->id],array_column($r->json('data.data'),'id')); $this->assertStringNotContainsString('Independent maker',$r->getContent());
         }
         $counts=[];
@@ -308,7 +406,7 @@ class AppMemberQuestionsTest extends TestCase
             DB::enableQueryLog(); DB::flushQueryLog(); $this->getJson($root.'?per_page='.$size.'&help_id='.$data['help_ids'][0])->assertOk(); $counts[]=count(DB::getQueryLog()); DB::disableQueryLog();
         }
         file_put_contents(base_path('artifacts/app101-office-counts.json'),json_encode($counts));
-        $this->assertSame([5,5],$counts);
+        $this->assertSame([6,6],$counts);
         $this->office(User::factory()->create(['phone'=>'+15555550101','name'=>'Practice Admin','type'=>'Teacher'])); $this->getJson($root.'/'.$this->member->id.'/from-app')->assertUnauthorized();
     }
     #[Test]

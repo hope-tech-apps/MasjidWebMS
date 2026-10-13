@@ -54,8 +54,8 @@ class MobileAppFeature extends Model implements HasMedia
     protected static function booted(): void
     {
         static::saving(function (self $feature) {
-            if (in_array(self::normaliseKey($feature->key), ['home','volunteer'], true)) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['key'=>'Home and Volunteer are reserved app keys.']);
+            if (in_array(self::normaliseKey($feature->key), ['home','volunteer','menu'], true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['key'=>'Home, Volunteer and Menu are reserved app keys.']);
             }
         });
         static::saved(function (self $feature) {

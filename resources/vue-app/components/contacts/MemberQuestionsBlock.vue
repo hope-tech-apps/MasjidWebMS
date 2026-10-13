@@ -3,8 +3,10 @@
         <h6>From the app</h6>
         <p class="small text-muted">Optional answers the member gave. The office can read them.</p>
         <dl class="mb-0">
-            <dt>What do you do?</dt><dd>{{ data.occupation?.label ?? 'Not answered' }}<span v-if="data.occupation_text" class="d-block" dir="auto">{{ data.occupation_text }}</span></dd>
-            <dt>How could you help?</dt><dd><span v-if="!data.help.length">Not answered</span><ul v-else class="mb-1"><li v-for="option in data.help" :key="option.id">{{ option.label }}</li></ul><span v-if="data.help_text" dir="auto">{{ data.help_text }}</span></dd>
+            <div v-for="question in data.questions" :key="question.kind">
+                <dt>{{ question.prompt }}</dt>
+                <dd><span v-if="!question.answer.length">Not answered</span><ul v-else class="mb-1"><li v-for="option in question.answer" :key="option.id">{{ option.label }}</li></ul><span v-if="question.text" class="d-block" dir="auto">{{ question.text }}</span></dd>
+            </div>
             <dt>Which programs interest you?</dt><dd><span v-if="!data.interests.length">None chosen</span><ul v-else class="mb-0"><li v-for="service in data.interests" :key="service.id">{{ service.title }}</li></ul></dd>
         </dl>
     </section>

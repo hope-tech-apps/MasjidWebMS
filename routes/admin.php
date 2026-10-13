@@ -960,6 +960,8 @@ Route::prefix('admin')->group(function () {
                 // endpoints, per-route. It runs AFTER auth:sanctum + admin + tenant,
                 // so a MasjidAdmin (bridged to the masjid-admin role, which holds the
                 // full CRM permission set) keeps the exact access they have today.
+                Route::get('{masjid_id}/contacts/from-app-counts', [\App\Http\Controllers\AdminDashboard\MemberQuestionsController::class, 'counts'])->middleware(['permission:view contacts','capability:app_member_questions']);
+                Route::get('{masjid_id}/contacts/from-app-counts/csv', [\App\Http\Controllers\AdminDashboard\MemberQuestionsController::class, 'csv'])->middleware(['permission:view contacts','capability:app_member_questions']);
                 Route::get('{masjid_id}/contacts/from-app-filters', [\App\Http\Controllers\AdminDashboard\MemberQuestionsController::class, 'filters'])->middleware(['permission:view contacts','capability:app_member_questions']);
                 Route::prefix('{masjid_id}/contacts')->controller(ContactsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');

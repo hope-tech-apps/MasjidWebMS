@@ -56,6 +56,23 @@ class AppBottomTabsTest extends TestCase
     }
 
     #[Test]
+    public function menu_is_always_available_ordered_unique_reserved_and_counts_toward_four(): void
+    {
+        $this->on(); $this->office();
+        $editor=$this->getJson($this->url())->assertOk()->json('data.features');
+        $this->assertContains(['id'=>'menu','key'=>'menu','name'=>'Menu'],$editor);
+        $this->putJson($this->url(),['feature_ids'=>[1,'menu',2,3]])->assertOk()->assertJsonPath('data.chosen.1.feature_id','menu');
+        $this->assertNull(AppBottomTab::where('saved_key','menu')->first()->feature_id);
+        foreach (['show','settings'] as $reader) $this->assertSame(['id'=>null,'key'=>'menu','name'=>'Menu'],json_decode($this->payloads()[$reader]['body'],true)['data']['bottom_tabs'][1]);
+        $this->office();
+        $this->putJson($this->url(),['feature_ids'=>['menu',1,2,3,4]])->assertUnprocessable();
+        $this->putJson($this->url(),['feature_ids'=>['menu','menu']])->assertUnprocessable();
+        $this->putJson($this->url(),['feature_ids'=>['menu',2]])->assertOk()->assertJsonPath('data.chosen.0.key','menu');
+        try { MobileAppFeature::create(['key'=>' Menu ','name'=>'Bad']); $this->fail('Reserved Menu accepted'); }
+        catch (\Illuminate\Validation\ValidationException $e) { $this->assertNotEmpty($e->errors()); }
+    }
+
+    #[Test]
     public function off_is_literal_base_and_new_routes_404_for_both_admin_types(): void
     {
         $expected = json_decode(file_get_contents(base_path('tests/fixtures/app-bottom-tabs-off-b531a07d.json')), true);

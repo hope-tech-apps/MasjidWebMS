@@ -206,7 +206,7 @@ return [
     | be a child's real date of birth sitting on staging, so it is nulled.
     */
     'encrypted_null' => [
-        'member_question_answers' => ['occupation_text','help_text'],
+        'member_question_answers' => ['field_text','occupation_text','help_text'],
         'users' => ['two_factor_secret'],
         // `age_given` (2026-10-05) is the twelfth: the age a family gave for a
         // student and the day they gave it, encrypted like the date beside it.
@@ -658,6 +658,7 @@ return [
     | Populated below by `php artisan test --filter=StagingScrubCoverage`.
     */
     'reviewed_keep' => [
+        'member_question_settings.prompt' => 'Organisation question wording, not member-entered answers.',
         'member_question_options.label' => 'Organisation option labels, not member-entered answers.',
         'app_volunteer_settings.title' => 'Public link title entered by the organisation, not a member answer.',
 

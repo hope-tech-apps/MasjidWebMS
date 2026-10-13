@@ -5,7 +5,7 @@
                 <h1 class="h3">App tabs</h1>
                 <AppVolunteerField v-if="volunteerEnabled && orgId" :org-id="orgId" @updated="refreshFeatures" />
                 <div v-if="enabled">
-                <p>Home is always first. Choose up to four more. Everything else stays in the app's side menu.</p>
+                <p>Home is always first. Choose up to four more. Everything else stays in the app's side menu. Most apps put Menu last.</p>
                 <p class="text-muted">The change reaches phones when people next open the app, on app versions that support it.</p>
                 <p v-if="loading" role="status">Loading app features…</p>
                 <div v-else-if="loadError" class="alert alert-danger" role="alert">
@@ -40,7 +40,7 @@
                         <ul class="list-unstyled">
                             <li v-for="feature in unchosen" :key="feature.id" class="app-tabs-choice border rounded p-3 mb-2">
                                 <span class="app-tabs-label" dir="auto">{{ feature.name }}</span>
-                                <button type="button" class="btn btn-outline-primary" :disabled="chosen.length >= 4" @click="add(feature)">Add to tabs</button>
+                                <button type="button" class="btn btn-outline-primary" :disabled="chosen.length >= 4"  :aria-label="`Add ${feature.name} to tabs`" @click="add(feature)">Add to tabs</button>
                             </li>
                         </ul>
                         <p v-if="features.length === 0" class="text-muted">There are no switched-on app features to choose from.</p>
@@ -66,8 +66,8 @@ import type { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 
-type Feature = { id: number | 'volunteer'; key: string; name: string };
-type Choice = { id?: number; feature_id: number | 'volunteer' | null; key: string; name: string; available: boolean };
+type Feature = { id: number | 'volunteer' | 'menu'; key: string; name: string };
+type Choice = { id?: number; feature_id: number | 'volunteer' | 'menu' | null; key: string; name: string; available: boolean };
 type Editor = { features: Feature[]; chosen: Choice[] };
 const auth = useAuthStore();
 const org = useMasjidStore();
