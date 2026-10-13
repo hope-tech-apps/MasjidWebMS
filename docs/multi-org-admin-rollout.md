@@ -85,16 +85,22 @@ kind the login was created as.
   lunch-staff door refuse an address that has a login of the other kind with the
   sentences they always had, and no payload carries `areas`.
 - **On:** the Teachers door attaches a live lunch-staff login as a teacher of that
-  school, and the lunch-staff door attaches a live teacher's login as lunch staff there.
-  The person is emailed that they were added and signs in as before; a switch in the
-  header moves them between the two places.
+  school, and the lunch-staff door gives lunch access to the live login of a person who
+  teaches somewhere and runs lunch nowhere (a teacher's login, or a lunch-staff login
+  whose lunch access was removed while it went on teaching: that is how lunch access is
+  given BACK). The person is emailed that they were added and signs in as before; a
+  switch in the header moves them between the two places.
 - **In both states** the tenant resolver binds a teacher's or lunch-staff request only
   through a row of the kind it is acting as. That part is not switchable: it only
   removes access.
 - **It also needs `TENANCY_MULTI_MEMBERSHIP=true`** to attach a person who already
   belongs somewhere, exactly as attaching a teacher to a second school does. With that
-  gate shut the doors answer "Adding an existing login to a second school (organisation)
-  is switched off."
+  gate shut nothing new is attached and nothing new is said: each door answers such an
+  address in the words it had for it before this feature (the Teachers door "This email
+  already has a Manara login that can't be added as a teacher. Contact Manara support."
+  for a lunch login; the lunch-staff door "The email has already been taken."). A
+  sentence of their own there told an office what kind of login an address had, without
+  attaching anything and without the person being emailed.
 - **An administrator's address stays refused at both doors.** One login has one global
   set of permissions; an administrator made a teacher elsewhere would carry them into
   the classes.
@@ -121,26 +127,58 @@ Also read `config('tenancy.multi_membership')` there, and the rows of the person
 first attach is for (their `users.type`, and their row at the organisation they already
 belong to).
 
+**If query 1 returns a row, do not deploy until a person has read it.** The migration
+below cannot tell a row somebody wrote by hand from a role an office gave on purpose
+(they are the same two columns), so when it finds one it STOPS with the ids and writes
+nothing, and `bin/deploy` stops with it: the new code is in place, the caches are still
+the old ones, and any later migration in the same deploy has not run. On the first
+release every such row is hand-written (no office could give a second role before this
+code existed), so the answer is `rewrite`, given for that one run and nowhere else:
+
+```sh
+# in the application directory on the box, as bin/deploy runs artisan
+sudo -u www-data HOME=/tmp NORMALISE_SCOPED_ROLES=rewrite php artisan migrate --force
+sudo bin/deploy     # again: nothing left to migrate, and it rebuilds the caches
+```
+
+The migration arrives with the deploy, so it cannot be answered beforehand. Read query 1
+immediately before deploying, and have the line ready if it was not empty.
+
 ### The release
 
 1. **Deploy with the switch off.** `migrate --force` runs one data migration,
-   `normalise_scoped_roles_on_masjid_user`: it rewrites the rows of query 1 to the role
-   of their login's kind (so each goes on meaning what it meant), writes nothing when
-   there are none, and logs the count either way (`storage/logs`, "normalise_scoped_roles").
-   It refuses to run if the switch is already on. No route is added, no token changes;
-   sessions live at the release are untouched.
+   `normalise_scoped_roles_on_masjid_user`. With no row of query 1 (the expected case) it
+   makes one read, writes nothing and logs "0 rows" (`storage/logs`,
+   "normalise_scoped_roles"). With such a row it stops and asks, as above:
+   `NORMALISE_SCOPED_ROLES=rewrite` rewrites each to the role of its login's kind (so it
+   goes on meaning what it meant), `NORMALISE_SCOPED_ROLES=keep` leaves them and
+   finishes. It does nothing at all if the switch is already on. No route is added, no
+   token changes; sessions live at the release are untouched.
 2. **Staging first, switch on there:** set the switch AFTER the deploy (not before: the
    migration skips itself when it finds the switch on). Walk it in a browser: a login with
    both roles in both areas, the switch between them, a removal on each side, and a
    one-role teacher and a one-role lunch login.
-3. **Switch on in production** with the inode-preserving editor, on the owner's yes:
+3. **Before the switch goes on in production**, two things that are not the deploy's:
+   - **The owner's word on what an attaching office is shown.** After an attach, the
+     attaching office's next list shows the person's STORED name and phone (the lunch
+     list, the Teachers list, Team & Access) and `invited: false`, so it learns the
+     address already had a login and reads a phone it did not type. Assumed acceptable
+     from the 2026-09-29 decision that every school that has a teacher may see their
+     phone; that decision was about schools sharing a teacher, and this widens it to any
+     organisation with Friday lunch and any teacher's address, and to any school and any
+     lunch volunteer's. The person is emailed that they were added; that is the only
+     check. If the answer is no, the change is in the three list payloads (no phone for
+     a person the office attached), not in the doors. `ASSUMPTIONS.md` has it.
+   - **The suite, run with the switch on** (see "Test posture for this switch" below).
+     From the day the switch is on, that run is the one that describes production.
+4. **Switch on in production** with the inode-preserving editor, on the owner's yes:
    `set-env.sh <ssh-host> <http-host> TENANCY_ROLES_PER_ORGANISATION true`.
    Never before the deploy of step 1 is live there: it carries the Vue app's half. With
    the server on and the previous bundle, a lunch login that an office makes a teacher is
    answered by `/api/teacher/user` first on every load and can no longer reach her lunch
    board. (A tab opened before the deploy still runs the previous bundle until it is
    reloaded.)
-4. The first real use is an office act: the school adds the person's address on its
+5. The first real use is an office act: the school adds the person's address on its
    Teachers screen with their class.
 
 ### Going back
@@ -152,8 +190,10 @@ belong to).
 - **Do NOT roll the CODE back while a cross-kind row exists.** Code from before this
   release reads only `users.type`: a lunch login's `teacher` row at a school is, to it, a
   live row of a lunch login, so it would bind the LUNCH area at that school (its guides at
-  once; its board if that school has Friday lunch). `php artisan staff:cross-kind-roles`
-  answers whether any exists (exit 0: none, 3: some) and lists them by id.
+  once; its board if that school has Friday lunch). The mirror is as true: a teacher's
+  `lunch-staff` row at a masjid would bind the TEACHER area there. `php artisan
+  staff:cross-kind-roles` answers whether any exists (exit 0: none, 3: some) and lists
+  them by id.
 - If the code must go back with such rows present, the Teachers screen is not the way to
   remove them: a teacher on timetable meetings cannot be removed there, and Library is a
   timetable assignment. Do it by query, keeping the export:
@@ -172,17 +212,58 @@ belong to).
   so they stay. To the older code that person is then not a teacher of the school: the
   timetable's teacher list will not offer them and switching the timetable off and on
   would end their meetings. Then roll back. On the way forward again, re-insert the
-  exported rows (`masjid_id`, `user_id`, `role`, `is_default`, timestamps) before turning
-  the switch on. Check that nobody is left with rows and no default.
-- **Do not run the migration again by hand** once such rows exist on purpose. It is why it
-  checks the switch; a run with the switch off after deliberate rows exist would turn each
-  of them back into its login's own kind.
+  exported rows (`masjid_id`, `user_id`, `role`, `is_default`, timestamps) only AFTER the
+  forward deploy's `migrate` has run, and before turning the switch on. (Put back before
+  it, they are rows the migration finds with the switch off: it would stop the deploy.)
+  Check that nobody is left with rows and no default.
+- **If the migration meets such rows again** (it was rolled back and re-run, on staging
+  or by `migrate:refresh`, with the switch off): it stops with their ids and writes
+  nothing. It used to rewrite them, which turned each role an office had given back into
+  its login's own kind: a lunch login's teacher row became a lunch row AT THE SCHOOL.
+  Once any office has given a second role the answer is `NORMALISE_SCOPED_ROLES=keep`,
+  never `rewrite`.
 
 ### What a hand edit must not forget
 
 For a teacher's or lunch-staff login the row now decides. After changing a `users.type`
 in tinker, look at that login's `masjid_user` rows as well, and run
 `php artisan staff:cross-kind-roles`.
+
+**Never set `users.type` to `MasjidAdmin` on a login that holds a row anywhere it should
+not administer.** An administrator binds through ANY live row, whatever its role says
+(an administrator's rows are never re-read): a login with a lunch row at a masjid and a
+teacher row at a school, re-typed by hand, is a full administrator of BOTH, the school
+included, which only ever made it a teacher. This was already true of a teacher at two
+schools; it now also reaches a lunch login. No screen does it: Change access on Team &
+Access is the one door that re-types, it refuses a login that belongs to another
+organisation, and it decides under the lock the attach doors take. Nothing in code stops
+a hand edit. Before one, list the rows that would become an administrator's:
+
+```sql
+SELECT mu.masjid_id, mu.role FROM masjid_user mu WHERE mu.user_id = <the login's id>;
+```
+
+and afterwards query 2 above must not list that login (an administrator holding a
+`teacher` or `lunch-staff` row).
+
+### Test posture for this switch
+
+The suite is run both ways, in CI on every push and pull request
+(`.github/workflows/tests.yml`, jobs `suite` and `suite-roles-on`):
+
+```sh
+php -d memory_limit=-1 vendor/bin/pest                                      # switch off: how it ships
+TENANCY_ROLES_PER_ORGANISATION=true php -d memory_limit=-1 vendor/bin/pest --log-junit junit-roles-on.xml
+php scripts/junit-expected-failures.php junit-roles-on.xml tests/fixtures/roles-switch-on-expected-failures.txt
+```
+
+The second run is NOT expected to be green. Four existing tests pin the switched-off
+behaviour without setting the switch and are deliberately left unedited (they are the
+proof that a school and a login the feature does not touch run what they always ran):
+the add, the edit and the removal of a teacher each run one more statement with the
+switch on, and the Teachers door attaches a lunch login instead of refusing it. The
+third line passes only when exactly those four fail; the list says why for each. Every
+new test of this feature sets the switch itself and passes in both runs.
 
 ---
 

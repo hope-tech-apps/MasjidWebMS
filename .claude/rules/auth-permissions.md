@@ -484,6 +484,26 @@ scoped kinds (`Teacher`, `LunchStaff`) the `masjid_user` row decides:
 - **After changing a `users.type` by hand** (tinker), look at that login's rows too:
   for a scoped login the row now decides. `php artisan staff:cross-kind-roles`
   lists every row whose role is the other scoped kind's.
+- **Never re-type a login that holds a row elsewhere into an administrator.** An
+  administrator binds through ANY live row, so a lunch login with a teacher row at
+  a school, set to `MasjidAdmin` by hand, administers the school too. Nothing in
+  code stops a hand edit (docs/multi-org-admin-rollout.md, "What a hand edit must
+  not forget"). The one door that re-types is `TeamController::update`, which
+  refuses a login that belongs to another organisation.
+- **A decision about where a login belongs is made under the user row's lock.** The
+  attach doors (`TeachersController::createOrAttach*`, `LunchStaffController::
+  createOrAttach`) and the removals take `lockForUpdate()` on the `users` row as the
+  FIRST statement of their transaction and decide after it; `TeamController::update`
+  and `::destroy` do the same (`lockedLogin()`). A check read before the lock, or a
+  plain read before it inside the transaction (which fixes the snapshot on MySQL),
+  races an attach at another organisation: that is how a re-type could end with an
+  administrator of a school that had just made the person a teacher.
+- **The lunch-staff door attaches a live login of EITHER scoped kind that runs lunch
+  nowhere** (switch on): a teacher's, or a lunch-staff login whose lunch access was
+  removed while it went on teaching. One login still runs lunch at one organisation.
+- **With `tenancy.multi_membership` shut, each door answers a cross-kind address in
+  the words it had before this feature** (`CANNOT_ADD`; "has already been taken"),
+  so a refusal does not say what kind of login an address has.
 
 ## Permission gates apply ONLY to the new CRM endpoints
 
