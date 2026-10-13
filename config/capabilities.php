@@ -103,6 +103,16 @@ return [
     // Grants
     // ------------------------------------------------------------------
 
+    'app_bottom_tabs' => [
+        'kind' => 'grant',
+        'group' => 'content',
+        'catalogue_when_off' => false,
+        'label' => 'App tabs',
+        'description' => 'Let the organisation choose and order up to four app tabs after Home.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
     'web_pages' => [
         'kind' => 'grant',
         'group' => 'content',

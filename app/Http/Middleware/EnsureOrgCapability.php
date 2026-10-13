@@ -45,6 +45,11 @@ class EnsureOrgCapability
 
     public function handle(Request $request, Closure $next, string ...$capabilities): Response
     {
+        if (in_array('app_bottom_tabs', $capabilities, true)) {
+            $id = $this->tenant->get() ?? $request->route('masjid_id');
+            abort_unless(\App\Support\ClassSubjectMode::bottomTabsEnabled($id), 404);
+            return $next($request);
+        }
         if (in_array('family_duty_rota', $capabilities, true)) {
             $id = $this->tenant->get() ?? $request->route('masjid_id');
             abort_unless(\App\Support\DutyRotaMode::enabled(Masjid::find($id)), 404);

@@ -45,6 +45,12 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/MosqueDetailsTabsView.vue")
             },
+            {
+                path: 'app-tabs',
+                name: 'masjid.appTabs',
+                meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresCapability: 'app_bottom_tabs', pageTitle: 'App tabs' },
+                component: () => import('@/views/dashboard/AppTabsView.vue')
+            },
             ...announcementsManagementRoutes,
             ...splashAnnouncementsManagementRoutes,
             ...broadcastsManagementRoutes,

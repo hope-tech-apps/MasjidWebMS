@@ -25,6 +25,9 @@ class MasjidMobileAppFeaturesController extends Controller
     {
         try {
             $masjid = Masjid::with('features')->findOrFail($masjid_id);
+            if (\App\Support\AppBottomTabs::enabled($masjid)) {
+                return $this->updateWithTabs($request, $masjid);
+            }
             $feature = $masjid->features()->where('feature_id', $feature_id)->first();
             $masjidFeaturePivot = MasjidMobileAppFeature::where([
                 'masjid_id' => $masjid->id,
@@ -45,5 +48,19 @@ class MasjidMobileAppFeaturesController extends Controller
                 'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /** Share the tab writer's organisation mutex only while opted in, preserving the OFF writer. */
+    private function updateWithTabs(UpdateFeatureAvailabilityRequest $request, Masjid $masjid)
+    {
+        $pivot = \Illuminate\Support\Facades\DB::transaction(function () use ($request, $masjid) {
+            Masjid::whereKey($masjid->id)->lockForUpdate()->firstOrFail();
+            $pivot = MasjidMobileAppFeature::where('masjid_id', $masjid->id)
+                ->where('feature_id', $request->route('feature_id'))->firstOrFail();
+            $pivot->update(['is_available' => $request->boolean('is_available')]);
+            return $pivot;
+        });
+        MobileCache::flushMasjid((int) $masjid->id, MobileCache::FEATURES);
+        return response()->json(['status' => 'success', 'data' => $pivot], Response::HTTP_OK);
     }
 }

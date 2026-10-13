@@ -116,6 +116,16 @@ final class ClassSubjectMode
         return SchoolSettings::familyDutyRota($org);
     }
 
+    /** Reuse the organisation already read by the capability panel and tenant middleware. */
+    public static function bottomTabsEnabled(int|string|null $masjidId): bool
+    {
+        if ($masjidId === null) return false;
+        $id = (int) $masjidId;
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        $org = $rows[$id] ?? Masjid::find($id);
+        return AppBottomTabs::enabled($org);
+    }
+
     /** Student health is independent of subjects. Reuse main's request row, including OFF. */
     public static function allergiesEnabled(int|string|null $masjidId): bool
     {

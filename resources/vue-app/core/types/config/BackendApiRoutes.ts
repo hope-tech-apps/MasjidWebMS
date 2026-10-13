@@ -24,6 +24,7 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/broadcasts/${string}` |
     // The lobby TV board's settings: GET what is stored, POST a change (null hands a setting back to automatic).
     `/api/admin/masjids/${string}/tv-display` |
+    `/api/admin/masjids/${string}/app-bottom-tabs` |
     `/api/admin/masjids/${string}/announcements` |
     `/api/admin/masjids/${string}/announcements?page=${number}` |
     `/api/admin/masjids/${string}/announcements/archived?page=${number}` |

@@ -235,6 +235,12 @@ Route::prefix('admin')->group(function () {
                 Route::post('/', 'updateDetails');
             });
 
+            Route::prefix('{masjid_id}/app-bottom-tabs')->middleware('capability:app_bottom_tabs')
+                ->controller(\App\Http\Controllers\AdminDashboard\AppBottomTabsController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::put('/', 'update');
+                });
+
             // Masjid general settings (logos, copyright, app links, api keys)
             // `renderer.purge`: logos and copyright are on every public page.
             Route::prefix('{masjid_id}/general-settings')->middleware('renderer.purge')->controller(MasjidDetailsController::class)->group(function () {

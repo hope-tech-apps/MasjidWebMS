@@ -674,6 +674,8 @@ return [
         'cities.name' => 'Reference data from CountriesCitiesSeeder — a city, not a person.',
         'countries.name' => 'Reference data from CountriesCitiesSeeder.',
         'hadith_categories.name' => 'Reference data — the name of a hadith collection category.',
+        'app_bottom_tabs.saved_key' => 'Exact global app feature catalogue key, retained when a feature is deleted; no person data.',
+        'app_bottom_tabs.saved_title' => 'Global app feature catalogue display title, retained for unavailable selections; product vocabulary.',
         'mobile_app_features.name' => 'The catalogue of feature tiles in the mobile drawer ("Donate", "Prayer Times"). Product vocabulary.',
         'flyer_templates.name' => 'System flyer template names; `key` is UNIQUE and both are shipped, not tenant-authored.',
         'curriculum_weeks.assessment_note' => 'Curriculum reference data — what a given week of a given subject assesses. Written by the curriculum author, never about a child.',

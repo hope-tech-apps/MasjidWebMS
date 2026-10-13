@@ -42,7 +42,8 @@ class MasjidMobileAppFeaturesController extends Controller
             MobileCache::masjidKey((int) $masjid_id, MobileCache::FEATURES),
             MobileCache::TTL_MEDIUM,
             function () use ($masjid_id) {
-                return Masjid::with('features.icon')->findOrFail($masjid_id)->features
+                $org = Masjid::with('features.icon')->findOrFail($masjid_id);
+                $features = $org->features
                     ->map(function ($feature) {
                         $row = $feature->toArray();
 
@@ -63,12 +64,20 @@ class MasjidMobileAppFeaturesController extends Controller
                         return $row;
                     })
                     ->values();
+
+                // OFF keeps the legacy cache value and SQL exactly. Only opted-in caches
+                // carry a private marker; choices and availability are never cached.
+                return \App\Support\AppBottomTabs::enabled($org)
+                    ? ['features' => $features, 'tabs_enabled' => true]
+                    : $features;
             }
         );
 
-        return response()->json([
-            'status' => 'success',
-            'data' => $features,
-        ], Response::HTTP_OK);
+        $payload = ['status' => 'success', 'data' => is_array($features) && isset($features['tabs_enabled']) ? $features['features'] : $features];
+        if (is_array($features) && ($features['tabs_enabled'] ?? false) === true) {
+            $tabs = \App\Support\AppBottomTabs::mobile((int) $masjid_id);
+            if ($tabs !== null) $payload['bottom_tabs'] = $tabs;
+        }
+        return response()->json($payload, Response::HTTP_OK);
     }
 }

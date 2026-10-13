@@ -143,10 +143,13 @@ class MasjidsController extends Controller
             }
         );
 
-        return response()->json([
-            'status' => 'success',
-            'data' => $masjid
-        ]);
+        $data = $masjid->toArray();
+        if (\App\Support\AppBottomTabs::enabled($masjid)) {
+            $tabs = \App\Support\AppBottomTabs::mobile((int) $masjid_id);
+            if ($tabs !== null) $data['bottom_tabs'] = $tabs;
+        }
+
+        return response()->json(['status' => 'success', 'data' => $data]);
     }
 
     /**

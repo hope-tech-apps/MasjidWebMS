@@ -109,6 +109,11 @@ class SettingController extends Controller
             'jumaa_settings' => $this->getJumaaSettings(),
         ];
 
+        if (\App\Support\AppBottomTabs::enabled($masjid)) {
+            $tabs = \App\Support\AppBottomTabs::mobile((int) $masjid->id);
+            if ($tabs !== null) $data['bottom_tabs'] = $tabs;
+        }
+
         return response()->api(200, __('api.success'), $this->withBrandDerivatives($data, $masjid));
     }
 

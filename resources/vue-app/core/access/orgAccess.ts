@@ -178,6 +178,7 @@ export function menuItemState(
         return isSuper ? 'switched_off' : 'hidden';
     }
 
+    if (item.requiresCapability === 'app_bottom_tabs' && !hasGrant(masjid, 'app_bottom_tabs')) return 'hidden';
     if (item.requiresCapability === 'family_duty_rota' && !hasGrant(masjid, 'family_duty_rota')) return 'hidden';
     if (item.requiresCapability === 'school_timetable' && !hasGrant(masjid, 'school_timetable')) return 'hidden';
 
