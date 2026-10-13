@@ -98,20 +98,33 @@ class AppBottomTabsTest extends TestCase
     }
 
     #[Test]
-    public function enabled_empty_tabs_add_no_sql_and_features_never_carries_tabs(): void
+    public function enabled_empty_tabs_add_one_query_per_carrier_and_features_never_carries_tabs(): void
     {
         $off = $this->payloads(); $warm = $this->payloads();
+        foreach ([$off, $warm] as $base) {
+            foreach (['show', 'settings'] as $name) {
+                $this->assertCount(0, array_filter($base[$name]['sql'], fn ($q) => str_contains($q, 'app_bottom_tabs')));
+            }
+        }
         $this->on(); Cache::flush();
-        $this->assertSame($off, $this->payloads());
-        $this->assertSame($warm, $this->payloads());
+        foreach ([$off, $warm] as $base) {
+            $on = $this->payloads();
+            foreach (['show', 'settings'] as $name) {
+                $this->assertSame($base[$name]['body'], $on[$name]['body']);
+                $this->assertCount(1, array_filter($on[$name]['sql'], fn ($q) => str_contains($q, 'app_bottom_tabs')));
+                $this->assertSame($base[$name]['sql'], array_values(array_filter($on[$name]['sql'], fn ($q) => !str_contains($q, 'app_bottom_tabs'))));
+            }
+            foreach (['features', 'menu', 'orgs'] as $name) $this->assertSame($base[$name], $on[$name]);
+        }
         $this->office(); $this->putJson($this->url(), ['feature_ids'=>[1]])->assertOk();
         $this->assertSame($warm['features'], $this->payloads()['features']);
     }
 
     #[Test]
-    public function delete_then_insert_failure_restores_choices_and_presence(): void
+    public function delete_then_insert_failure_restores_choices_without_changing_capability_overrides(): void
     {
         $this->on(); $this->office(); $this->putJson($this->url(), ['feature_ids'=>[2,1]])->assertOk();
+        $overrides = $this->org->fresh()->capability_overrides;
         $dispatcher = AppBottomTab::getEventDispatcher();
         AppBottomTab::setEventDispatcher(clone $dispatcher);
         AppBottomTab::creating(function () { throw new \RuntimeException('Injected after delete'); });
@@ -122,7 +135,7 @@ class AppBottomTabsTest extends TestCase
             $this->assertSame('Injected after delete', $e->getMessage());
         } finally { AppBottomTab::setEventDispatcher($dispatcher); }
         $this->assertSame([2,1], AppBottomTab::orderBy('position')->pluck('feature_id')->all());
-        $this->assertTrue((bool) ($this->org->fresh()->capability_overrides['_app_bottom_tabs_present'] ?? false));
+        $this->assertSame($overrides, $this->org->fresh()->capability_overrides);
     }
 
     #[Test]
@@ -158,17 +171,23 @@ class AppBottomTabsTest extends TestCase
     }
 
     #[Test]
-    public function database_cache_off_and_on_empty_have_identical_query_lists_and_no_extra_lookup(): void
+    public function database_cache_off_adds_zero_and_enabled_empty_or_chosen_adds_one_query(): void
     {
         Cache::setDefaultDriver('database');Cache::flush();
         $read=function(){auth()->forgetGuards();app(TenantContext::class)->forgetTenant();DB::enableQueryLog();DB::flushQueryLog();$r=$this->getJson('/api/mobile/masjids/'.$this->org->id)->assertOk();$sql=array_column(DB::getQueryLog(),'query');DB::disableQueryLog();return ['body'=>$r->getContent(),'sql'=>$sql];};
         $off=$read();$warm=$read();$this->assertCount(9,$off['sql']);$this->assertCount(1,$warm['sql']);
-        $this->on();Cache::flush();$this->assertSame($off,$read());$this->assertSame($warm,$read());
+        $this->on();Cache::flush();$empty=$read();$emptyWarm=$read();
+        foreach ([[$off,$empty],[$warm,$emptyWarm]] as [$base,$enabled]) {
+            $this->assertSame($base['body'],$enabled['body']);
+            $this->assertCount(1,array_filter($enabled['sql'],fn($q)=>str_contains($q,'app_bottom_tabs')));
+            $this->assertSame($base['sql'],array_values(array_filter($enabled['sql'],fn($q)=>!str_contains($q,'app_bottom_tabs'))));
+        }
+        $this->assertCount(10,$empty['sql']);$this->assertCount(2,$emptyWarm['sql']);
         $this->office();$this->putJson($this->url(),['feature_ids'=>[1]])->assertOk();
         Cache::flush();$on=$read();$this->assertCount(1,array_filter($on['sql'],fn($q)=>str_contains($q,'app_bottom_tabs')));
         $this->assertSame($off['sql'],array_values(array_filter($on['sql'],fn($q)=>!str_contains($q,'app_bottom_tabs'))));
         $this->assertCount(2,$read()['sql']);
-        file_put_contents(base_path('artifacts/app101-database-cache-sql.json'),json_encode(['off'=>$off['sql'],'warm'=>$warm['sql'],'chosen'=>$on['sql']],JSON_PRETTY_PRINT));
+        file_put_contents(base_path('artifacts/app101-database-cache-sql.json'),json_encode(['off'=>$off['sql'],'warm'=>$warm['sql'],'empty'=>$empty['sql'],'empty_warm'=>$emptyWarm['sql'],'chosen'=>$on['sql']],JSON_PRETTY_PRINT));
     }
 
     #[Test]

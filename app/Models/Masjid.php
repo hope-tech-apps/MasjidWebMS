@@ -614,9 +614,6 @@ class Masjid extends Model implements HasMedia
         foreach (['app_member_questions','app_volunteer_entry'] as $key) {
             if (! $this->hasCapability($key) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides'][$key]);
         }
-        if (is_array($attributes['capability_overrides'] ?? null)) {
-            unset($attributes['capability_overrides']['_app_bottom_tabs_present'], $attributes['capability_overrides']['_app_member_answers_present']);
-        }
         return $attributes;
     }
 

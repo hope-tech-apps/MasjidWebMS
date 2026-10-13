@@ -89,14 +89,6 @@ final class MemberQuestions
             $occupationText=$data['occupation_text'] ?? null; $helpText=$data['help_text'] ?? null;
             if ($occupationText !== null && !($options->get($occupation)?->is_other ?? false)) throw ValidationException::withMessages(['occupation_text'=>'Extra words are only accepted with Other.']);
             if ($helpText !== null && !$options->only($help)->contains(fn($row)=>$row->is_other)) throw ValidationException::withMessages(['help_text'=>'Extra words are only accepted with Other.']);
-            if ($occupation !== null || $help !== []) {
-                $overrides=$org->capability_overrides ?? [];
-                if (($overrides['_app_member_answers_present'] ?? false) !== true) {
-                    $overrides['_app_member_answers_present']=true;
-                    DB::table('masjids')->where('id',$org->id)->update(['capability_overrides'=>json_encode($overrides)]);
-                    ClassSubjectMode::forget((int)$org->id);
-                }
-            }
             $existing=MemberQuestionAnswer::withoutMasjidScope()->where('masjid_id',$org->id)->where('contact_id',$contact->id);
             if ($occupation === null && $help === []) { $existing->delete(); return; }
             $answer=$existing->first() ?? new MemberQuestionAnswer(['masjid_id'=>$org->id,'contact_id'=>$contact->id]);
@@ -108,8 +100,6 @@ final class MemberQuestions
     /** Called within the existing contact merge transaction, even when disclosure is off. */
     public static function merge(Contact $source, Contact $target): void
     {
-        $org=ClassSubjectMode::loadedOrganisation((int)$source->masjid_id) ?? Masjid::withTrashed()->find($source->masjid_id);
-        if (!self::enabled($org) && ($org?->capability_overrides['_app_member_answers_present'] ?? false) !== true) return;
         if (!Schema::hasTable('member_question_answers')) return;
         abort_unless($source->masjid_id === $target->masjid_id,403);
         Contact::withoutMasjidScope()->where('masjid_id',$source->masjid_id)->whereIn('id',[$source->id,$target->id])->orderBy('id')->lockForUpdate()->get();

@@ -69,6 +69,14 @@ class MigrationsBootTest extends TestCase
         }
     }
 
+    #[Test]
+    public function migrations_do_not_create_database_triggers(): void
+    {
+        foreach (glob(database_path('migrations/*.php')) as $path) {
+            $this->assertDoesNotMatchRegularExpression('/CREATE\s+TRIGGER/i', file_get_contents($path), basename($path));
+        }
+    }
+
     /**
      * Raw SQL in a migration is the one thing that can be valid on production's MySQL
      * and fatal on the suite's SQLite. Every `DB::statement` in a migration must

@@ -11,6 +11,7 @@ use App\Models\ContactLoginEvent;
 use App\Models\ContactPortalInvite;
 use App\Models\ContactServiceInterest;
 use App\Models\MobileAppUser;
+use App\Models\MemberQuestionAnswer;
 use App\Support\CartTables;
 use App\Support\ContactIdentity;
 use App\Support\TenantContext;
@@ -34,6 +35,8 @@ use Illuminate\Support\Facades\Log;
  *    back to NULL). The device rows stay: the phone still exists and still gets
  *    `everyone` broadcasts, it has just stopped being this person's;
  *  - their service interests are deleted, so no service broadcast routes to them;
+ *  - their member-question answers and help selections are deleted, even when
+ *    the office keeps the contact or a separate family login remains;
  *  - outstanding sign-in codes for the address are deleted, so a code requested a
  *    minute ago cannot sign straight back in;
  *  - the login itself is cleared: `verified_at`, `login_enabled_at` and the
@@ -360,9 +363,15 @@ class MemberAccountDeletion
                 ->where('contact_id', $contact->id)
                 ->delete();
 
-            // Answers follow contact erasure by FK. On a kept contact, the migration's
-            // credential-clear trigger removes them within this same transaction,
-            // without adding SQL to the unchanged OFF deletion path.
+            // An account-deletion request removes answers on BOTH outcomes, even if
+            // disclosure is off or the kept contact no longer has app credentials.
+            // Only a genuinely missing pre-migration table skips; lookup failures roll back.
+            if (CartTables::existsOrFail('member_question_answers')) {
+                MemberQuestionAnswer::withoutMasjidScope()
+                    ->where('masjid_id', $contact->masjid_id)
+                    ->where('contact_id', $contact->id)
+                    ->delete();
+            }
 
             // Baskets are LOGIN plumbing. On the erased path the FK cascade clears them,
             // but a KEPT contact is never force-deleted, so the cascade never fires and

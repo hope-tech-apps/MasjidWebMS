@@ -15,11 +15,6 @@ final class AppBottomTabs
         return $org !== null && ! $org->trashed() && $org->hasCapability('app_bottom_tabs');
     }
 
-    public static function present(Masjid $org): bool
-    {
-        return self::enabled($org) && ($org->capability_overrides['_app_bottom_tabs_present'] ?? false) === true;
-    }
-
     /** No Home row exists in today's catalogue; reserve its explicit identity if one is added. */
     public static function isHome(object $feature): bool
     {
@@ -114,10 +109,6 @@ final class AppBottomTabs
                     }
                 }
                 AppBottomTab::query()->delete();
-                $overrides = $locked->capability_overrides ?? [];
-                if ($ids === []) unset($overrides['_app_bottom_tabs_present']);
-                else $overrides['_app_bottom_tabs_present'] = true;
-                $locked->forceFill(['capability_overrides' => $overrides ?: null])->save();
                 foreach ($ids as $position => $id) {
                     AppBottomTab::create(['masjid_id' => $orgId, 'feature_id' => $id === 'volunteer' ? null : $id, 'position' => $position + 1,
                         'saved_key' => $features[$id]->key, 'saved_title' => $features[$id]->name]);

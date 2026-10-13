@@ -85,17 +85,105 @@ class AppMemberQuestionsTest extends TestCase
         $this->assertSame($sql,array_column(DB::getQueryLog(),'query'));DB::disableQueryLog();
     }
     #[Test]
-    public function on_merge_reads_a_first_answer_even_when_the_request_presence_hint_was_false(): void
+    public function off_merge_reads_retained_answers_even_with_a_stale_organisation_snapshot(): void
     {
         $this->enable();$target=$this->contact($this->org);$stale=$this->org->fresh();
+        $stale->forceFill(['capability_overrides'=>[]]);
         request()->attributes->set(\App\Support\ClassSubjectMode::HTTP,true);
         request()->attributes->set('class_subjects_rows',[$this->org->id=>$stale]);
         $answer=MemberQuestionAnswer::create(['masjid_id'=>$this->org->id,'contact_id'=>$this->member->id,'occupation_id'=>MemberQuestionOption::where('question','occupation')->value('id')]);
-        $overrides=$stale->capability_overrides;$overrides['_app_member_answers_present']=true;
-        DB::table('masjids')->where('id',$this->org->id)->update(['capability_overrides'=>json_encode($overrides)]);
+        CapabilityWriter::apply($this->org,['app_member_questions'=>false],null);
         \App\Support\MemberQuestions::merge($this->member,$target);
         $this->assertSame($target->id,$answer->fresh()->contact_id);
     }
+    #[Test]
+    public function answer_and_tab_writes_leave_the_capability_record_unchanged(): void
+    {
+        $this->enable();$this->enable('app_bottom_tabs');$overrides=$this->org->fresh()->capability_overrides;
+        $this->mobile('put',$this->answers())->assertOk();
+        $this->assertSame($overrides,$this->org->fresh()->capability_overrides);
+        $this->office();$this->putJson('/api/admin/masjids/'.$this->org->id.'/app-bottom-tabs',['feature_ids'=>[]])->assertOk();
+        $this->assertSame($overrides,$this->org->fresh()->capability_overrides);
+        $this->assertSame($overrides,$this->org->fresh()->attributesToArray()['capability_overrides']);
+    }
+
+    #[Test]
+    public function revocation_password_removal_and_office_soft_delete_keep_answers(): void
+    {
+        $this->enable();$data=$this->answers();$this->mobile('put',$data)->assertOk();
+        $this->member->forceFill(['login_enabled_at'=>now(),'password'=>\Illuminate\Support\Facades\Hash::make('Practice password'),'password_set_at'=>now()])->save();
+        app(\App\Services\Family\FamilyPasswordService::class)->clear($this->member);
+        $this->assertNull($this->member->fresh()->password);
+        $this->assertSame($data,\App\Support\MemberQuestions::answers($this->member));
+        app(\App\Services\Family\FamilyAccessService::class)->revoke($this->member);
+        $this->assertFalse($this->member->fresh()->memberAccessIsActive());
+        $this->assertSame($data,\App\Support\MemberQuestions::answers($this->member));
+        $this->office();$root='/api/admin/masjids/'.$this->org->id.'/contacts/'.$this->member->id;
+        $this->getJson($root.'/from-app')->assertOk()->assertJsonPath('data.help_text',$data['help_text']);
+        $this->deleteJson($root)->assertOk();$this->postJson($root.'/restore')->assertOk();
+        $this->assertSame($data,\App\Support\MemberQuestions::answers($this->member));
+    }
+
+    private function guardian(Contact $contact): void
+    {
+        app(TenantContext::class)->set($this->org->id);
+        $ward=Contact::factory()->create(['masjid_id'=>$this->org->id]);
+        $group=Group::factory()->create(['masjid_id'=>$this->org->id,'kind'=>Group::KIND_CLASS]);
+        GroupMembership::create(['group_id'=>$group->id,'contact_id'=>$ward->id,'role'=>'member']);
+        GroupMembership::create(['group_id'=>$group->id,'contact_id'=>$contact->id,'role'=>'guardian','guardian_of_contact_id'=>$ward->id]);
+    }
+
+    #[Test]
+    public function readdressing_and_releasing_a_login_address_keep_each_contacts_answers(): void
+    {
+        $this->enable();$data=$this->answers();$this->mobile('put',$data)->assertOk();$this->guardian($this->member);
+        $access=app(\App\Services\Family\FamilyAccessService::class);
+        $access->enable($this->member,'changed@example.invalid');
+        $this->assertNull($this->member->fresh()->verified_at);
+        $this->assertSame($data,\App\Support\MemberQuestions::answers($this->member));
+        $access->revoke($this->member);
+        $claimant=$this->contact($this->org);$this->guardian($claimant);
+        $access->enable($claimant,'changed@example.invalid',reassignAddress:true);
+        $this->assertNull($this->member->fresh()->login_email);
+        $this->assertNull($this->member->fresh()->password);
+        $this->assertSame($data,\App\Support\MemberQuestions::answers($this->member));
+    }
+
+    #[Test]
+    public function permanent_contact_deletion_cascades_answers_and_selections_while_disclosure_is_off(): void
+    {
+        $this->enable();$this->mobile('put',$this->answers())->assertOk();
+        CapabilityWriter::apply($this->org,['app_member_questions'=>false],null);
+        $this->member->forceDelete();
+        $this->assertSame(0,MemberQuestionAnswer::withoutMasjidScope()->count());
+        $this->assertSame(0,MemberQuestionHelp::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function account_deletion_clears_answers_with_disclosure_off_and_no_credentials_to_clear(): void
+    {
+        $this->enable();$this->mobile('put',$this->answers())->assertOk();
+        $this->member->forceFill(['notes'=>'Office record','verified_at'=>null,'login_enabled_at'=>null,'password'=>null])->save();
+        $this->assertSame(1,MemberQuestionAnswer::withoutMasjidScope()->count());
+        CapabilityWriter::apply($this->org,['app_member_questions'=>false],null);
+        $result=app(MemberAccountDeletion::class)->delete($this->member,'app');
+        $this->assertSame('login_removed',$result['outcome']);
+        $this->assertSame(0,MemberQuestionAnswer::withoutMasjidScope()->count());
+        $this->assertSame(0,MemberQuestionHelp::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function account_deletion_clears_answers_even_when_a_separate_family_login_is_kept(): void
+    {
+        $this->enable();$this->mobile('put',$this->answers())->assertOk();
+        $this->member->forceFill(['login_enabled_at'=>now(),'email'=>'household@example.invalid'])->save();
+        $result=app(MemberAccountDeletion::class)->delete($this->member,'web',null,'household@example.invalid');
+        $this->assertSame('login_removed',$result['outcome']);$this->assertTrue($result['family_login_kept']);
+        $this->assertNotNull($this->member->fresh()->login_enabled_at);
+        $this->assertSame(0,MemberQuestionAnswer::withoutMasjidScope()->count());
+        $this->assertSame(0,MemberQuestionHelp::withoutMasjidScope()->count());
+    }
+
     #[Test]
     public function defaults_seed_once_and_super_only_can_rename_reorder_and_deactivate(): void
     {
@@ -223,7 +311,7 @@ class AppMemberQuestionsTest extends TestCase
         $this->assertSame('erased',$result['outcome']); $this->assertSame(0,MemberQuestionAnswer::count()); $this->assertSame(0,MemberQuestionHelp::count());
         $this->member=$this->contact($this->org); $this->member->forceFill(['notes'=>'Office record'])->save(); $this->mobile('put',$data)->assertOk();
         $result=app(MemberAccountDeletion::class)->delete($this->member,'app');
-        $this->assertSame('login_removed',$result['outcome']); $this->assertNotNull(Contact::withoutMasjidScope()->find($this->member->id)); $this->assertSame(0,MemberQuestionAnswer::count());
+        $this->assertSame('login_removed',$result['outcome']); $this->assertNotNull(Contact::withoutMasjidScope()->find($this->member->id)); $this->assertSame(0,MemberQuestionAnswer::count()); $this->assertSame(0,MemberQuestionHelp::count());
     }
     #[Test]
     public function public_deletion_of_a_family_only_survivor_clears_merged_answers_but_soft_restore_keeps_them(): void
@@ -284,24 +372,34 @@ class AppMemberQuestionsTest extends TestCase
     {
         $this->enable();$this->mobile('put',$this->answers())->assertOk();
         $dispatcher=Contact::getEventDispatcher();Contact::setEventDispatcher(clone $dispatcher);
-        Contact::forceDeleted(function(){throw new \RuntimeException('Injected after answers deletion');});
+        Contact::forceDeleting(function(){
+            $this->assertSame(0,MemberQuestionAnswer::withoutMasjidScope()->count());
+            $this->assertSame(0,MemberQuestionHelp::withoutMasjidScope()->count());
+            throw new \RuntimeException('Injected after answers deletion');
+        });
         try { app(MemberAccountDeletion::class)->delete($this->member,'app');$this->fail('Deletion failure was swallowed'); }
         catch(\RuntimeException $e){$this->assertSame('Injected after answers deletion',$e->getMessage());}
         finally {Contact::setEventDispatcher($dispatcher);}
         $this->assertSame(1,MemberQuestionAnswer::withoutMasjidScope()->where('contact_id',$this->member->id)->count());
         $this->assertNotNull(Contact::withoutMasjidScope()->find($this->member->id));
+        $this->assertSame(1,MemberQuestionHelp::withoutMasjidScope()->count());
     }
     #[Test]
     public function kept_contact_answer_erasure_rolls_back_with_a_failed_credential_clear(): void
     {
         $this->enable();$this->member->forceFill(['notes'=>'Office record'])->save();$this->mobile('put',$this->answers())->assertOk();
         $dispatcher=Contact::getEventDispatcher();Contact::setEventDispatcher(clone $dispatcher);
-        Contact::updated(function($contact){if($contact->wasChanged('verified_at')) throw new \RuntimeException('Injected after credential clear');});
+        Contact::updating(function($contact){if($contact->isDirty('verified_at')) {
+            $this->assertSame(0,MemberQuestionAnswer::withoutMasjidScope()->count());
+            $this->assertSame(0,MemberQuestionHelp::withoutMasjidScope()->count());
+            throw new \RuntimeException('Injected after credential clear');
+        }});
         try {app(MemberAccountDeletion::class)->delete($this->member,'app');$this->fail('Failure swallowed');}
         catch(\RuntimeException $e){$this->assertSame('Injected after credential clear',$e->getMessage());}
         finally {Contact::setEventDispatcher($dispatcher);}
         $this->assertSame(1,MemberQuestionAnswer::withoutMasjidScope()->where('contact_id',$this->member->id)->count());
         $this->assertNotNull($this->member->fresh()->verified_at);
+        $this->assertSame(1,MemberQuestionHelp::withoutMasjidScope()->count());
     }
     #[Test]
     public function real_contact_merge_carries_answers_and_keeps_survivor_without_duplicates(): void

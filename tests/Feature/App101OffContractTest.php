@@ -15,7 +15,7 @@ class App101OffContractTest extends TestCase
 {
     use RefreshDatabase;
     #[Test]
-    public function off_reads_and_account_deletion_match_109ce744_bytes_and_sql(): void
+    public function off_reads_and_deletion_match_109ce744_except_explicit_answer_cleanup(): void
     {
         $this->travelTo(\Carbon\Carbon::parse('2026-10-13 12:00:00 UTC'));Storage::fake('public');Cache::flush();$this->seed(RolesAndPermissionsSeeder::class);
         $admin=User::factory()->create(['type'=>'MasjidAdmin','phone'=>'+15555550101','name'=>'Practice Admin','email'=>'admin@example.invalid']);
@@ -29,6 +29,14 @@ class App101OffContractTest extends TestCase
         foreach(['index'=>'/api/admin/masjids/'.$org->id.'/contacts','detail'=>'/api/admin/masjids/'.$org->id.'/contacts/'.$member->id] as $name=>$url){auth()->forgetGuards();app(TenantContext::class)->forgetTenant();Sanctum::actingAs($admin);$request('office:'.$name,'get',$url);}
         auth()->forgetGuards();app(TenantContext::class)->forgetTenant();$request('member:interests','get','/api/mobile/masjids/'.$org->id.'/interests',['Authorization'=>'Bearer '.$token]);
         auth()->forgetGuards();app(TenantContext::class)->forgetTenant();\App\Support\CartTables::forget();DB::enableQueryLog();DB::flushQueryLog();$r=$this->deleteJson('/api/mobile/masjids/'.$org->id.'/me',[],['Authorization'=>'Bearer '.$token])->assertOk();$out['member:delete']=['body'=>$r->getContent(),'sql'=>array_column(DB::getQueryLog(),'query')];DB::disableQueryLog();
+        // Account deletion now owns answer cleanup in application code. Pin those two
+        // statements separately while retaining the original fixture and every legacy query.
+        $sql=$out['member:delete']['sql'];
+        $added=array_values(array_filter($sql,fn($q)=>str_contains($q,'member_question_answers')));
+        $this->assertCount(2,$added);
+        $this->assertStringContainsString('sqlite_master',$added[0]);
+        $this->assertSame('delete from "member_question_answers" where "masjid_id" = ? and "contact_id" = ?',$added[1]);
+        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'member_question_answers')));
         $this->assertSame(json_decode(file_get_contents(base_path('tests/fixtures/app101-off-109ce744.json')),true),$out);
     }
 }

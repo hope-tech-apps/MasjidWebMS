@@ -3,7 +3,6 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -47,24 +46,10 @@ return new class extends Migration
             $table->text('url')->nullable();
             $table->timestamps();
         });
-        if (DB::getDriverName() === 'sqlite') {
-            DB::unprepared('CREATE TRIGGER member_questions_login_removed AFTER UPDATE OF verified_at, login_enabled_at ON contacts
-                WHEN (OLD.verified_at IS NOT NULL AND NEW.verified_at IS NULL)
-                  OR (OLD.login_enabled_at IS NOT NULL AND NEW.login_enabled_at IS NULL)
-                BEGIN DELETE FROM member_question_answers WHERE contact_id = NEW.id AND masjid_id = NEW.masjid_id; END');
-        } elseif (DB::getDriverName() === 'mysql') {
-            DB::unprepared('CREATE TRIGGER member_questions_login_removed AFTER UPDATE ON contacts FOR EACH ROW
-                BEGIN IF (OLD.verified_at IS NOT NULL AND NEW.verified_at IS NULL)
-                  OR (OLD.login_enabled_at IS NOT NULL AND NEW.login_enabled_at IS NULL) THEN
-                DELETE FROM member_question_answers WHERE contact_id = NEW.id AND masjid_id = NEW.masjid_id;
-                END IF; END');
-        } else {
-            throw new \RuntimeException('Member question erasure requires a supported database driver.');
-        }
+
     }
     public function down(): void
     {
-        DB::unprepared('DROP TRIGGER IF EXISTS member_questions_login_removed');
         Schema::dropIfExists('app_volunteer_settings');
         Schema::dropIfExists('member_question_helps');
         Schema::dropIfExists('member_question_answers');

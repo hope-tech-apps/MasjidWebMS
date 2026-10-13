@@ -146,7 +146,7 @@ class MasjidsController extends Controller
         if (\App\Support\MemberQuestions::enabled($masjid)) $data['onboarding'] = ['questions'=>true] + \App\Support\MemberQuestions::options((int)$masjid->id);
         $volunteer = \App\Support\AppVolunteer::payload($masjid);
         if ($volunteer !== null) $data['volunteer'] = $volunteer;
-        if (\App\Support\AppBottomTabs::present($masjid)) {
+        if (\App\Support\AppBottomTabs::enabled($masjid)) {
             $tabs = \App\Support\AppBottomTabs::mobile((int) $masjid_id, \App\Support\AppVolunteer::enabled($masjid), $volunteer);
             if ($tabs !== null) $data['bottom_tabs'] = $tabs;
         }
