@@ -135,6 +135,11 @@ belong to).
    one-role teacher and a one-role lunch login.
 3. **Switch on in production** with the inode-preserving editor, on the owner's yes:
    `set-env.sh <ssh-host> <http-host> TENANCY_ROLES_PER_ORGANISATION true`.
+   Never before the deploy of step 1 is live there: it carries the Vue app's half. With
+   the server on and the previous bundle, a lunch login that an office makes a teacher is
+   answered by `/api/teacher/user` first on every load and can no longer reach her lunch
+   board. (A tab opened before the deploy still runs the previous bundle until it is
+   reloaded.)
 4. The first real use is an office act: the school adds the person's address on its
    Teachers screen with their class.
 
