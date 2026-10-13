@@ -9,6 +9,7 @@
                     <option value="">Choose a form</option>
                     <option v-for="form in forms" :key="form.id" :value="String(form.id)">{{ form.name }}</option>
                 </select>
+                <p v-if="formsLoaded && !forms.length" class="small text-muted mt-2 mb-0" role="status">No form here asks for each child's first and last name with an allergies question.</p>
             </div>
             <div class="copy-allergies-field">
                 <label :for="`allergy-field-${masjidId}`" class="form-label small">Child field name</label>
@@ -50,6 +51,7 @@ const props = defineProps<{ masjidId: number }>();
 const emit = defineEmits<{ copied: [] }>();
 const forms = ref<any[]>([]), formId = ref(''), field = ref('allergies'), result = ref<any>(null);
 const busy = ref(false), copied = ref(false), error = ref('');
+const formsLoaded = ref(false);
 let active = true;
 onBeforeUnmount(() => { active = false; });
 watch([formId, field], () => { result.value = null; copied.value = false; });
@@ -57,7 +59,7 @@ const unresolved = computed(() => (result.value?.children ?? []).filter(c => ['u
 onMounted(async () => {
     try {
         const response = await ApiService.get(`/api/admin/masjids/${props.masjidId}/students/allergy-forms` as BackendApiRoute);
-        if (active) forms.value = response.data.data;
+        if (active) { forms.value = response.data.data; formsLoaded.value = true; }
     } catch { if (active) error.value = 'Could not load forms.'; }
 });
 async function run(preview: boolean) {

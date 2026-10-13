@@ -84,13 +84,13 @@ class MemberQuestionsController extends Controller
     }
     public function counts()
     {
-        return response()->json(['status'=>'success','data'=>$this->countTables()]);
+        return response()->json(['status'=>'success','data'=>(object)$this->countTables()]);
     }
     public function csv()
     {
         $tables=$this->countTables();
         return response()->streamDownload(function()use($tables){
-            $out=fopen('php://output','w');
+            $out=\App\Support\SchoolRecordsCsv::open();
             foreach (['field'=>'Members by field','occupation'=>'Members by profession'] as $kind=>$title) {
                 if (!array_key_exists($kind,$tables)) continue;
                 \App\Support\SchoolRecordsCsv::row($out,[$title]);

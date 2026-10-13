@@ -28,7 +28,7 @@
                         <i class="bi bi-calendar3"></i><span class="d-none d-sm-inline">Calendar</span>
                     </router-link>
                     <router-link v-if="timetableEnabled" to="/teacher/schedule"
-                                 class="nav-link mn-topbar-link teacher-tap" :class="{ 'is-active': route.name === 'teacherSchedule' }"
+                                 class="nav-link mn-topbar-link d-inline-flex align-items-center gap-1 teacher-tap" :class="{ 'is-active': route.name === 'teacherSchedule' }"
                                  aria-label="My schedule" title="My schedule">
                         <i class="bi bi-calendar-week" aria-hidden="true"></i><span class="d-none d-sm-inline">My schedule</span>
                     </router-link>

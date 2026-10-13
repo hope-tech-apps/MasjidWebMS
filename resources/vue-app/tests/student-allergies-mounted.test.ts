@@ -51,6 +51,20 @@ test('Student allergy field loads source, edits and clears through office route'
     s.unmount();
 });
 
+test('Copy allergies explains why no form qualifies after loading', async () => {
+    let resolve: (response: any) => void = () => {};
+    const response = new Promise(r => { resolve = r; });
+    const s = await mount('views/dashboard/groups/CopyStudentAllergies.vue', { masjidId: 1 }, { vue,
+        '@/core/services/ApiService': { default: { get: () => response } },
+    });
+    try {
+        const message = "No form here asks for each child's first and last name with an allergies question.";
+        assert.ok(!s.text().includes(message));
+        resolve({ data: { data: [] } }); await flush();
+        assert.ok(s.text().includes(message)); assert.equal(s.button('Preview').disabled, true);
+    } finally { s.unmount(); }
+});
+
 test('Copy allergies previews counts then copies and lists unresolved children', async () => {
     const calls: any[]=[];
     const data={counts:{children_read:3,with_allergy:2,matched:1,already_set:0,unmatched:1,ambiguous:0,written:1,office_wins:0},children:[{response_id:4,entry_index:1,name:'Avery Willow',outcome:'unmatched'}]};
@@ -58,6 +72,7 @@ test('Copy allergies previews counts then copies and lists unresolved children',
         '@/core/services/ApiService':{default:{get:async()=>({data:{data:[{id:9,name:'Practice Enrollment'}]}}),post:async(...args:any[])=>{calls.push(args);return {data:{data}};}}},
     });
     await flush();
+    assert.doesNotMatch(s.text(), /No form here asks/);
     assert.equal(s.find(n=>n.tag==='button' && n.textContent.includes('Copy now')),undefined);
     // A school chooses a form explicitly; the preview must precede the write.
     const select=s.find(n=>n.tag==='select')!;

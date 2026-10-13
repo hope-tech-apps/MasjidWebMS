@@ -17,9 +17,10 @@
                 <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="!editable || !students.length" @click="markAll">Mark all present</button>
             </div>
             <div v-if="confirmAll" class="alert alert-warning" role="alert">
-                <p>{{ protectedCount }} {{ protectedCount === 1 ? 'student is' : 'students are' }} marked late or excused. Mark them present too?</p>
-                <button type="button" class="btn btn-sm btn-primary me-2" :disabled="!editable" @click="setAllPresent">Mark them present too</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" @click="confirmAll = false">Keep late and excused</button>
+                <p>{{ protectedCount }} {{ plural(protectedCount, 'student') }} {{ protectedCount === 1 ? 'is' : 'are' }} marked absent, late or excused. Mark them present too?</p>
+                <p class="small">{{ protectedSummary }}</p>
+                <button type="button" class="btn btn-sm btn-primary me-2" :disabled="!editable" @click="setAllPresent()">Mark everyone present</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="!editable" @click="setAllPresent(true)">Keep those marks</button>
             </div>
             <p v-if="!students.length" class="text-muted">No students on this roster yet.</p>
             <div class="list-group mb-3">
@@ -42,7 +43,7 @@
             </div>
             <div class="d-flex flex-wrap align-items-center gap-2 mb-4">
                 <button type="button" class="btn btn-success" :disabled="!editable || !students.some(s => s.status)" @click="save">{{ saving ? 'Saving…' : 'Save register' }}</button>
-                <span v-if="saved" class="text-success" role="status">Saved.</span>
+                <span v-if="saved" class="text-success" role="status">{{ savedMessage }}</span>
             </div>
         </div>
         <div v-if="loaded" class="mt-4">
@@ -79,7 +80,18 @@ const students = ref<Student[]>([]); const classes = ref<Classroom[]>([]); const
 const loading = ref(false); const saving = ref(false); const saved = ref(false); const error = ref(''); const overviewError = ref(''); const overviewLoading = ref(false);
 const revision = ref(''); const baseline = ref<Record<number, { status: string | null; note: string }>>({});
 const conflicts = ref<Record<number, string>>({}); const confirmAll = ref(false);
-const protectedCount = computed(() => Object.values(baseline.value).filter(s => s.status === 'late' || s.status === 'excused').length);
+const protectedKinds = ['absent', 'late', 'excused'];
+const protectedMarks = computed(() => Object.values(baseline.value).filter(s => protectedKinds.includes(s.status ?? '')));
+const protectedCount = computed(() => protectedMarks.value.length);
+const protectedSummary = computed(() => protectedKinds.map(kind => {
+    const count = protectedMarks.value.filter(s => s.status === kind).length;
+    return count ? `${count} ${kind}` : '';
+}).filter(Boolean).join(', '));
+const plural = (count: number, singular: string, multiple = singular + 's') => count === 1 ? singular : multiple;
+const savedMessage = computed(() => {
+    const unmarked = students.value.filter(s => !s.status).length;
+    return 'Saved.' + (unmarked ? ` ${unmarked} ${plural(unmarked, 'student')} ${unmarked === 1 ? 'is' : 'are'} not marked yet.` : '');
+});
 const base = computed(() => `/api/admin/masjids/${props.masjidId}/groups/${props.groupId}/attendance`);
 const editable = computed(() => !loading.value && !saving.value && !refusal.value && !!loaded.value && draft.value === loaded.value);
 const name = (student: Student) => [student.contact?.first_name, student.contact?.last_name].filter(Boolean).join(' ') || 'Student';
@@ -121,7 +133,14 @@ async function loadOverview(date: string) {
     } catch (e) { if (alive && run === overviewGeneration) overviewError.value = apiErrorText(e, 'Could not load school registers.'); }
     finally { if (alive && run === overviewGeneration) overviewLoading.value = false; }
 }
-function setAllPresent() { if (!editable.value) return; for (const student of students.value) student.status = 'present'; saved.value = false; confirmAll.value = false; }
+function setAllPresent(keepMarks = false) {
+    if (!editable.value) return;
+    for (const student of students.value) {
+        if (keepMarks && protectedKinds.includes(baseline.value[student.membership_id]?.status ?? '')) continue;
+        student.status = 'present';
+    }
+    saved.value = false; confirmAll.value = false;
+}
 function markAll() { if (!editable.value) return; if (protectedCount.value) confirmAll.value = true; else setAllPresent(); }
 async function save() {
     if (!editable.value || !students.value.some(s => s.status)) return;
@@ -165,9 +184,7 @@ onBeforeUnmount(() => { alive = false; ++generation; ++overviewGeneration; });
 <style scoped>
 .office-register, .register-student, .register-name { min-width: 0; max-width: 100%; }
 .register-date { width: 12rem; max-width: 100%; }
-.register-marks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .25rem; }
+.register-marks { display: flex; flex-wrap: wrap; gap: .25rem; }
+.register-marks .btn { min-height: 44px; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
 .register-student textarea { width: 100%; min-width: 0; }
-@media (max-width: 575px) {
-    .register-marks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 </style>
