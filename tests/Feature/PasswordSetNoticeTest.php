@@ -247,7 +247,7 @@ class PasswordSetNoticeTest extends TestCase
         $short = 'short.password@test.local';
         $contact = $this->appMember($short);
         $code = $this->requestCode($short);
-        $this->verify($short, $code, ['password' => 'too-short'])->assertStatus(422);
+        $this->verify($short, $code, ['password' => 'short-7'])->assertStatus(422);
         $this->assertFalse($contact->fresh()->hasFamilyPassword());
 
         // A new member with a blank name: the correct code is matched, the

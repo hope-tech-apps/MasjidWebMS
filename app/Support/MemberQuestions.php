@@ -9,7 +9,7 @@ use Illuminate\Validation\ValidationException;
 final class MemberQuestions
 {
     private const DEFAULTS = [
-        'occupation' => ['Education','Healthcare','Technology','Business and finance','Trades and construction','Public service','Student','Homemaker','Retired','Other'],
+        'occupation' => ['Education','Healthcare','Technology','Engineering','Business and finance','Legal','Trades and construction','Hospitality and food service','Public service','Student','Homemaker','Retired','Other'],
         'help' => ['Teaching and tutoring','Events and hospitality','Youth activities','Community relief','Maintenance and facilities','Technology and media','Professional advice','Other'],
     ];
     public static function enabled(?Masjid $org): bool
