@@ -31,10 +31,10 @@ use Tests\Support\ScopedRoleRows;
 // Set here, not inherited: the migration does nothing while the switch is on.
 beforeEach(fn () => config(['tenancy.roles_per_organisation' => false]));
 
-it('rewrites only a scoped login\'s row that names the other kind\'s role', function () {
+it('told to rewrite, rewrites only a scoped login\'s row that names the other kind\'s role', function () {
     $rows = ScopedRoleRows::seed();
 
-    $statements = ScopedRoleRows::migrate();
+    $statements = ScopedRoleRows::migrate('rewrite');
 
     expect(ScopedRoleRows::read($rows))->toBe(ScopedRoleRows::expected($rows));
 
@@ -53,7 +53,7 @@ it('rewrites only a scoped login\'s row that names the other kind\'s role', func
 it('leaves every row meaning what it meant, and writes nothing the second time', function () {
     $rows = ScopedRoleRows::seed();
 
-    ScopedRoleRows::migrate();
+    ScopedRoleRows::migrate('rewrite');
 
     foreach (MasjidUser::whereIn('id', array_column($rows, 'id'))->get() as $row) {
         $kind = DB::table('users')->where('id', $row->user_id)->value('type');
@@ -89,6 +89,8 @@ it('decides by the exact spelling, whatever the column\'s collation calls equal'
     $capitalised = $row('LunchStaff', 'Teacher');
     $padded = $row('Teacher', 'lunch-staff ');
 
+    // Told nothing, as a deploy runs it: a row that only LOOKS like the other
+    // kind's role to the collation is not one the migration stops for.
     ScopedRoleRows::migrate();
 
     foreach ([$capitalised => 'LunchStaff', $padded => 'Teacher'] as $id => $kind) {
@@ -109,12 +111,27 @@ it('does nothing once the roles switch is on', function () {
         ->and(array_column(ScopedRoleRows::read($rows), 'touched'))->not->toContain(true);
 });
 
+it('stops and writes nothing until it is told what the rows are', function () {
+    $rows = ScopedRoleRows::seed();
+
+    expect(fn () => ScopedRoleRows::migrate())->toThrow(RuntimeException::class, 'stopped and wrote nothing');
+
+    // One plain read, no write, no locking read.
+    expect(ScopedRoleRows::$lastStatements)->toHaveCount(1)
+        ->and(ScopedRoleRows::$lastStatements[0])->toStartWith('select')
+        ->and(ScopedRoleRows::$lastStatements[0])->not->toContain('for update')
+        ->and(array_column(ScopedRoleRows::read($rows), 'touched'))->not->toContain(true);
+
+    expect(ScopedRoleRows::migrate('keep'))->toHaveCount(1)
+        ->and(array_column(ScopedRoleRows::read($rows), 'touched'))->not->toContain(true);
+});
+
 it('lists the cross-kind rows with the command, by id and kind only', function () {
     $rows = ScopedRoleRows::seed();
 
     $this->artisan('staff:cross-kind-roles')->assertExitCode(3);
 
-    ScopedRoleRows::migrate();
+    ScopedRoleRows::migrate('rewrite');
 
     $this->artisan('staff:cross-kind-roles')->expectsOutput('0')->assertExitCode(0);
 });

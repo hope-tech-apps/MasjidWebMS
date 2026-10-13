@@ -18,7 +18,9 @@ use Tests\TestCase;
  * `masjid_user.role` was advisory; from this release a `teacher` or `lunch-staff`
  * role says what a teacher's or lunch-staff login IS at that organisation. The
  * migration's whole job is that no row written while the role meant nothing starts
- * to mean something new. tests/Mysql/NormaliseScopedRolesMysqlTest.php runs the same
+ * to mean something new, AND that it never does that to a row an office wrote on
+ * purpose afterwards: the two are the same columns, so when it finds one it stops
+ * and asks (NORMALISE_SCOPED_ROLES=rewrite or =keep, for that one run). tests/Mysql/NormaliseScopedRolesMysqlTest.php runs the same
  * fixture on the engine production runs.
  */
 class NormaliseScopedRolesMigrationTest extends TestCase
@@ -39,11 +41,11 @@ class NormaliseScopedRolesMigrationTest extends TestCase
     }
 
     #[Test]
-    public function it_rewrites_only_a_scoped_logins_row_that_names_the_other_kinds_role(): void
+    public function told_to_rewrite_it_rewrites_only_a_scoped_logins_row_that_names_the_other_kinds_role(): void
     {
         $rows = ScopedRoleRows::seed();
 
-        $statements = ScopedRoleRows::migrate();
+        $statements = ScopedRoleRows::migrate('rewrite');
 
         $this->assertSame(ScopedRoleRows::expected($rows), ScopedRoleRows::read($rows));
 
@@ -64,7 +66,7 @@ class NormaliseScopedRolesMigrationTest extends TestCase
         // After it, kindFor() must say that same thing for every row that existed.
         $rows = ScopedRoleRows::seed();
 
-        ScopedRoleRows::migrate();
+        ScopedRoleRows::migrate('rewrite');
 
         $checked = 0;
 
@@ -83,10 +85,11 @@ class NormaliseScopedRolesMigrationTest extends TestCase
     {
         $rows = ScopedRoleRows::seed();
 
-        ScopedRoleRows::migrate();
+        ScopedRoleRows::migrate('rewrite');
         $after = DB::table('masjid_user')->orderBy('id')->get()->all();
 
-        // The expected production case: nothing disagrees, so one read and no write.
+        // The expected production case: nothing disagrees, so one read, no write,
+        // and no question: this run is told nothing, as every deploy's is.
         $again = ScopedRoleRows::migrate();
 
         $this->assertCount(1, $again, 'a clean table costs one read');
@@ -117,6 +120,104 @@ class NormaliseScopedRolesMigrationTest extends TestCase
     }
 
     #[Test]
+    public function it_stops_and_writes_nothing_when_it_finds_such_a_row_and_nobody_has_said_what_it_is(): void
+    {
+        // It cannot tell a row written by hand while the role meant nothing from a
+        // role an office gave on purpose: they are the same two columns. Rewriting
+        // the second kind moves a person to the other area at that organisation, so
+        // without an answer it does neither. It stops, before any write, and names
+        // the rows by id.
+        $rows = ScopedRoleRows::seed();
+        $before = DB::table('masjid_user')->orderBy('id')->get()->all();
+        $found = collect($rows)->filter(fn (array $row): bool => $row['becomes'] !== $row['role'])->pluck('id')->sort()->values()->all();
+
+        foreach ([null, '', 'yes', 'REWRITE', 'true', '1'] as $notAnAnswer) {
+            try {
+                ScopedRoleRows::migrate($notAnAnswer);
+                $this->fail('the migration ran on with '.var_export($notAnAnswer, true).' for an answer');
+            } catch (\RuntimeException $stopped) {
+                $this->assertStringContainsString('stopped and wrote nothing', $stopped->getMessage());
+                $this->assertStringContainsString(count($found).' masjid_user row(s)', $stopped->getMessage());
+                $this->assertStringContainsString('ids '.implode(', ', $found).';', $stopped->getMessage(), 'the rows are named by id, so a person can read them');
+                $this->assertStringContainsString(ScopedRoleRows::ANSWER.'=rewrite', $stopped->getMessage());
+                $this->assertStringContainsString(ScopedRoleRows::ANSWER.'=keep', $stopped->getMessage());
+            }
+
+            $this->assertCount(1, ScopedRoleRows::$lastStatements, 'one read and nothing else');
+            $this->assertStringStartsWith('select', ScopedRoleRows::$lastStatements[0]);
+            $this->assertEquals($before, DB::table('masjid_user')->orderBy('id')->get()->all());
+        }
+
+        // No name and no address is in what it says: the message reaches a deploy log.
+        foreach (DB::table('users')->get(['name', 'email']) as $login) {
+            $this->assertStringNotContainsString($login->email, $stopped->getMessage());
+            $this->assertStringNotContainsString($login->name, $stopped->getMessage());
+        }
+    }
+
+    #[Test]
+    public function told_to_keep_them_it_writes_nothing_and_finishes(): void
+    {
+        $rows = ScopedRoleRows::seed();
+        $before = DB::table('masjid_user')->orderBy('id')->get()->all();
+
+        $statements = ScopedRoleRows::migrate('keep');
+
+        $this->assertCount(1, $statements, 'one read and no write');
+        $this->assertEquals($before, DB::table('masjid_user')->orderBy('id')->get()->all());
+        $this->assertNotContains(true, array_column(ScopedRoleRows::read($rows), 'touched'));
+    }
+
+    #[Test]
+    public function met_a_second_time_with_the_switch_off_it_does_not_turn_a_role_an_office_gave_back_into_the_logins_own_kind(): void
+    {
+        // The state the runbook calls the safe way back: the switch OFF, the rows left
+        // in place. If the migration is then run again (rolled back and re-run on a
+        // staging box, `migrate:refresh`, a roll-forward after the rows were put
+        // back), the switch no longer protects them. It used to rewrite each one: her
+        // `teacher` row at the school became a `lunch-staff` row AT THE SCHOOL, her
+        // teacher area was gone and the lunch area opened there, where no office had
+        // given it.
+        config(['tenancy.roles_per_organisation' => true]);
+        $this->buildOneLoginWorld();
+        config(['tenancy.roles_per_organisation' => false]);
+
+        $before = DB::table('masjid_user')->orderBy('id')->get()->all();
+
+        try {
+            ScopedRoleRows::migrate();
+            $this->fail('the migration rewrote, or passed over, a role an office gave');
+        } catch (\RuntimeException $stopped) {
+            $this->assertStringContainsString('stopped and wrote nothing', $stopped->getMessage());
+        }
+
+        $this->assertEquals($before, DB::table('masjid_user')->orderBy('id')->get()->all());
+        $this->assertSame('teacher', MasjidUser::where('masjid_id', $this->school->id)->where('user_id', $this->shamina->id)->value('role'));
+        $this->assertSame('lunch-staff', MasjidUser::where('masjid_id', $this->masjid->id)->where('user_id', $this->mirror->id)->value('role'));
+
+        // What the rewrite used to open stays shut, switch off...
+        $this->actingAsPerson($this->shamina);
+        $this->getJson($this->lunchBase($this->school).'/jummah-lunch/menus')->assertForbidden();
+        $this->getJson($this->lunchBase($this->school).'/guides')->assertForbidden();
+        $this->getJson($this->lunchBase($this->masjid).'/jummah-lunch/menus')->assertOk();
+
+        // ...and what it used to take away is still hers when the switch is on again.
+        config(['tenancy.roles_per_organisation' => true]);
+        $this->actingAsPerson($this->shamina);
+        $this->getJson($this->teacherBase($this->school).'/school')->assertOk();
+        $this->getJson($this->lunchBase($this->school).'/jummah-lunch/menus')->assertForbidden();
+
+        // The person who knows they are deliberate says so, and the run finishes.
+        // (Roles only: the requests above stamped when she last opened each place.)
+        config(['tenancy.roles_per_organisation' => false]);
+        ScopedRoleRows::migrate('keep');
+        $this->assertSame(
+            array_column($before, 'role', 'id'),
+            DB::table('masjid_user')->orderBy('id')->pluck('role', 'id')->all()
+        );
+    }
+
+    #[Test]
     public function the_migration_names_the_roles_itself_and_they_are_the_ones_the_rule_reads(): void
     {
         // It must not follow a constant that may change after it has run, so it
@@ -138,7 +239,7 @@ class NormaliseScopedRolesMigrationTest extends TestCase
     public function the_listing_command_answers_none_on_a_database_with_no_such_row(): void
     {
         ScopedRoleRows::seed();
-        ScopedRoleRows::migrate();
+        ScopedRoleRows::migrate('rewrite');
 
         $this->artisan('staff:cross-kind-roles')->expectsOutput('0')->assertExitCode(0);
     }

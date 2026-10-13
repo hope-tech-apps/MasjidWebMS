@@ -28,6 +28,30 @@ use Illuminate\Support\Facades\Log;
  * (TeachersController, LunchStaffController, TeamController, which moves the type
  * and the role together). A row found here was written by hand.
  *
+ * IT ASKS BEFORE IT REWRITES ANYTHING. The rows it would rewrite cannot be told
+ * apart from the rows the feature is made of: once the roles switch has been on, a
+ * lunch login's `teacher` row at a school is a DELIBERATE grant, and rewriting it
+ * would make her lunch staff AT THE SCHOOL (her teacher area gone, the lunch area
+ * opened where no office gave it). The switch being on is not a good enough guard:
+ * turning it off is the documented way back, and a migration that is rolled back
+ * and run again in that state (a staging box, `migrate:refresh`, a roll-forward
+ * after the rows were put back) would flatten every one of them. So when it finds
+ * such a row it STOPS, with their ids, and writes nothing, until the person
+ * running it says which they are, in the environment of that one run:
+ *
+ *   NORMALISE_SCOPED_ROLES=rewrite   They were written by hand, before any office
+ *                                    could give a second role (the FIRST release
+ *                                    only). Each becomes the role of its login's
+ *                                    kind, so it goes on meaning what it meant.
+ *   NORMALISE_SCOPED_ROLES=keep      They are, or may be, deliberate. Nothing is
+ *                                    written and the migration is recorded as run.
+ *
+ * On production, as the deploy runs it (bin/deploy):
+ *   sudo -u www-data HOME=/tmp NORMALISE_SCOPED_ROLES=rewrite php artisan migrate --force
+ * `php artisan staff:cross-kind-roles` lists the same rows beforehand, and the
+ * release reads that list BEFORE the deploy (docs/multi-org-admin-rollout.md), so
+ * the expected run finds nothing, asks nothing and writes nothing.
+ *
  * Shaped for a live table:
  *  - it READS first, with a plain join and no locking read, and when there is
  *    nothing to rewrite (the expected case) it writes nothing at all;
@@ -40,16 +64,13 @@ use Illuminate\Support\Facades\Log;
  *
  * Both drivers: the query builder only, so MySQL gets backticked identifiers and
  * bound values (ANSI_QUOTES is not in play) and SQLite the same statements. It
- * compares the roles in PHP, exactly, as kindFor() does: MySQL's collation would
- * call `Teacher` and `teacher ` the same as `teacher`, and a row the IN () below
- * returns for that reason is normalised to the exact spelling too.
+ * compares the roles in PHP, exactly, as kindFor() does. MySQL's collation would
+ * call `Teacher` and `teacher ` the same as `teacher`, and the IN () below returns
+ * such a row; the application never reads it as one of the two roles, so it means
+ * "the login's kind decides" before and after, and it is left alone.
  *
- * IT MUST NOT RUN ONCE A LOGIN HOLDS TWO ROLES ON PURPOSE. With the roles switch on
- * (config/tenancy.php) a cross-kind row is a deliberate grant, and this would turn
- * it back into the home kind's role: a lunch login's teacher row would become a
- * lunch row at the school. It runs in the deploy that ships the feature, with the
- * switch off, which is how the feature ships. If the switch is found on, it does
- * nothing and says so; `php artisan staff:cross-kind-roles` lists such rows.
+ * While the roles switch is ON it does nothing at all and says so: a deploy to a
+ * box where the feature is live must not stop on the rows the feature is made of.
  *
  * The role names are written out here, not read from the model: a migration is a
  * record of what was done on the day, and must not follow a constant that changes.
@@ -61,6 +82,9 @@ return new class extends Migration
         'Teacher' => 'teacher',
         'LunchStaff' => 'lunch-staff',
     ];
+
+    /** The environment variable that answers, for one run, what the rows found are. */
+    private const ANSWER = 'NORMALISE_SCOPED_ROLES';
 
     public function up(): void
     {
@@ -78,13 +102,13 @@ return new class extends Migration
             ->orderBy('mu.id')
             ->get(['mu.id', 'mu.role', 'u.type']);
 
-        // The role each row should carry, and the rows that do not carry it.
+        // The role each row should carry, and the rows that carry the OTHER one.
         $rewrite = [];
 
         foreach ($rows as $row) {
             $role = self::ROLE_OF_KIND[$row->type] ?? null;
 
-            if ($role !== null && $row->role !== $role) {
+            if ($role !== null && $row->role !== $role && in_array($row->role, self::ROLE_OF_KIND, true)) {
                 $rewrite[$role][] = (int) $row->id;
             }
         }
@@ -95,13 +119,37 @@ return new class extends Migration
             return;
         }
 
+        $ids = array_merge(...array_values($rewrite));
+        sort($ids);
+        $count = count($ids);
+        $answer = getenv(self::ANSWER);
+
+        if ($answer === 'keep') {
+            Log::warning('normalise_scoped_roles_on_masjid_user: '.$count.' row(s) give a teacher\'s or lunch-staff login the other kind\'s role and were KEPT as they are ('.self::ANSWER.'=keep).', [
+                'masjid_user_ids_by_role_of_login_kind' => $rewrite,
+            ]);
+
+            return;
+        }
+
+        if ($answer !== 'rewrite') {
+            // Before any write. The message carries ids only, never a name or an address.
+            throw new RuntimeException(
+                'normalise_scoped_roles_on_masjid_user stopped and wrote nothing: '.$count.' masjid_user row(s) give a teacher\'s or lunch-staff login '
+                .'the OTHER kind\'s role (ids '.implode(', ', $ids).'; `php artisan staff:cross-kind-roles` lists them). '
+                .'Rewriting a row an office wrote on purpose would move that person to the other area at that organisation, so say which they are and run migrate again: '
+                .self::ANSWER.'=rewrite if every one was written by hand before any office could give a second role (the first release), '
+                .self::ANSWER.'=keep if any of them is, or may be, a role an office gave. See docs/multi-org-admin-rollout.md.'
+            );
+        }
+
         foreach ($rewrite as $role => $ids) {
             foreach (array_chunk($ids, 500) as $chunk) {
                 DB::table('masjid_user')->whereIn('id', $chunk)->update(['role' => $role, 'updated_at' => now()]);
             }
         }
 
-        Log::warning('normalise_scoped_roles_on_masjid_user: '.array_sum(array_map('count', $rewrite)).' row(s) rewritten to the role of their login\'s kind.', [
+        Log::warning('normalise_scoped_roles_on_masjid_user: '.$count.' row(s) rewritten to the role of their login\'s kind ('.self::ANSWER.'=rewrite).', [
             'masjid_user_ids_by_new_role' => $rewrite,
         ]);
     }

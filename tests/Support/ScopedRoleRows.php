@@ -87,18 +87,38 @@ final class ScopedRoleRows
         return $rows;
     }
 
-    /** Run the migration's up(), and hand back the statements it ran. */
-    public static function migrate(): array
+    /** The variable the migration reads its answer from (see the migration's docblock). */
+    public const ANSWER = 'NORMALISE_SCOPED_ROLES';
+
+    /** The statements of the last run, kept for a run that stopped by throwing. */
+    public static array $lastStatements = [];
+
+    /**
+     * Run the migration's up(), and hand back the statements it ran.
+     *
+     * $answer is what the person running it said the rows it finds are: `rewrite`,
+     * `keep`, or nothing at all (null), which is how every deploy runs it. It is
+     * set in the process environment for this one run, exactly as an operator sets
+     * it for one `artisan migrate`, and cleared again whatever happens.
+     */
+    public static function migrate(?string $answer = null): array
     {
+        self::$lastStatements = [];
+
+        putenv($answer === null ? self::ANSWER : self::ANSWER.'='.$answer);
+
         DB::flushQueryLog();
         DB::enableQueryLog();
 
-        (require base_path(self::MIGRATION))->up();
+        try {
+            (require base_path(self::MIGRATION))->up();
+        } finally {
+            self::$lastStatements = array_column(DB::getQueryLog(), 'query');
+            DB::disableQueryLog();
+            putenv(self::ANSWER);
+        }
 
-        $statements = array_column(DB::getQueryLog(), 'query');
-        DB::disableQueryLog();
-
-        return $statements;
+        return self::$lastStatements;
     }
 
     /**
@@ -118,7 +138,8 @@ final class ScopedRoleRows
     }
 
     /**
-     * What read() must answer after the migration has run with the switch off.
+     * What read() must answer after the migration has run with the switch off and
+     * was told to rewrite.
      *
      * @param  array<string, array{id: int, role: string, becomes: string}>  $rows
      * @return array<string, array{role: string, touched: bool}>
