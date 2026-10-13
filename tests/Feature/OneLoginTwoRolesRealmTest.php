@@ -621,11 +621,13 @@ class OneLoginTwoRolesRealmTest extends TestCase
             $this->assertFalse((require config_path('tenancy.php'))['roles_per_organisation']);
         }
 
-        // One reader, so that "off" cannot be half off: everything else asks
-        // StaffArea::open().
+        // One reader at run time, so that "off" cannot be half off: everything else
+        // asks StaffArea::open(). (The one data migration reads it too, once, at the
+        // deploy that ships the feature, to refuse to run after the switch is on;
+        // a migration is a record and imports no application class.)
         $readers = [];
 
-        foreach (['app', 'database', 'routes', 'bootstrap'] as $directory) {
+        foreach (['app', 'routes', 'bootstrap'] as $directory) {
             $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(base_path($directory), \FilesystemIterator::SKIP_DOTS));
 
             foreach ($files as $file) {
@@ -636,6 +638,12 @@ class OneLoginTwoRolesRealmTest extends TestCase
         }
 
         $this->assertSame(['app/Support/StaffArea.php'], $readers);
+
+        $migrations = array_values(array_filter(
+            glob(database_path('migrations/*.php')),
+            fn (string $path): bool => str_contains((string) file_get_contents($path), 'tenancy.roles_per_organisation')
+        ));
+        $this->assertSame(['2026_10_14_120000_normalise_scoped_roles_on_masjid_user.php'], array_map('basename', $migrations));
     }
 
     #[Test]

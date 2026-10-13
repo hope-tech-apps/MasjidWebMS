@@ -60,9 +60,10 @@ return [
     |     a teacher lunch access at one organisation) through those two doors,
     |     and then reaches both areas with one sign-in.
     |
-    | Read in ONE place, App\Support\StaffArea::open(). It does NOT switch off the
-    | part that only ever removes access: the tenant resolver binds an organisation
-    | only through a row of the kind the request is acting as, in both states.
+    | Read in ONE place at run time, App\Support\StaffArea::open(). It does NOT
+    | switch off the part that only ever removes access: the tenant resolver binds
+    | an organisation only through a row of the kind the request is acting as, in
+    | both states.
     |
     | Turning it off again is the safe way back: a login with both roles keeps
     | its own kind's area and loses the other, and no row is deleted. Do NOT roll
