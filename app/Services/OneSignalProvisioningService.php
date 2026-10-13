@@ -5,6 +5,9 @@ namespace App\Services;
 use App\Models\Masjid;
 use App\Models\MasjidAppPublishing;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\DB;
+use App\Models\PushApp;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -46,9 +49,15 @@ class OneSignalProvisioningService
      *                            - name: app display name (defaults to masjid name)
      *                            - apns_env: 'production' | 'sandbox'
      *                            - fcm_v1_service_account_json: raw JSON override
+     * @param  string|null $apnsP8 Explicit Apple push key material; all three Apple arguments are required together.
+     * @param  string|null $apnsKeyId Apple push key id. Omitted arguments use existing global settings.
+     * @param  string|null $apnsTeamId Apple team owning this app's push key.
      * @return array{ok:bool, app_id?:string, has_onesignal_key?:bool, error?:string}
      */
-    public function provisionApp(Masjid $masjid, string $bundleId, array $overrides = []): array
+    public function provisionApp(
+        Masjid $masjid, string $bundleId, #[\SensitiveParameter] array $overrides = [],
+        #[\SensitiveParameter] ?string $apnsP8 = null, #[\SensitiveParameter] ?string $apnsKeyId = null, #[\SensitiveParameter] ?string $apnsTeamId = null,
+    ): array
     {
         $authKey = config('services.onesignal.user_auth_key');
 
@@ -67,6 +76,31 @@ class OneSignalProvisioningService
             ];
         }
 
+        if ($apnsP8 !== null || $apnsKeyId !== null || $apnsTeamId !== null) {
+            if (blank($apnsP8) || blank($apnsKeyId) || blank($apnsTeamId)) {
+                return ['ok' => false, 'error' => 'Explicit Apple push credentials require key material, key id and team id together.'];
+            }
+            $overrides['apns_p8'] = $apnsP8;
+            $overrides['apns_key_id'] = $apnsKeyId;
+            $overrides['apns_team_id'] = $apnsTeamId;
+        }
+        if (!($overrides['attach_to_organisation'] ?? true)) {
+            try {
+                if (!Schema::hasTable('push_apps') || !Schema::hasColumns('push_apps', ['provider_app_id', 'rest_api_key', 'label', 'active'])) {
+                    return ['ok' => false, 'error' => 'Push registry storage is unavailable; no app was created.'];
+                }
+                // Prove a credential row can be written before creating an external resource. Never retain the probe.
+                DB::transaction(function () {
+                    $probe = new PushApp;
+                    $probe->forceFill(['provider_app_id' => 'storage-probe-'.(string) \Illuminate\Support\Str::uuid(),
+                        'rest_api_key' => 'storage-check', 'label' => 'Storage check', 'active' => false]);
+                    $probe->saveQuietly();
+                    $probe->deleteQuietly();
+                });
+            } catch (\Throwable $e) {
+                return ['ok' => false, 'error' => 'Push registry storage is unavailable; no app was created.'];
+            }
+        }
         $payload = $this->buildPayload($masjid, $bundleId, $overrides);
         $url = config('services.onesignal.apps_api_url', 'https://api.onesignal.com/apps');
 
@@ -81,10 +115,9 @@ class OneSignalProvisioningService
             Log::error('OneSignal app provisioning threw', [
                 'masjid_id' => $masjid->id,
                 'exception' => get_class($e),
-                'message' => $e->getMessage(),
             ]);
 
-            return ['ok' => false, 'error' => 'OneSignal request failed: ' . $e->getMessage()];
+            return ['ok' => false, 'error' => 'OneSignal request failed.'];
         }
 
         $body = $response->json();
@@ -92,13 +125,15 @@ class OneSignalProvisioningService
         // OneSignal returns the new app's REST API key as `basic_auth_key`.
         $restKey = is_array($body) ? ($body['basic_auth_key'] ?? null) : null;
 
-        if (!$response->successful() || empty($appId) || empty($restKey)) {
+        if ($response->successful() && is_string($appId) && preg_match('/\A[A-Za-z0-9_-]{1,128}\z/', $appId)
+            && (!is_string($restKey) || trim($restKey) === '')) {
+            return ['ok' => false, 'app_id' => $appId, 'error' => 'Push app created at the provider but not stored: do not use; delete it there.'];
+        }
+        if (!$response->successful() || !is_string($appId) || !preg_match('/\A[A-Za-z0-9_-]{1,128}\z/', $appId)
+            || !is_string($restKey) || trim($restKey) === '') {
             Log::error('OneSignal app provisioning failed', [
                 'masjid_id' => $masjid->id,
                 'status' => $response->status(),
-                // Body may include the (sensitive) new REST key on success only;
-                // on failure it is an error envelope. Log status + errors, not key.
-                'errors' => is_array($body) ? ($body['errors'] ?? $body) : $response->body(),
             ]);
 
             return [
@@ -110,13 +145,31 @@ class OneSignalProvisioningService
         // Persist onto the masjid's config. masjid_id is server-derived from the
         // passed model — never client input. The REST key is encrypted by the
         // model cast; the app id is a public identifier.
-        MasjidAppPublishing::updateOrCreate(
-            ['masjid_id' => $masjid->id],
-            [
-                'onesignal_app_id' => $appId,
-                'onesignal_rest_api_key' => $restKey,
-            ]
-        );
+        try {
+            DB::transaction(function () use ($masjid, $appId, $restKey, $overrides) {
+                if (!($overrides['attach_to_organisation'] ?? true) && !Schema::hasTable('push_apps')) {
+                    throw new \RuntimeException('Push registry unavailable.');
+                }
+                if (Schema::hasTable('push_apps')) {
+                    $stored = PushApp::updateOrCreate(['provider_app_id' => $appId], [
+                        'rest_api_key' => $restKey, 'label' => $overrides['name'] ?? $masjid->name, 'active' => true,
+                    ]);
+                    if (!$stored->exists || $stored->fresh()?->rest_api_key !== $restKey) {
+                        throw new \RuntimeException('Push registry write was not retained.');
+                    }
+                }
+                // Registry-only provisioning lets the owner prepare a new account before moving legacy installs.
+                if ($overrides['attach_to_organisation'] ?? true) {
+                    MasjidAppPublishing::updateOrCreate(['masjid_id' => $masjid->id], [
+                        'onesignal_app_id' => $appId, 'onesignal_rest_api_key' => $restKey,
+                    ]);
+                }
+            });
+        } catch (\Throwable $e) {
+            // Persistence exceptions can include ciphertext bindings. Do not expose either key material or SQL.
+            Log::error('OneSignal app credentials could not be stored', ['masjid_id' => $masjid->id]);
+            return ['ok' => false, 'app_id' => $appId, 'error' => 'Push app created at the provider but not stored: do not use; delete it there.'];
+        }
 
         return [
             'ok' => true,
@@ -131,15 +184,15 @@ class OneSignalProvisioningService
      * with just one platform set up (or none — an app can be created name-only,
      * with push wired later in the dashboard).
      */
-    protected function buildPayload(Masjid $masjid, string $bundleId, array $overrides): array
+    protected function buildPayload(Masjid $masjid, string $bundleId, #[\SensitiveParameter] array $overrides): array
     {
         $payload = [
             'name' => $overrides['name'] ?? $masjid->name ?? ('Masjid ' . $masjid->id),
         ];
 
-        $p8 = config('services.onesignal.apns_p8');
-        $keyId = config('services.onesignal.apns_key_id');
-        $teamId = config('services.onesignal.apns_team_id');
+        $p8 = $overrides['apns_p8'] ?? config('services.onesignal.apns_p8');
+        $keyId = $overrides['apns_key_id'] ?? config('services.onesignal.apns_key_id');
+        $teamId = $overrides['apns_team_id'] ?? config('services.onesignal.apns_team_id');
 
         if (filled($p8) && filled($keyId) && filled($teamId)) {
             $payload['apns_p8'] = $p8;

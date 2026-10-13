@@ -4,6 +4,10 @@
         @headerButtonClick="() => router.push('/masjid/broadcasts/compose')"
         @pageChange="pageChange">
         <div class="container w-100">
+            <div v-if="broadcasts.length" class="d-flex justify-content-end mb-3">
+                <button type="button" class="btn btn-outline-secondary btn-sm" :disabled="refreshing" @click="refreshDelivery">Check delivery</button>
+            </div>
+            <p v-if="refreshError" class="text-danger" role="status">{{ refreshError }}</p>
 
             <div v-if="broadcasts.length === 0" class="text-center text-muted py-5">
                 Nothing sent yet. Compose one to reach the announcements feed, phones, email and text — all
@@ -30,10 +34,13 @@
                          transactional, so one line per channel is the only honest summary. -->
                     <div class="d-flex flex-wrap gap-2">
                         <span v-for="d in (b.deliveries ?? [])" :key="d.id"
-                            :class="['badge', 'fw-normal', deliveryBadge(d.status).klass]"
+                            :class="['badge', 'fw-normal', deliveryClass(d)]"
                             :title="d.note ?? d.error ?? ''">
-                            {{ channelLabel(d.channel) }}: {{ deliveryBadge(d.status).label }}
-                            <template v-if="d.target_count !== null"> ({{ d.target_count }})</template>
+                            <template v-if="d.channel === 'push' && (d.status === 'sent' || d.push_outcome_text)">{{ channelLabel(d.channel) }}: {{ pushOutcomeText(d) }}</template>
+                            <template v-else>
+                                {{ channelLabel(d.channel) }}: {{ deliveryBadge(d.status).label }}
+                                <template v-if="d.target_count !== null"> ({{ d.target_count }})</template>
+                            </template>
                         </span>
                     </div>
 
@@ -55,7 +62,7 @@
 
 <script setup lang="ts">
 import PageDataContainer from '@/components/PageDataContainer.vue'
-import { Broadcast, BroadcastChannel, BroadcastDeliveryStatus, BroadcastStatus } from '@/core/types/data/masjid-related/Broadcast'
+import { Broadcast, BroadcastChannel, BroadcastDelivery, BroadcastDeliveryStatus, BroadcastStatus } from '@/core/types/data/masjid-related/Broadcast'
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination'
 import { useBroadcastsStore } from '@/stores/masjid/broadcastsStore'
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2'
@@ -65,6 +72,8 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 const store = useBroadcastsStore()
 const cancellingId = ref<number | null>(null)
+const refreshing = ref(false)
+const refreshError = ref('')
 
 const broadcasts = computed(() => store.broadcastsPaginated?.data ?? [])
 
@@ -83,6 +92,29 @@ async function loadPage(page: number) {
     paginationOptions.value.itemsTotal = store.broadcastsPaginated?.total ?? 0
     paginationOptions.value.currentPage = store.broadcastsPaginated?.current_page ?? 0
     paginationOptions.value.perPage = store.broadcastsPaginated?.per_page ?? 15
+}
+
+async function refreshDelivery() {
+    if (refreshing.value) return
+    refreshing.value = true
+    refreshError.value = ''
+    try { await loadPage(paginationOptions.value.currentPage || 1) }
+    catch { refreshError.value = 'Delivery could not be checked.' }
+    finally { refreshing.value = false }
+}
+
+function pushOutcomeText(d: BroadcastDelivery): string {
+    if (d.push_outcome_text) return d.push_outcome_text
+    return d.target_count === null ? 'Delivery could not be checked.'
+        : `Delivery could not be confirmed for ${d.target_count} ${d.target_count === 1 ? 'phone' : 'phones'}.`
+}
+
+function deliveryClass(d: BroadcastDelivery): string {
+    if (d.channel !== 'push' || d.status !== 'sent') return deliveryBadge(d.status).klass
+    const outcome = d.push_outcome
+    if (outcome?.status === 'complete' && !(outcome.errored || outcome.unknown_app)) return deliveryBadge('sent').klass
+    if (outcome?.status === 'unknown' || outcome?.errored || outcome?.unknown_app) return deliveryBadge('failed').klass
+    return deliveryBadge('pending').klass
 }
 
 const pageChange = async (data: PageChangeData) => {

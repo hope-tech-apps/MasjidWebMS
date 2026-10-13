@@ -24,7 +24,7 @@ use Throwable;
  *     dispatches this job → returns 202 immediately.
  *   - Worker picks up the job → calls OneSignal → on success updates the Notification
  *     with the OneSignal message ID; on failure retries with exponential backoff and
- *     deletes the notification record if all retries are exhausted.
+ *     retains the notification and its account outcomes if retries are exhausted.
  *
  * REQUIRES a running queue worker: `php artisan queue:work --queue=default` (production
  * deployments should run this via Supervisor or a systemd service).
@@ -39,12 +39,17 @@ class SendMasjidNotificationJob implements ShouldQueue
     /** Allow each attempt up to 30 seconds — covers slow OneSignal responses. */
     public int $timeout = 30;
 
-    public function __construct(
-        public Notification $notification,
-        public Masjid $masjid,
-        /** @var array<int, string> OneSignal subscription (player) IDs. */
-        public array $subscriptionIds
-    ) {
+    public int $notificationId = 0;
+    public int $masjidId = 0;
+
+    // Decode pre-deploy queued model identifiers. New jobs set ids only; these remain null.
+    public ?Notification $notification = null;
+    public ?Masjid $masjid = null;
+
+    public function __construct(Notification $notification, Masjid $masjid, public array $subscriptionIds)
+    {
+        $this->notificationId = (int) $notification->id;
+        $this->masjidId = (int) $masjid->id;
     }
 
     /**
@@ -59,11 +64,24 @@ class SendMasjidNotificationJob implements ShouldQueue
 
     public function handle(OnesignalService $onesignal): void
     {
+        $this->notificationId = $this->notificationId ?: (int) $this->notification?->id;
+        $this->masjidId = $this->masjidId ?: (int) $this->masjid?->id;
+        app(\App\Support\TenantContext::class)->runWithout(fn () => $this->send($onesignal));
+    }
+
+    private function send(OnesignalService $onesignal): void
+    {
+        $notification = Notification::where('masjid_id', $this->masjidId)->find($this->notificationId);
+        $masjid = Masjid::find($this->masjidId);
+        if (!$notification || !$masjid) {
+            return;
+        }
+
         // Skip silently if there are no targeted devices — nothing to send.
         if (empty($this->subscriptionIds)) {
             Log::info('SendMasjidNotificationJob: no devices to notify', [
-                'masjid_id' => $this->masjid->id,
-                'notification_id' => $this->notification->id,
+                'masjid_id' => $masjid->id,
+                'notification_id' => $notification->id,
             ]);
             return;
         }
@@ -75,8 +93,8 @@ class SendMasjidNotificationJob implements ShouldQueue
         // created and can see; keep it, and say plainly why nothing was pushed.
         if (!$onesignal->isConfigured()) {
             Log::warning('SendMasjidNotificationJob: OneSignal not configured — nothing pushed', [
-                'masjid_id' => $this->masjid->id,
-                'notification_id' => $this->notification->id,
+                'masjid_id' => $masjid->id,
+                'notification_id' => $notification->id,
                 'recipients' => count($this->subscriptionIds),
             ]);
             return;
@@ -84,34 +102,51 @@ class SendMasjidNotificationJob implements ShouldQueue
 
         // Include the notification's image (if any) so the push renders it —
         // big_picture on Android, ios_attachments on iOS.
-        $imageUrl = $this->notification->getFirstMediaUrl('notifications') ?: null;
+        $imageUrl = $notification->getFirstMediaUrl('notifications') ?: null;
 
-        $response = $onesignal->notifyAllOfMasjid($this->masjid, $this->notification, $this->subscriptionIds, $imageUrl);
+        $response = $onesignal->notifyAllOfMasjid($masjid, $notification, $this->subscriptionIds, $imageUrl);
 
         if (isset($response['id']) && $response['id']) {
-            $this->notification->onesignal_message_id = $response['id'];
-            $this->notification->save();
+            $notification->onesignal_message_id = $response['id'];
+            $notification->save();
+            return;
+        }
+
+        if ($response['recorded'] ?? false) {
             return;
         }
 
         // OneSignal returned a non-success payload — throw so the job retries.
         throw new \RuntimeException(
-            'OneSignal dispatch returned no message ID. Response: ' . json_encode($response)
+            'OneSignal dispatch returned no message ID.'
         );
     }
 
     /**
-     * Called after all retries are exhausted. We delete the orphaned notification
-     * record so admins aren't misled into thinking it was delivered.
+     * Called after all retries are exhausted. Retain the failure ledger for office inspection.
      */
     public function failed(?Throwable $exception): void
     {
         Log::error('SendMasjidNotificationJob failed permanently', [
-            'masjid_id' => $this->masjid->id,
-            'notification_id' => $this->notification->id,
-            'error' => $exception?->getMessage(),
+            'masjid_id' => $this->masjidId,
+            'notification_id' => $this->notificationId,
+            'error' => 'Push provider did not accept the send.',
         ]);
 
-        $this->notification->delete();
+        $notificationId = $this->notificationId ?: (int) $this->notification?->id;
+        $masjidId = $this->masjidId ?: (int) $this->masjid?->id;
+        if (\Illuminate\Support\Facades\Schema::hasTable('push_sends')) {
+            $send = \App\Models\PushSend::withoutMasjidScope()->where('masjid_id', $masjidId)
+                ->where('notification_id', $notificationId)->first();
+            if ($send) {
+                // A worker can stop before storing a provider id. Its last attempt must not leave Checking forever.
+                $send->groups()->withoutGlobalScopes()->where('masjid_id', $masjidId)
+                    ->whereNull('provider_message_id')->whereIn('status', ['pending', 'sending', 'checking'])->update(['status' => 'unknown']);
+                $send->aggregate();
+                app(\App\Services\PushOutcomeScheduler::class)->schedule($send->id);
+            }
+        }
+
+        // Retain the in-app inbox and the failure ledger; failure must remain visible to the office.
     }
 }

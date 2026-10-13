@@ -39,6 +39,19 @@
             </LoadingButton>
         </div>
     </Form>
+    <section v-if="historyMasjidId" class="card border-0 p-3 mt-3" aria-label="Recent push delivery">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="h5 mb-0">Recent notifications</h2>
+            <button type="button" class="btn btn-outline-secondary btn-sm" :disabled="historyLoading" @click="refreshHistory">
+                Check delivery
+            </button>
+        </div>
+        <p v-if="historyError" class="text-danger" role="status">{{ historyError }}</p>
+        <div v-for="item in history" :key="item.id" class="border-top py-2">
+            <strong>{{ item.title }}</strong>
+            <p class="mb-0" role="status">{{ item.push_outcome_text }}</p>
+        </div>
+    </section>
 </template>
 
 <script setup lang="ts">
@@ -46,7 +59,7 @@ import LoadingButton from '@/components/form/LoadingButton.vue';
 import ApiService from '@/core/services/ApiService';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { AxiosError } from 'axios';
-import { computed, onBeforeMount, ref } from 'vue';
+import { computed, onBeforeMount, ref, watch } from 'vue';
 import { Form, Field } from 'vee-validate';
 import { number, object, string } from 'yup';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
@@ -57,11 +70,36 @@ import { useAuthStore } from '@/stores/authStore';
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 
+const history = ref<Array<{ id: number; title: string; push_outcome_text: string }>>([]);
+const historyLoading = ref(false);
+const historyError = ref('');
+const historyMasjidId = computed(() => authStore.user?.type === 'SuperAdmin'
+    ? notificationModel.value.masjid_id : masjidStore.masjid?.id);
+let historyRequest = 0;
+
+async function refreshHistory() {
+    const org = historyMasjidId.value;
+    const request = ++historyRequest;
+    historyError.value = '';
+    if (!org) { history.value = []; return; }
+    historyLoading.value = true;
+    try {
+        const response = await ApiService.get(`/api/admin/masjids/${org}/notifications`);
+        if (request === historyRequest && org === historyMasjidId.value) history.value = response.data.data;
+    } catch {
+        if (request === historyRequest && org === historyMasjidId.value) historyError.value = 'Delivery could not be checked.';
+    } finally {
+        if (request === historyRequest) historyLoading.value = false;
+    }
+}
+
+
 // Lifecycle hooks
 onBeforeMount(async () => {
     if (authStore.user?.type === 'SuperAdmin') {
         await masjidsStore.fetchMasjidsList();
     }
+    await refreshHistory();
 });
 
 // Types
@@ -95,6 +133,8 @@ const notificationModel = ref<NotificationEntry>({
     message: '',
     masjid_id: undefined
 });
+
+watch(historyMasjidId, () => { history.value = []; refreshHistory(); });
 
 // Optional image attachment for the notification.
 const notificationImage = ref<File | null>(null);
@@ -134,12 +174,13 @@ const onSubmit = async () => {
                 if (masjidId) {
 
                     await ApiService.post(`/api/admin/masjids/${masjidId}/notifications`, apiRequestData)
-                        .then(res => {
+                        .then(async res => {
                             if (res.data.status === 'success') {
                                 swalInstance.title = "Success";
                                 // No organisation kind here: a SuperAdmin may send to a recipient of another kind than the dashboard's.
-                                swalInstance.text = 'Notification saved and sent.';
+                                swalInstance.text = res.data.data?.push_outcome_text ?? 'Notification saved. Checking delivery…';
                                 swalInstance.icon = "success";
+                                await refreshHistory();
                             } else {
                                 swalInstance.title = "Sorry";
                                 swalInstance.text = getMessageFromObj(res);

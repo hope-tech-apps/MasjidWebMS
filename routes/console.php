@@ -920,3 +920,5 @@ Schedule::command('guides:ask-prune')->dailyAt('03:47')->withoutOverlapping();
 
 // School-local email hour; stamps make missed and repeated runs safe.
 Schedule::command('duties:remind')->hourly()->withoutOverlapping(50);
+
+Schedule::command('push:sweep-outcomes')->everyFiveMinutes()->withoutOverlapping();

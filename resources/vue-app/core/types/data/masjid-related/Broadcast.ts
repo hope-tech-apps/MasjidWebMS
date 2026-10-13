@@ -26,6 +26,8 @@ export type BroadcastDelivery = {
     broadcast_id: number;
     channel: BroadcastChannel;
     status: BroadcastDeliveryStatus;
+    push_outcome_text?: string;
+    push_outcome?: { status: 'checking' | 'unknown' | 'complete'; delivered: number | null; errored: number | null; unknown_app: number };
     target_count: number | null;
     note: string | null;
     error: string | null;

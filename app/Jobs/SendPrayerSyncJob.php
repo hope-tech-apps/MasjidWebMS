@@ -29,6 +29,8 @@ class SendPrayerSyncJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    public ?string $requestKey = null;
+
     public int $tries = 3;
 
     public array $backoff = [5, 15, 30];
@@ -39,7 +41,9 @@ class SendPrayerSyncJob implements ShouldQueue
     public function __construct(
         public int $masjidId,
         public array $subscriptionIds,
-    ) {}
+    ) {
+        $this->requestKey = (string) \Illuminate\Support\Str::uuid();
+    }
 
     public function handle(OnesignalService $onesignal): void
     {
@@ -54,12 +58,13 @@ class SendPrayerSyncJob implements ShouldQueue
         $onesignal->sendDataSync(
             $this->subscriptionIds,
             ['masjid_id' => $this->masjidId],
-            $masjid
+            $masjid,
+            $this->requestKey ??= 'prayer-sync:'.($this->job?->uuid() ?? $this->job?->getJobId() ?? (string) \Illuminate\Support\Str::uuid())
         );
     }
 
     public function failed(Throwable $e): void
     {
-        Log::warning("SendPrayerSyncJob failed for masjid {$this->masjidId}: " . $e->getMessage());
+        Log::warning("SendPrayerSyncJob failed for masjid {$this->masjidId}");
     }
 }
