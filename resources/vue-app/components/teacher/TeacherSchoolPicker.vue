@@ -20,7 +20,8 @@
         schools at all. Without `areas` (every login with one kind of role) the
         control is exactly the one described above, to the word.
     -->
-    <div v-if="canPickSchool(choices) || places.length > 0" class="btn-group teacher-school-picker">
+    <div v-if="canPickSchool(choices) || places.length > 0" class="btn-group teacher-school-picker"
+        :class="{ 'teacher-school-picker-places': places.length > 0 }">
         <button type="button" class="btn btn-sm btn-light-success dropdown-toggle d-flex align-items-center gap-2 teacher-tap"
             data-bs-toggle="dropdown" aria-expanded="false" :disabled="switching"
             :aria-label="buttonLabel" :title="buttonTitle">
@@ -155,6 +156,25 @@ const buttonLabel = computed<string>(
     /* ...but a menu row reads left to right. */
     .dropdown-item.teacher-tap {
         justify-content: flex-start;
+    }
+}
+
+@media (max-width: 575.98px) {
+    /*
+     * With other places in it (a login that works in two areas) the menu hangs
+     * from a button that sits in the middle of a phone's header, and it is 15rem
+     * wide: measured at 375px, 25px of it was off the left edge of the screen.
+     * Nothing corrects that: inside a navbar Bootstrap places a dropdown with
+     * plain CSS (data-bs-popper="static"), not Popper. So on a phone the menu
+     * hangs from the header instead, a margin in from each edge.
+     */
+    .teacher-school-picker-places {
+        position: static;
+    }
+
+    .teacher-school-picker-places .teacher-school-menu {
+        left: 1rem;
+        right: 1rem;
     }
 }
 </style>

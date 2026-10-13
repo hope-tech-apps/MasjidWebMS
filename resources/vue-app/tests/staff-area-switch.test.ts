@@ -134,6 +134,24 @@ test('keyboard and screen reader: the switch is a named button that opens a menu
     s.unmount();
 });
 
+test('on a phone the menu of places hangs from the header, not from a button in the middle of it', async () => {
+    // Measured in a browser at 375px before this rule: the menu ran from -25px to 215px, its
+    // first letters off the screen. Bootstrap positions a navbar dropdown with CSS, not Popper.
+    let s = await mountPicker({ choices: [], currentId: null, currentArea: 'lunch', areas: HER_AREAS });
+    assert.ok(classes(s.all((n) => classes(n).includes('teacher-school-picker'))[0]).includes('teacher-school-picker-places'));
+    s.unmount();
+
+    // A two-school teacher with one kind of role keeps the menu exactly where it was.
+    s = await mountPicker({ choices: schools.schoolChoices(twoSchoolTeacher().memberships), currentId: 14, currentArea: 'teacher' });
+    assert.equal(classes(s.all((n) => classes(n).includes('teacher-school-picker'))[0]).includes('teacher-school-picker-places'), false);
+    s.unmount();
+
+    const picker = read('components/teacher/TeacherSchoolPicker.vue');
+    const phone = picker.slice(picker.lastIndexOf('@media (max-width: 575.98px) {'));
+    assert.match(phone, /\.teacher-school-picker-places \{\s*position: static;\s*\}/);
+    assert.match(phone, /\.teacher-school-picker-places \.teacher-school-menu \{\s*left: 1rem;\s*right: 1rem;\s*\}/);
+});
+
 test('while a switch is under way the control and every choice are disabled, so a second press starts nothing', async () => {
     const chosen: any[] = [];
     const s = await mountPicker({ choices: [], currentId: null, currentArea: 'lunch', areas: HER_AREAS, switching: true, onChooseArea: (place: any) => chosen.push(place) });
