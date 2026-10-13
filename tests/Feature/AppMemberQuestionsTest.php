@@ -209,7 +209,7 @@ class AppMemberQuestionsTest extends TestCase
         $this->office(User::factory()->create(['phone'=>'+15555550101','name'=>'Practice Admin','type'=>'SuperAdmin'])); $this->putJson($url,$body)->assertOk();
         $this->assertFalse(MemberQuestionOption::find($occupation[count($occupation) - 1]['id'])->active);
         CapabilityWriter::apply($this->org,['app_member_questions'=>false],null); $this->enable();
-        $this->assertSame(18,MemberQuestionOption::count()); $this->assertSame('Learning',MemberQuestionOption::find($occupation[9]['id'])->label);
+        $this->assertSame(21,MemberQuestionOption::count()); $this->assertSame('Learning',MemberQuestionOption::find($occupation[count($occupation) - 1]['id'])->label);
     }
     #[Test]
     public function member_replace_clear_validation_encryption_and_own_only(): void
