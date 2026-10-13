@@ -31,6 +31,11 @@ class NormaliseScopedRolesMigrationTest extends TestCase
         parent::setUp();
 
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+
+        // Set here, not inherited: the migration does nothing while the switch is on,
+        // and a run of the whole suite with TENANCY_ROLES_PER_ORGANISATION=true (how
+        // the flip is rehearsed) must still test what the migration does at release.
+        config(['tenancy.roles_per_organisation' => false]);
     }
 
     #[Test]

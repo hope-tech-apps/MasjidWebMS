@@ -28,6 +28,9 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\ScopedRoleRows;
 
+// Set here, not inherited: the migration does nothing while the switch is on.
+beforeEach(fn () => config(['tenancy.roles_per_organisation' => false]));
+
 it('rewrites only a scoped login\'s row that names the other kind\'s role', function () {
     $rows = ScopedRoleRows::seed();
 
