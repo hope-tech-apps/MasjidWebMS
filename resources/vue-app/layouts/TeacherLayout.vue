@@ -1,5 +1,5 @@
 <template>
-    <div class="min-vh-100 mn-realm" :class="{ 'teacher-with-schedule': timetableEnabled }">
+    <div class="min-vh-100 mn-realm" :class="{ 'teacher-with-schedule': timetableEnabled, 'teacher-works-elsewhere': worksElsewhere }">
         <nav class="navbar navbar-expand sticky-top mn-topbar">
             <div class="container-fluid px-3 px-lg-4">
                 <router-link to="/teacher" class="navbar-brand d-flex align-items-center gap-2 text-decoration-none teacher-brand">
@@ -33,9 +33,13 @@
                         <i class="bi bi-calendar-week" aria-hidden="true"></i><span class="d-none d-sm-inline">My schedule</span>
                     </router-link>
                     <!-- Only with 2+ schools (memberships[] on /api/teacher/user). A
-                         teacher at one school sees the header they always saw. -->
+                         teacher at one school sees the header they always saw.
+                         A teacher who is also Friday-lunch staff somewhere
+                         (areas[] on the same payload) gets the same control, with
+                         the lunch board listed in it. -->
                     <TeacherSchoolPicker :choices="choices" :current-id="selectedId" :switching="switching"
-                                         @choose="switchSchool" />
+                                         :areas="authStore.user?.areas" current-area="teacher"
+                                         @choose="switchSchool" @choose-area="switchArea" />
                     <router-link to="/teacher/help/teacher" class="nav-link mn-topbar-link">Help</router-link>
                     <span v-if="teacherName" class="mn-topbar-person d-none d-md-inline">{{ teacherName }}</span>
                     <button class="btn btn-sm btn-outline-secondary teacher-tap" :disabled="signingOut" @click="signOut">
@@ -47,6 +51,13 @@
         </nav>
 
         <main class="container py-3 py-sm-4" style="max-width: 960px;">
+            <!-- The other area would not open (switchArea). Above the screens, not
+                 instead of them: this school still works. -->
+            <div v-if="areaRefusal" class="alert alert-warning small d-flex align-items-start gap-2" role="alert">
+                <span class="flex-grow-1">{{ areaRefusal }}</span>
+                <button type="button" class="btn-close" aria-label="Dismiss this message" @click="areaRefusal = ''"></button>
+            </div>
+
             <!-- The server bound a different school than this tab selected: a screen
                  headed one school over another's rows. Blocking, so nothing is read
                  from it until the teacher reconciles (the admin notice, reused). -->
@@ -183,6 +194,65 @@ function reconcile(): void {
 }
 
 /**
+ * Whether the server listed other places this login works (`areas[]`). Only the
+ * header's room is decided here: with the switch AND its word in it, a phone's
+ * header goes onto two rows, so the school's name is not squeezed down to a
+ * letter. What the switch offers is the picker's business.
+ */
+const worksElsewhere = computed<boolean>(() => {
+    const areas: unknown = authStore.user?.areas;
+
+    return Array.isArray(areas) && areas.length > 0;
+});
+
+/** Why the other area did not open, in the server's words. Empty when there is nothing to say. */
+const areaRefusal = ref('');
+
+/**
+ * Move to another place this login works: the lunch board of the organisation
+ * where it is Friday-lunch staff (`areas[]`, TeacherSchoolPicker).
+ *
+ * There is no switch endpoint. The server answers every area's `/user` in that
+ * area's own voice, so moving IS asking the other one and then starting its
+ * shell. It is asked FIRST, while this shell is still standing: if that role was
+ * taken away since the page loaded, the teacher stays here and reads what the
+ * server said, instead of being reloaded into a page that will not open.
+ *
+ * Then the school switch's steps in the school switch's order (responses on the
+ * wire and rows in the stores belong to this school), the area is remembered so
+ * the load asks it first, and the page starts again from nothing in the other
+ * shell: a full load, for the reason switchSchool gives.
+ */
+async function switchArea(place: { area: 'teacher' | 'lunch'; masjidId: number; label: string; home: string }): Promise<void> {
+    if (switching.value) return;
+
+    switching.value = true;
+    areaRefusal.value = '';
+
+    const refusal = await authStore.askStaffArea(place.area);
+    if (refusal !== null) {
+        // The server's sentence as it came, closed with a full stop if it had none.
+        const said = /[.!?]$/.test(refusal) ? refusal : `${refusal}.`;
+        areaRefusal.value = `Manara could not open ${place.label}. The answer was: ${said} You are still in ${school.value?.name || 'your school'}.`;
+        switching.value = false;
+        return;
+    }
+
+    try {
+        bumpTenantEpoch();
+        resetTenantScopedStores();
+    } catch (error) {
+        // Not fatal: the load below is what actually guarantees a clean slate.
+        console.warn('[tenant] store reset before the area switch failed', error);
+    }
+
+    forgetServerTenant();
+    authStore.saveDashboardMasjidId(place.masjidId);
+    authStore.saveStaffArea(place.area);
+    window.location.assign(place.home);
+}
+
+/**
  * The header, from the school the SELECTED id names — read through the tenant-bound
  * endpoint, so it is a school the server verified for this very request, never the
  * default membership that /api/teacher/user names. For a teacher at two schools the
@@ -275,8 +345,12 @@ const signOut = async () => {
 }
 
 @media (max-width: 575.98px) {
-    .teacher-with-schedule .mn-topbar > .container-fluid { flex-wrap: wrap; row-gap: .25rem; }
-    .teacher-with-schedule .mn-topbar .ms-auto { flex-wrap: wrap; gap: .375rem !important; max-width: 100%; }
+    /* The same two rows for a teacher who also works somewhere else: the switch
+       shows its word on a phone for them, and the name would not fit beside it. */
+    .teacher-with-schedule .mn-topbar > .container-fluid,
+    .teacher-works-elsewhere .mn-topbar > .container-fluid { flex-wrap: wrap; row-gap: .25rem; }
+    .teacher-with-schedule .mn-topbar .ms-auto,
+    .teacher-works-elsewhere .mn-topbar .ms-auto { flex-wrap: wrap; gap: .375rem !important; max-width: 100%; }
 }
 
 @media (max-width: 575.98px), (pointer: coarse) {
