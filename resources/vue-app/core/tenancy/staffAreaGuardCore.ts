@@ -27,6 +27,12 @@
  * A second reload inside the window is refused (the stamp is the school guard's,
  * so the two guards cannot take turns reloading) and the shell says so instead.
  *
+ * ONE refusal is taken without asking or reloading: a refused SIGN-OUT. The person
+ * asked to leave, not to be moved to their other area, and the shell that sent it
+ * ends the session itself, through the other area's sign-out
+ * (authStore.signOutThroughOtherArea). A reload here would cancel that request on
+ * its way out, and the token would outlive the sign-out.
+ *
  * A login with one kind of role has no `areas`, never passes the first test
  * below, and keeps the path it always had.
  *
@@ -47,6 +53,8 @@ export interface StaffAreaGuardDeps {
     areaOfKind(kind: unknown): string | null;
     hasStaffAreas(areas: unknown): boolean;
     isAreaRequest(url: unknown, area: any): boolean;
+    /** Whether the request was a sign-out sent through one of the two areas. */
+    isAreaSignOut(url: unknown): boolean;
     mayReloadAfterRefusal(lastReloadAtMs: unknown, nowMs: number): boolean;
 
     /**
@@ -118,13 +126,21 @@ export function createStaffAreaGuard(deps: StaffAreaGuardDeps) {
      * Handle a refusal. Returns null at once when it is not this guard's (a login
      * with one role, another area's API, any other status), so those callers are
      * not delayed by a tick. Otherwise a promise of whether the guard TOOK it:
-     * true when the page is reloading or the shell now says it cannot open the
-     * area, false when the area still has the login and the refusal was about
-     * something else. One check at a time: a screen fires a dozen requests and
-     * every one of them is refused together.
+     * true when the page is reloading, the shell now says it cannot open the
+     * area, or the refusal was of a sign-out (which the shell finishes itself);
+     * false when the area still has the login and the refusal was about something
+     * else. One check at a time: a screen fires a dozen requests and every one of
+     * them is refused together.
      */
     function handleRefusal(error: any): Promise<boolean> | null {
         if (!concernsThisArea(error)) return null;
+
+        // A refused sign-out: taken, with nothing asked and nothing reloaded (see
+        // the top of this file). "Taken" is also what keeps the teacher client from
+        // pushing the sign-in page while the login is still signed in, which the
+        // router would bounce straight back into the shell being left.
+        if (deps.isAreaSignOut(error?.config?.url)) return Promise.resolve(true);
+
         if (checking) return checking;
 
         // Cleared in a `finally` on the promise, not inside decide(): a decision

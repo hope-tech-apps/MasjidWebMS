@@ -85,6 +85,51 @@ export function areaUserEndpoint(area: StaffArea): string {
     return `/api/${area}/user`;
 }
 
+/** The route that ends the session, asked through this area. */
+export function areaLogoutEndpoint(area: StaffArea): string {
+    return `/api/${area}/logout`;
+}
+
+/** Whether a request was a sign-out sent through one of the two areas, whatever host it was sent to. */
+export function isAreaSignOut(url: unknown): boolean {
+    if (typeof url !== 'string') return false;
+
+    const path = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '').split(/[?#]/)[0];
+
+    return path === '/api/teacher/logout' || path === '/api/lunch/logout';
+}
+
+/**
+ * The area to sign out through instead, when this shell's own area would not
+ * take the sign-out; or null.
+ *
+ * `/logout` sits behind each area's gate, and the gate admits a login only while
+ * it holds a role of that area's kind. So somebody whose role in THIS area has
+ * just been taken away (or whose second area closed because the server's switch
+ * was turned off) presses Sign out and is answered 401 by the gate: nothing is
+ * deleted on the server, and the token is still their session in the other area,
+ * for up to eight hours, behind a sign-in page that says they left. The other
+ * area's gate still admits them, and its sign-out ends every session they have.
+ *
+ * A session that is already dead is also a 401, and there is nothing to end
+ * anywhere: the framework says `Unauthenticated.` for it, and only that one answer
+ * is left alone (the server side pins both bodies, OneLoginTwoRolesRealmTest). Any
+ * other 401 is tried. A wrong guess costs one refused request; a missed one leaves
+ * a session alive that its owner believes is over. A login with one kind of role
+ * is never refused by its own area's gate, so it signs out with the one request
+ * it always made.
+ */
+export function areaToSignOutThrough(area: unknown, refusal: unknown): StaffArea | null {
+    const here = asStaffArea(area);
+    if (here === null) return null;
+
+    const response = (refusal as { response?: { status?: unknown; data?: { message?: unknown } | null } } | null | undefined)?.response;
+    if (response?.status !== 401) return null;
+    if (response.data?.message === 'Unauthenticated.') return null;
+
+    return here === 'teacher' ? 'lunch' : 'teacher';
+}
+
 /** The area a `/user` route belongs to, or null (the admin one). */
 export function areaOfEndpoint(url: unknown): StaffArea | null {
     const match = typeof url === 'string' ? /^\/api\/(teacher|lunch)\/user$/.exec(url) : null;
@@ -234,4 +279,38 @@ export function movedAreaHome(storedAtBoot: unknown, path: unknown, answeredKind
     if (wanted === null || answered === null || wanted === answered) return null;
 
     return areaHome(answered);
+}
+
+/**
+ * Start the router in the area that answered, when it is not the one in the
+ * address bar (movedAreaHome). Returns where it went, or null when nothing moved.
+ *
+ * Called by main.ts BEFORE the router is installed, and awaited. Rewriting the
+ * address bar would not do it: createWebHistory() read the address when the router
+ * module was imported, and that is where the router's first navigation goes. Once
+ * this navigation has finished the router is no longer at its start, so installing
+ * it does not navigate again. A navigation that fails is reported and swallowed:
+ * the app must still mount, on the address it was given.
+ *
+ * A function of its own so that the move is EXECUTED by a test. Inline in main.ts
+ * it was only ever read as text, and deleting it changed no test: a person whose
+ * role was removed would have been reloaded onto "401 Unauthorized".
+ */
+export async function startInAreaThatAnswered(
+    router: { replace(to: string): Promise<unknown> },
+    storedAtBoot: unknown,
+    path: unknown,
+    answeredKind: unknown,
+    report: (...args: unknown[]) => void = () => {},
+): Promise<string | null> {
+    const movedTo = movedAreaHome(storedAtBoot, path, answeredKind);
+    if (movedTo === null) return null;
+
+    try {
+        await router.replace(movedTo);
+    } catch (error) {
+        report('Error: \n', error);
+    }
+
+    return movedTo;
 }

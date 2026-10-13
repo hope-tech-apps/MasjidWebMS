@@ -15,9 +15,11 @@ import { grantedMemberships } from "@/core/types/data/Membership";
 import { resetTenantScopedStores } from "@/stores/plugins/tenantStoreReset";
 import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
 import {
+    areaLogoutEndpoint,
     areaOfEndpoint,
     areaOfKind,
     areaToAskInstead,
+    areaToSignOutThrough,
     areaUserEndpoint,
     asStaffArea,
     firstAreaToAsk,
@@ -283,6 +285,33 @@ export const useAuthStore = defineStore('authStore', () => {
     }
 
     /**
+     * Sign-out, when the shell's own area would not take it.
+     *
+     * Each shell posts its own area's `/logout` and then clears this browser. That
+     * route sits behind the area's gate, so for somebody whose role in that area
+     * has just gone the gate answers 401 and the server deletes nothing: the token
+     * is still their session in the other area, behind a sign-in page that says
+     * they left. The shell hands that refusal here BEFORE it clears anything, and
+     * this ends the session through the area that still admits them
+     * (areaToSignOutThrough says which, and when there is nothing to end).
+     *
+     * It never throws and never decides what the shell does next: signing out
+     * locally happens whatever the server says, as it always did. A login with
+     * one kind of role is never refused by its own area's gate, so for it this
+     * makes no request.
+     */
+    async function signOutThroughOtherArea(area: StaffArea, refusal: unknown): Promise<void> {
+        const other = areaToSignOutThrough(area, refusal);
+        if (other === null) return;
+
+        try {
+            await ApiService.post(areaLogoutEndpoint(other) as BackendApiRoute, {} as any);
+        } catch (e) {
+            console.warn('[staff] the session could not be ended through the other area either', e);
+        }
+    }
+
+    /**
      * Sign in. The two-step arguments are OPTIONAL and are sent only when the
      * caller has them.
      *
@@ -533,6 +562,6 @@ export const useAuthStore = defineStore('authStore', () => {
         twoFactorRequired, twoFactorError, signInError,
         login, fetchAuthUser, authenticate, logout, removeAuth, saveDashboardMasjidId,
         forgetDashboardMasjidId, cancelTwoFactorChallenge,
-        saveStaffArea, askStaffArea, reaskStaffArea,
+        saveStaffArea, askStaffArea, reaskStaffArea, signOutThroughOtherArea,
     }
 })

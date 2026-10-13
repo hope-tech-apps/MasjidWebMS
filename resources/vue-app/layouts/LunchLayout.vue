@@ -152,8 +152,13 @@ const signOut = async () => {
     signingOut.value = true;
     try {
         await ApiService.post('/api/lunch/logout', {} as any);
-    } catch {
-        // Sign out locally regardless of what the server says.
+    } catch (refusal) {
+        // Sign out locally regardless of what the server says. One thing first: if
+        // it was this area's gate that refused (lunch access has just been taken
+        // away from somebody who also teaches), nothing was ended on the server and
+        // the token is still their session in the teacher area. The store ends it
+        // through that area; for everyone else it does nothing.
+        await authStore.signOutThroughOtherArea('lunch', refusal);
     } finally {
         authStore.removeAuth();
         signingOut.value = false;

@@ -407,18 +407,66 @@ test('boot: the stored area is read before the session is re-identified, and the
 
     const readsKey = boot.indexOf('localStorage.getItem(LOCAL_STORAGE_KEYS.staff_area)');
     const fetches = boot.indexOf('authStore.fetchAuthUser()');
-    const decides = boot.indexOf('movedAreaHome(STAFF_AREA, window.location.pathname, authStore.user?.type)');
-    const navigates = boot.indexOf('await router.replace(movedTo)');
+    // Awaited, with the real router, the key as it was when the page began to load, and who answered.
+    const moves = boot.indexOf('await startInAreaThatAnswered(router, STAFF_AREA, window.location.pathname, authStore.user?.type, console.log);');
     // The statement, not the comment above it that names it.
     const installs = boot.indexOf('app.use(router);');
 
-    for (const [step, at] of Object.entries({ readsKey, fetches, decides, navigates, installs })) assert.ok(at > 0, `${step} is in main.ts`);
-    assert.deepEqual([readsKey, fetches, decides, navigates, installs], [readsKey, fetches, decides, navigates, installs].sort((a, b) => a - b));
+    for (const [step, at] of Object.entries({ readsKey, fetches, moves, installs })) assert.ok(at > 0, `${step} is in main.ts`);
+    assert.deepEqual([readsKey, fetches, moves, installs], [readsKey, fetches, moves, installs].sort((a, b) => a - b));
 
     // The address bar is not rewritten: the router read the address when router.ts was imported.
     assert.doesNotMatch(boot, /history\.replaceState/);
     // The key's name is the one the store reads.
     assert.match(read('core/constants/appConfigConstants.ts'), /staff_area: 'MASJID_APP_STAFF_AREA'/);
+});
+
+test('boot: the move HAPPENS, as a navigation that has finished before the caller goes on', async () => {
+    // Regression: the move was three lines inside main.ts that no test executed. With them gone every
+    // test still passed, and a person whose role was removed reloaded onto "401 Unauthorized".
+    const went: string[] = [];
+    let finished = false;
+    const router = {
+        async replace(to: string) {
+            went.push(to);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            finished = true;
+        },
+    };
+
+    // Her lunch role was removed while the board was open: the reload asked lunch first, it refused, and the teacher area answered.
+    assert.equal(await areas.startInAreaThatAnswered(router, 'lunch', '/lunch', 'Teacher'), '/teacher');
+    assert.deepEqual(went, ['/teacher']);
+    assert.equal(finished, true, 'awaited: the router is past its start before it is installed');
+
+    // The mirror: her teacher role went under the teacher shell.
+    assert.equal(await areas.startInAreaThatAnswered(router, 'teacher', '/teacher/classes/3', 'LunchStaff'), '/lunch');
+    assert.deepEqual(went, ['/teacher', '/lunch']);
+
+    // Nothing moves for a login that was not in a two-area session on this browser, or that is where it should be.
+    for (const [stored, path, kind] of [
+        [null, '/lunch', 'Teacher'], [null, '/teacher', 'LunchStaff'], ['lunch', '/lunch', 'LunchStaff'], ['teacher', '/teacher', 'Teacher'],
+        ['lunch', '/masjid/teachers', 'Teacher'], ['lunch', '/lunch', 'MasjidAdmin'], ['lunch', '/lunch', undefined],
+    ] as const) {
+        assert.equal(await areas.startInAreaThatAnswered(router, stored, path, kind), null, `${stored} ${path} ${kind}`);
+    }
+    assert.deepEqual(went, ['/teacher', '/lunch'], 'and the router was not touched for them');
+});
+
+test('boot: a navigation that fails is reported and the app still mounts', async () => {
+    const reported: unknown[][] = [];
+    const failure = new Error('navigation aborted');
+
+    const to = await areas.startInAreaThatAnswered(
+        { replace: async () => { throw failure; } }, 'lunch', '/lunch', 'Teacher', (...args) => { reported.push(args); },
+    );
+
+    assert.equal(to, '/teacher');
+    assert.equal(reported.length, 1);
+    assert.equal(reported[0][1], failure);
+
+    // With nobody to report to, it is still swallowed.
+    assert.equal(await areas.startInAreaThatAnswered({ replace: async () => { throw failure; } }, 'lunch', '/lunch', 'Teacher'), '/teacher');
 });
 
 // ----------------------------------------- each area calls its own API prefix

@@ -20,7 +20,7 @@ import 'vue-tel-input/vue-tel-input.css';
 import Swal from 'sweetalert2';
 import DOMPurify from 'dompurify';
 import { installSwalSanitizer, SWAL_PURIFY_CONFIG } from '@/core/plugins/swalSanitize';
-import { movedAreaHome } from '@/core/helpers/staffAreas';
+import { startInAreaThatAnswered } from '@/core/helpers/staffAreas';
 import { watchStaffAreaRefusals } from '@/core/tenancy/teacherSchoolGuard';
 
 // Before anything can open a dialog: SweetAlert2 renders a title, a button caption and more as
@@ -107,22 +107,11 @@ app.use(pinia);
         // longer has it (that role was taken away, and the other area answered):
         // start in the area that did answer, instead of on its "401 Unauthorized".
         //
-        // Navigated here, BEFORE app.use(router), and awaited. Rewriting the
-        // address bar would not do it: createWebHistory() read the address when
-        // router.ts was imported, at the top of this file, and that is where the
-        // router's first navigation goes. Once this one has finished the router
-        // is no longer at its start, so app.use() below does not navigate again.
-        //
-        // Null for every login that was not in a two-area session on this
-        // browser: they start where the address bar says, as they always did.
-        const movedTo = movedAreaHome(STAFF_AREA, window.location.pathname, authStore.user?.type);
-        if (movedTo !== null) {
-            try {
-                await router.replace(movedTo);
-            } catch (error) {
-                console.log('Error: \n', error);
-            }
-        }
+        // BEFORE app.use(router), and awaited: see startInAreaThatAnswered for why
+        // it is a navigation and why it has to finish first. It does nothing for
+        // every login that was not in a two-area session on this browser: they
+        // start where the address bar says, as they always did.
+        await startInAreaThatAnswered(router, STAFF_AREA, window.location.pathname, authStore.user?.type, console.log);
 
         // Use Router
         app.use(router);

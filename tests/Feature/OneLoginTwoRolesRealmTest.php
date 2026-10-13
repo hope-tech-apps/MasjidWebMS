@@ -239,6 +239,56 @@ class OneLoginTwoRolesRealmTest extends TestCase
         $this->assertGreaterThan(15, $lunch);
     }
 
+    /** @return array<string, array{0: string, 1: bool}> each person, with the membership gate shut and open */
+    public static function bothPeopleUnderBothGates(): array
+    {
+        $cases = [];
+
+        foreach (self::bothPeople() as $name => [$who]) {
+            $cases["{$name}, gate shut"] = [$who, false];
+            $cases["{$name}, gate open"] = [$who, true];
+        }
+
+        return $cases;
+    }
+
+    #[Test]
+    #[DataProvider('bothPeopleUnderBothGates')]
+    public function owning_an_organisation_never_stands_in_for_a_row_of_the_other_area_there(string $who, bool $gateOpen): void
+    {
+        // An owner with no row is bound through ownership (TenantResolver::
+        // membershipFromOwnership), and the stand-in row is given the role of the
+        // kind the login was CREATED as. No door makes a teacher's or lunch-staff
+        // login an owner, so this is a guard, and it had no test: written with the
+        // kind the request is ACTING as, ownership would answer for whichever area
+        // she happened to be in, and the teacher area would open at an organisation
+        // where nobody ever made her a teacher.
+        config(['tenancy.multi_membership' => $gateOpen]);
+
+        DB::table('masjids')->where('id', $this->elsewhere->id)->update(['user_id' => $this->{$who}->id]);
+        $this->assertSame(0, MasjidUser::where('masjid_id', $this->elsewhere->id)->where('user_id', $this->{$who}->id)->count(), 'ownership alone, no row');
+
+        $this->actingAsPerson($who);
+
+        // The area of the kind her login was NOT created as: refused there, as at
+        // any organisation where she holds no row of that kind.
+        $otherArea = $who === 'shamina'
+            ? [$this->teacherBase($this->elsewhere).'/school', $this->teacherBase($this->elsewhere).'/groups', $this->teacherBase($this->elsewhere).'/guides']
+            : [$this->lunchBase($this->elsewhere).'/jummah-lunch/menus', $this->lunchBase($this->elsewhere).'/guides'];
+
+        foreach ($otherArea as $url) {
+            $this->assertTenantRefused($this->getJson($url), $url);
+        }
+
+        // Ownership still answers for the kind the login was created as, as it did
+        // before any of this: it is the OTHER area that is refused, not the place.
+        $homeArea = $who === 'shamina'
+            ? $this->lunchBase($this->elsewhere).'/jummah-lunch/menus'
+            : $this->teacherBase($this->elsewhere).'/school';
+
+        $this->getJson($homeArea)->assertOk();
+    }
+
     #[Test]
     public function a_refusal_says_the_same_thing_outside_debug_as_production_runs(): void
     {
@@ -579,6 +629,67 @@ class OneLoginTwoRolesRealmTest extends TestCase
             $this->assertSame(0, $this->{$who}->tokens()->count(), "signing out of the {$area} area left a token alive");
             $this->withBearer($token)->getJson('/api/lunch/user')->assertUnauthorized();
             $this->withBearer($token)->getJson('/api/teacher/user')->assertUnauthorized();
+        }
+    }
+
+    /** @return array<string, array{0: string, 1: string}> each person, and how the role behind the shell they are in comes to be gone */
+    public static function bothPeopleLosingTheirSecondArea(): array
+    {
+        $cases = [];
+
+        foreach (self::bothPeople() as $name => [$who]) {
+            $cases["{$name}, an office removed the role"] = [$who, 'removed'];
+            $cases["{$name}, the switch was turned off"] = [$who, 'switched off'];
+        }
+
+        return $cases;
+    }
+
+    #[Test]
+    #[DataProvider('bothPeopleLosingTheirSecondArea')]
+    public function a_sign_out_the_area_refuses_does_not_end_the_session_and_the_other_areas_sign_out_does(string $who, string $how): void
+    {
+        // `/logout` sits behind each area's gate. She is in the shell of the role her
+        // login was NOT created as (the teacher shell, for the real case) and that
+        // role goes: her next click is Sign out. The gate refuses it, so nothing is
+        // deleted, and the token is still her session in the other area. This is
+        // what the server does; the shells answer it by signing out through the
+        // other area (authStore.signOutThroughOtherArea, V/tests/staff-area-sign-out).
+        $second = $who === 'shamina' ? 'teacher' : 'lunch';
+        $first = $who === 'shamina' ? 'lunch' : 'teacher';
+
+        $token = $this->{$who}->createToken('login-token', ['staff'])->plainTextToken;
+        $this->withBearer($token)->getJson("/api/{$second}/user")->assertOk();
+
+        if ($how === 'removed') {
+            $organisation = $second === 'teacher' ? $this->school : $this->masjid;
+            MasjidUser::where('masjid_id', $organisation->id)->where('user_id', $this->{$who}->id)->delete();
+            DB::table('group_staff')->where('user_id', $this->{$who}->id)->delete();
+        } else {
+            config(['tenancy.roles_per_organisation' => false]);
+        }
+
+        // Refused by the GATE, in the gate's own body: the SPA tells this from a dead
+        // session by it, so it is pinned to the byte.
+        $refused = $this->withBearer($token)->postJson("/api/{$second}/logout");
+        $this->assertGateRefused($refused, "signing out of the {$second} area after its role went");
+        $this->assertSame(1, $this->{$who}->tokens()->count(), 'nothing was deleted: the session is still alive');
+        $this->withBearer($token)->getJson("/api/{$first}/user")->assertOk();
+
+        // The other area is the one her login was created for, so its gate always
+        // admits her, and its sign-out ends every session she has.
+        $this->withBearer($token)->postJson("/api/{$first}/logout")->assertOk();
+        $this->assertSame(0, $this->{$who}->tokens()->count());
+
+        // And a session that IS dead says so differently, in both areas: 401 with the
+        // framework's body, not the gate's. The shells do not try the other area
+        // for this one, so a login with one role signs out with the one request it
+        // always made.
+        foreach ([$first, $second] as $area) {
+            $dead = $this->withBearer($token)->postJson("/api/{$area}/logout");
+
+            $this->assertSame(401, $dead->getStatusCode());
+            $this->assertSame(['status' => 'error', 'message' => 'Unauthenticated.'], $dead->json(), "a dead session at /api/{$area}/logout");
         }
     }
 

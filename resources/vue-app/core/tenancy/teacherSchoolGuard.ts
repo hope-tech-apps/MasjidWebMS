@@ -7,7 +7,7 @@ import {
     mayReloadAfterRefusal,
     schoolMismatch,
 } from "@/core/helpers/teacherSchools";
-import { areaOfKind, hasStaffAreas, isAreaRequest } from "@/core/helpers/staffAreas";
+import { areaOfKind, hasStaffAreas, isAreaRequest, isAreaSignOut } from "@/core/helpers/staffAreas";
 import { createStaffAreaGuard } from "@/core/tenancy/staffAreaGuardCore";
 import { createTeacherSchoolGuard, ReloadStamp, SchoolMismatch } from "@/core/tenancy/teacherSchoolGuardCore";
 
@@ -118,6 +118,7 @@ const areaGuard = createStaffAreaGuard({
     areaOfKind,
     hasStaffAreas,
     isAreaRequest,
+    isAreaSignOut,
     mayReloadAfterRefusal,
     reask: async () => {
         // A dynamic import, for the reason refetchUser gives above.

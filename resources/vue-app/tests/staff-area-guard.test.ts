@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as vue from 'vue';
 import * as pinia from 'pinia';
-import { areaOfKind, hasStaffAreas, isAreaRequest } from '../core/helpers/staffAreas.ts';
+import { areaOfKind, hasStaffAreas, isAreaRequest, isAreaSignOut } from '../core/helpers/staffAreas.ts';
 import * as areas from '../core/helpers/staffAreas.ts';
 import { mayReloadAfterRefusal } from '../core/helpers/teacherSchools.ts';
 import { createStaffAreaGuard } from '../core/tenancy/staffAreaGuardCore.ts';
@@ -43,7 +43,7 @@ function harness(over: { who?: any; verdict?: 'here' | 'moved' | 'gone' | Error;
 
     const guard = createStaffAreaGuard({
         signedIn: () => who,
-        areaOfKind, hasStaffAreas, isAreaRequest, mayReloadAfterRefusal,
+        areaOfKind, hasStaffAreas, isAreaRequest, isAreaSignOut, mayReloadAfterRefusal,
         reask: async () => {
             log.asks++;
             if (verdict instanceof Error) throw verdict;
