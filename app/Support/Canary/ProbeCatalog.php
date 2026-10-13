@@ -86,8 +86,10 @@ use Illuminate\Support\Str;
  *
  * ## What is refused and COUNTED — the census
  *
- * Writes, authenticated routes and everything outside `canary.prefixes` are not
- * in `declined()`, and until 2026-08-13 they were in nothing else either. The
+ * Writes, unnamed authenticated routes and everything outside `canary.prefixes`
+ * are not in `declined()`. Explicit `not_planned` credential gaps are named
+ * there, but remain credentialed in the census, never public GET refusals.
+ * Until 2026-08-13 these routes were in nothing else either. The
  * argument for that was real and it was answering the wrong question: listing a
  * hundred admin URIs beside the eight refusals that are this canary's own blind
  * spots WOULD bury them. But the reader of a run has no way to discover that the
@@ -172,12 +174,12 @@ final class ProbeCatalog
     }
 
     /**
-     * Every public GET on a probed prefix that this class REFUSED to plan, and
-     * why — the canary's own blind spots, as opposed to the run's.
+     * Every public GET on a probed prefix that this class REFUSED to plan, plus
+     * explicitly named credential gaps, and why — the canary's own blind spots.
      *
      * Reported rather than silently dropped. See the class docblock for the
-     * measurement that made this necessary, and for why writes and authenticated
-     * routes are refused without being listed here.
+     * measurement that made this necessary, and for why writes and unnamed
+     * authenticated routes are refused without being listed here.
      *
      * Includes the endpoints withheld as dark on purpose (see withheld()), with
      * the reason the command composed.
@@ -297,6 +299,9 @@ final class ProbeCatalog
             // a watched one.
             if ($this->needsACredential($route)) {
                 $credentialed[] = $uri;
+                if (isset($this->config['not_planned'][$uri])) {
+                    $declined[$uri] = $this->config['not_planned'][$uri];
+                }
 
                 continue;
             }
@@ -381,7 +386,7 @@ final class ProbeCatalog
             // The eight. Their URIs and reasons are in
             // `coverage.routes_not_planned`; the count is here so the four
             // numbers can be read as one sentence.
-            'public_get_refused' => count($declined),
+            'public_get_refused' => count(array_diff_key($declined, array_flip($credentialed))),
             // How many of those are refused only because they are dark on
             // purpose on this run. The one census number that moves without a
             // route changing.

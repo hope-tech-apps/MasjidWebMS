@@ -158,11 +158,19 @@ final class ResponseFacts
      *
      * @return array<string,array<int,int>> key path => sorted, distinct ids
      */
-    public static function recordIdentity(mixed $payload, int $maxDepth = 6): array
+    public static function recordIdentity(mixed $payload, int $maxDepth = 6, array $paths = []): array
     {
         $buckets = [];
 
         self::collectIds($payload, '', $buckets, $maxDepth);
+
+        // Explicit paths alone may descend into rows or read scalar foreign
+        // keys. The default walker still avoids nested GLOBAL lookup objects.
+        foreach ($paths as $path) {
+            $bucket = self::identityBucket($path);
+            $buckets[$bucket] = [];
+            self::collectPathIds($payload, explode('.', $path), $buckets[$bucket]);
+        }
 
         foreach ($buckets as $path => $ids) {
             $ids = array_values(array_unique($ids));
@@ -173,6 +181,55 @@ final class ResponseFacts
         ksort($buckets);
 
         return array_filter($buckets, static fn (array $ids) => $ids !== []);
+    }
+
+    /** Explicit rules apply only at their named route, never by resemblance. */
+    public static function identityPaths(string $uri, array $rules): array
+    {
+        $paths = [];
+        foreach ($rules as $rule) {
+            if (is_array($rule)) {
+                foreach ((array) ($rule['paths'][$uri] ?? []) as $path) {
+                    if (is_string($path) && $path !== '') {
+                        $paths[] = $path;
+                    }
+                }
+            }
+        }
+
+        return array_values(array_unique($paths));
+    }
+
+    public static function identityBucket(string $path): string
+    {
+        if ($path === '*.id') {
+            return '(root)';
+        }
+
+        return str_ends_with($path, '.*.id') ? substr($path, 0, -5) : $path;
+    }
+
+    /** Null virtual ids are ignored, exactly as in the default walker. */
+    private static function collectPathIds(mixed $node, array $segments, array &$ids): void
+    {
+        if ($segments === []) {
+            if (is_int($node) || (is_string($node) && ctype_digit($node))) {
+                $ids[] = (int) $node;
+            }
+
+            return;
+        }
+        if (! is_array($node)) {
+            return;
+        }
+        $segment = array_shift($segments);
+        if ($segment === '*') {
+            foreach ($node as $value) {
+                self::collectPathIds($value, $segments, $ids);
+            }
+        } elseif (array_key_exists($segment, $node)) {
+            self::collectPathIds($node[$segment], $segments, $ids);
+        }
     }
 
     /**

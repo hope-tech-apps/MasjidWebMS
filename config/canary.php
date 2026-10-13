@@ -134,6 +134,18 @@ return [
     | WHICH tenants — and, since 2026-08-13, WHOSE ROWS THOSE ARE
     |--------------------------------------------------------------------------
     |
+    | When you add a key carrying ids to a mobile carrier, declare its paths
+    | here in the SAME change and test a full run with its capability ON and
+    | data present. A dark key absent everywhere cannot exercise attribution.
+    |
+    | Alongside relation names, named table rules bind exact response paths
+    | (relative to data; * walks a list) to a table. tenant_key names its owner.
+    | A GLOBAL table instead names a pivot: every emitted id must have a pivot
+    | for the requested organisation satisfying where. Shared catalogue ids
+    | are allowed only by that membership check, never by a blanket ignore.
+    | These rules do not rank tenants or invoke model methods, and use SELECTs
+    | only, with the same observed-id cap as the existing relation lookups.
+    |
     | This list does TWO jobs. Both are about the same fact — these are the
     | tables that back the graded surface — but the second one is newer and
     | stricter, so read it before adding a name here.
@@ -191,7 +203,53 @@ return [
     | specific pair.
     */
 
-    'compare_by' => ['announcements', 'services', 'pages', 'gallery'],
+    'compare_by' => [
+        'announcements', 'services', 'pages', 'gallery',
+        // GLOBAL mobile_app_features ids, not app_bottom_tabs row ids. Home
+        // never appears; virtual volunteer/menu have null ids and no pivot.
+        'bottom_tabs' => [
+            'table' => 'mobile_app_features',
+            'paths' => [
+                'api/mobile/masjids/{masjid_id}' => ['bottom_tabs.*.id'],
+                'api/v1/settings' => ['bottom_tabs.*.id'],
+            ],
+            'pivot' => [
+                'table' => 'masjid_mobile_app_features',
+                'related_key' => 'feature_id',
+                'tenant_key' => 'masjid_id',
+                'where' => ['is_available' => 1],
+            ],
+        ],
+        'member_question_options' => [
+            'table' => 'member_question_options',
+            'tenant_key' => 'masjid_id',
+            'paths' => [
+                'api/mobile/masjids/{masjid_id}' => ['onboarding.questions.*.options.*.id'],
+                'api/v1/settings' => ['onboarding.questions.*.options.*.id'],
+                'api/mobile/masjids/{masjid_id}/member-questions' => [
+                    'questions.*.options.*.id', 'occupation.*.id', 'help.*.id',
+                    'answers.field_id', 'answers.occupation_id', 'answers.help_ids.*',
+                ],
+            ],
+        ],
+        // Existing member interests in the same mobile contract are service ids.
+        'member_interests' => [
+            'table' => 'services',
+            'tenant_key' => 'masjid_id',
+            'paths' => ['api/mobile/masjids/{masjid_id}/interests' => ['*.id']],
+        ],
+        // volunteer is {title,url}, carries no ids and needs no ownership rule.
+    ],
+
+    // The canary has no member principal and must not mint a token or write
+    // authentication/cache state. Name this authenticated gap in coverage,
+    // rather than letting its option/answer rules imply that it is probed.
+    'not_planned' => [
+        'api/mobile/masjids/{masjid_id}/member-questions' =>
+            'requires an active signed-in member token; this read-only public canary has no member principal',
+        'api/mobile/masjids/{masjid_id}/interests' =>
+            'requires an active signed-in member token; this read-only public canary has no member principal',
+    ],
 
     /*
     |--------------------------------------------------------------------------
