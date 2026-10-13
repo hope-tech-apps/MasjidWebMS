@@ -198,7 +198,7 @@ class AppMemberQuestionsTest extends TestCase
     #[Test]
     public function defaults_seed_once_and_super_only_can_rename_reorder_and_deactivate(): void
     {
-        $this->enable(); $this->assertSame(10, MemberQuestionOption::where('question','occupation')->count());
+        $this->enable(); $this->assertSame(13, MemberQuestionOption::where('question','occupation')->count());
         $this->assertSame(8, MemberQuestionOption::where('question','help')->count());
         $occupation = MemberQuestionOption::where('question','occupation')->orderBy('position')->get()->toArray();
         $occupation[0]['label'] = 'Learning'; $occupation[0]['active'] = false;
@@ -207,7 +207,7 @@ class AppMemberQuestionsTest extends TestCase
         $url = '/api/admin/masjids/'.$this->org->id.'/member-question-options';
         $this->office(); $this->putJson($url,$body)->assertForbidden();
         $this->office(User::factory()->create(['phone'=>'+15555550101','name'=>'Practice Admin','type'=>'SuperAdmin'])); $this->putJson($url,$body)->assertOk();
-        $this->assertFalse(MemberQuestionOption::find($occupation[9]['id'])->active);
+        $this->assertFalse(MemberQuestionOption::find($occupation[count($occupation) - 1]['id'])->active);
         CapabilityWriter::apply($this->org,['app_member_questions'=>false],null); $this->enable();
         $this->assertSame(18,MemberQuestionOption::count()); $this->assertSame('Learning',MemberQuestionOption::find($occupation[9]['id'])->label);
     }
@@ -285,7 +285,7 @@ class AppMemberQuestionsTest extends TestCase
         $this->enable();
         foreach ($urls as $url) {
             Cache::flush(); DB::enableQueryLog(); DB::flushQueryLog(); $r=$this->getJson($url,['masjid-id'=>(string)$this->org->id])->assertOk(); $sql=array_column(DB::getQueryLog(),'query'); DB::disableQueryLog();
-            $data=$r->json(); $this->assertTrue($data['data']['onboarding']['questions']); $this->assertCount(10,$data['data']['onboarding']['occupation']); unset($data['data']['onboarding']);
+            $data=$r->json(); $this->assertTrue($data['data']['onboarding']['questions']); $this->assertCount(13,$data['data']['onboarding']['occupation']); unset($data['data']['onboarding']);
             $this->assertSame(json_encode($base[$url][0]),json_encode($data));
             $this->assertCount(1,array_filter($sql,fn($q)=>str_contains($q,'member_question_options')));
             $this->assertSame($base[$url][1],array_values(array_filter($sql,fn($q)=>!str_contains($q,'member_question_options'))));

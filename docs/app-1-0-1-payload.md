@@ -30,23 +30,26 @@ Literal example of the added portion of either carrier's `data`:
       {"id": 1, "label": "Education"},
       {"id": 2, "label": "Healthcare"},
       {"id": 3, "label": "Technology"},
-      {"id": 4, "label": "Business and finance"},
-      {"id": 5, "label": "Trades and construction"},
-      {"id": 6, "label": "Public service"},
-      {"id": 7, "label": "Student"},
-      {"id": 8, "label": "Homemaker"},
-      {"id": 9, "label": "Retired"},
-      {"id": 10, "label": "Other"}
+      {"id": 4, "label": "Engineering"},
+      {"id": 5, "label": "Business and finance"},
+      {"id": 6, "label": "Legal"},
+      {"id": 7, "label": "Trades and construction"},
+      {"id": 8, "label": "Hospitality and food service"},
+      {"id": 9, "label": "Public service"},
+      {"id": 10, "label": "Student"},
+      {"id": 11, "label": "Homemaker"},
+      {"id": 12, "label": "Retired"},
+      {"id": 13, "label": "Other"}
     ],
     "help": [
-      {"id": 11, "label": "Teaching and tutoring"},
-      {"id": 12, "label": "Events and hospitality"},
-      {"id": 13, "label": "Youth activities"},
-      {"id": 14, "label": "Community relief"},
-      {"id": 15, "label": "Maintenance and facilities"},
-      {"id": 16, "label": "Technology and media"},
-      {"id": 17, "label": "Professional advice"},
-      {"id": 18, "label": "Other"}
+      {"id": 14, "label": "Teaching and tutoring"},
+      {"id": 15, "label": "Events and hospitality"},
+      {"id": 16, "label": "Youth activities"},
+      {"id": 17, "label": "Community relief"},
+      {"id": 18, "label": "Maintenance and facilities"},
+      {"id": 19, "label": "Technology and media"},
+      {"id": 20, "label": "Professional advice"},
+      {"id": 21, "label": "Other"}
     ]
   },
   "volunteer": {"title": "Volunteer", "url": "https://example.org/volunteer"}
