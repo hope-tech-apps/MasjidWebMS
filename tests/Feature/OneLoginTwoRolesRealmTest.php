@@ -687,6 +687,58 @@ class OneLoginTwoRolesRealmTest extends TestCase
         $this->assertSame([], $notExactlyOneGate, 'A staff route outside the three gates would run with no area decided.');
     }
 
+    #[Test]
+    public function no_controller_of_the_two_areas_loads_the_signed_in_user_a_second_time(): void
+    {
+        // The kind a request is acting as lives on ONE object: the model the guard
+        // resolved, which the area's gate marked (User::actAs). `$request->user()` and
+        // `Auth::user()` are that object. A copy of the same person loaded by id
+        // (`User::find(Auth::id())`, `->fresh()`) is a different object and knows only
+        // the stored kind, and every site that tells a teacher from the office reads
+        // "not a Teacher" as "the office". For a lunch login in the teacher area that
+        // fails OPEN. There is no such load today; this keeps it that way, in every
+        // controller the two route files name, including one added tomorrow.
+        $files = [];
+        $actions = [];
+
+        foreach (Route::getRoutes()->getRoutes() as $route) {
+            if (preg_match('#^api/(teacher|lunch)/#', $route->uri()) !== 1) {
+                continue;
+            }
+
+            $actions[$route->getActionName()] = true;
+            $class = explode('@', $route->getActionName())[0];
+            $files[(string) (new \ReflectionClass($class))->getFileName()] = true;
+        }
+
+        // The one such load there is, and why it is not one of these: it is in a
+        // method the two areas do not route to. (It reads no kind either.) If a
+        // teacher or lunch route ever names updateProfile, this stops excusing it.
+        $elsewhere = ['$user = User::findOrFail($authUser->id);' => \App\Http\Controllers\AdminDashboard\AuthController::class.'@updateProfile'];
+        foreach ($elsewhere as $action) {
+            $this->assertArrayNotHasKey($action, $actions, "{$action} is now reachable from the teacher or lunch area.");
+        }
+
+        $this->assertGreaterThan(20, count($files), 'The sweep found too few controllers; it is not looking at the right list.');
+
+        $offences = [];
+
+        foreach (array_keys($files) as $file) {
+            foreach (explode("\n", (string) file_get_contents($file)) as $number => $line) {
+                $reloadsAUserById = preg_match('/\bUser::(?:query\(\)\s*->\s*)?(?:find|findOrFail|findMany|whereKey)\s*\(|\bUser::where\(\s*[\'"]id[\'"]/', $line) === 1;
+                $copiesThePrincipal = preg_match('/(?:Auth::user\(\)|->user\(\)|auth\(\)->user\(\))\s*\??->\s*(?:fresh|replicate|withoutRelations)\s*\(/', $line) === 1;
+
+                if (($reloadsAUserById || $copiesThePrincipal) && ! isset($elsewhere[trim($line)])) {
+                    $offences[] = str_replace(base_path().'/', '', $file).':'.($number + 1).'  '.trim($line);
+                }
+            }
+        }
+
+        $this->assertSame([], $offences, "A controller of the teacher or lunch area loads a User by id, or copies the signed-in one. "
+            ."If it is the signed-in person, use \$request->user(): a second copy does not know which area the request is in. "
+            ."If it is somebody else, read them through a relation, and never decide by their `type` what THIS request may do.");
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /** The tenant binder's refusal: 403 and the one sentence every fail-closed branch answers. */

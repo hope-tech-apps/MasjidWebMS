@@ -72,6 +72,115 @@ place.
 
 ---
 
+## One login, a role at each organisation (teacher at one, lunch staff at another)
+
+A second switch, `config/tenancy.php`'s `roles_per_organisation`, read from
+`TENANCY_ROLES_PER_ORGANISATION` in one place (`App\Support\StaffArea::open()`). It ships
+**false**. What it is for: one person, one address, one password, runs Friday lunch at one
+organisation and teaches at another. For the two scoped kinds the `masjid_user` row says
+what the login is at that organisation (`MasjidUser::kindFor`); `users.type` stays the
+kind the login was created as.
+
+- **Off:** nobody enters an area outside their own kind, the Teachers door and the
+  lunch-staff door refuse an address that has a login of the other kind with the
+  sentences they always had, and no payload carries `areas`.
+- **On:** the Teachers door attaches a live lunch-staff login as a teacher of that
+  school, and the lunch-staff door attaches a live teacher's login as lunch staff there.
+  The person is emailed that they were added and signs in as before; a switch in the
+  header moves them between the two places.
+- **In both states** the tenant resolver binds a teacher's or lunch-staff request only
+  through a row of the kind it is acting as. That part is not switchable: it only
+  removes access.
+- **It also needs `TENANCY_MULTI_MEMBERSHIP=true`** to attach a person who already
+  belongs somewhere, exactly as attaching a teacher to a second school does. With that
+  gate shut the doors answer "Adding an existing login to a second school (organisation)
+  is switched off."
+- **An administrator's address stays refused at both doors.** One login has one global
+  set of permissions; an administrator made a teacher elsewhere would carry them into
+  the classes.
+
+### Before the release (read-only, on production)
+
+```sql
+-- 1. The rows the migration would rewrite. Expected: none. Anything here is read by a person
+--    before anything is deployed: it is a row somebody wrote by hand.
+SELECT mu.id, mu.masjid_id, mu.user_id, mu.role, u.type
+  FROM masjid_user mu JOIN users u ON u.id = mu.user_id
+ WHERE (u.type = 'Teacher' AND mu.role = 'lunch-staff')
+    OR (u.type = 'LunchStaff' AND mu.role = 'teacher');
+
+-- 2. The whole vocabulary of the column, and who holds a scoped role without being a scoped
+--    login (left alone by the migration and never re-read by the code, but worth knowing).
+SELECT role, COUNT(*) FROM masjid_user GROUP BY role;
+SELECT mu.id, mu.masjid_id, mu.user_id, mu.role, u.type
+  FROM masjid_user mu JOIN users u ON u.id = mu.user_id
+ WHERE mu.role IN ('teacher', 'lunch-staff') AND u.type NOT IN ('Teacher', 'LunchStaff');
+```
+
+Also read `config('tenancy.multi_membership')` there, and the rows of the person the
+first attach is for (their `users.type`, and their row at the organisation they already
+belong to).
+
+### The release
+
+1. **Deploy with the switch off.** `migrate --force` runs one data migration,
+   `normalise_scoped_roles_on_masjid_user`: it rewrites the rows of query 1 to the role
+   of their login's kind (so each goes on meaning what it meant), writes nothing when
+   there are none, and logs the count either way (`storage/logs`, "normalise_scoped_roles").
+   It refuses to run if the switch is already on. No route is added, no token changes;
+   sessions live at the release are untouched.
+2. **Staging first, switch on there:** set the switch AFTER the deploy (not before: the
+   migration skips itself when it finds the switch on). Walk it in a browser: a login with
+   both roles in both areas, the switch between them, a removal on each side, and a
+   one-role teacher and a one-role lunch login.
+3. **Switch on in production** with the inode-preserving editor, on the owner's yes:
+   `set-env.sh <ssh-host> <http-host> TENANCY_ROLES_PER_ORGANISATION true`.
+4. The first real use is an office act: the school adds the person's address on its
+   Teachers screen with their class.
+
+### Going back
+
+- **The safe lever: turn the switch off** (and re-cache config). Every login with both
+  roles keeps the area of the kind it was created as and loses the other (401 at that
+  gate). No row is deleted; turning it on again restores them. A login whose only rows are
+  of the other kind cannot sign in while it is off.
+- **Do NOT roll the CODE back while a cross-kind row exists.** Code from before this
+  release reads only `users.type`: a lunch login's `teacher` row at a school is, to it, a
+  live row of a lunch login, so it would bind the LUNCH area at that school (its guides at
+  once; its board if that school has Friday lunch). `php artisan staff:cross-kind-roles`
+  answers whether any exists (exit 0: none, 3: some) and lists them by id.
+- If the code must go back with such rows present, the Teachers screen is not the way to
+  remove them: a teacher on timetable meetings cannot be removed there, and Library is a
+  timetable assignment. Do it by query, keeping the export:
+
+  ```sh
+  php artisan staff:cross-kind-roles --json > /root/cross-kind-rows-$(date -u +%F).json
+  ```
+
+  ```sql
+  DELETE mu FROM masjid_user mu JOIN users u ON u.id = mu.user_id
+   WHERE (u.type = 'LunchStaff' AND mu.role = 'teacher')
+      OR (u.type = 'Teacher' AND mu.role = 'lunch-staff');
+  ```
+
+  Timetable meetings and class assignments reference the person, not the membership row,
+  so they stay. To the older code that person is then not a teacher of the school: the
+  timetable's teacher list will not offer them and switching the timetable off and on
+  would end their meetings. Then roll back. On the way forward again, re-insert the
+  exported rows (`masjid_id`, `user_id`, `role`, `is_default`, timestamps) before turning
+  the switch on. Check that nobody is left with rows and no default.
+- **Do not run the migration again by hand** once such rows exist on purpose. It is why it
+  checks the switch; a run with the switch off after deliberate rows exist would turn each
+  of them back into its login's own kind.
+
+### What a hand edit must not forget
+
+For a teacher's or lunch-staff login the row now decides. After changing a `users.type`
+in tinker, look at that login's `masjid_user` rows as well, and run
+`php artisan staff:cross-kind-roles`.
+
+---
+
 ## Turning it on
 
 1. **Ship the code with the flag still false.** The deploy itself changes no

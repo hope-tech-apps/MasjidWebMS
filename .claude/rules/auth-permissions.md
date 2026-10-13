@@ -446,6 +446,45 @@ answer as a wrong password.
   `manage funds`, `view donor pii`, `manage donations`. super-admin = all;
   masjid-admin = the full masjid-scoped CRM set; member = none.
 
+## A teacher's or lunch-staff login: the ROW says what it is at each organisation
+
+One person can run Friday lunch at one organisation and teach at another with one
+login (2026-10-13). `users.type` holds one value for everything, so for the two
+scoped kinds (`Teacher`, `LunchStaff`) the `masjid_user` row decides:
+
+- `MasjidUser::kindFor($homeKind)` is the ONE rule that reads a row's role. A
+  `teacher` row makes its login a teacher there, a `lunch-staff` row lunch staff
+  there, whichever of the two `users.type` says. Any other role means "the type
+  decides". **Only a login whose type is one of those two is ever re-read**: an
+  administrator's, a member's and a SuperAdmin's rows always answer their type.
+  Never compare `masjid_user.role` to a string anywhere else.
+- `users.type` is still the source of truth for `SuperAdmin`, `MasjidAdmin` and
+  `User`, still picks the one bridged spatie role, and for a scoped login is the
+  kind it was CREATED as (its home kind). No door rewrites it on attach or removal.
+- The area gates (`TeacherMiddleware`, `LunchStaffMiddleware`) ask
+  `App\Support\StaffArea::admits()`. A login of the other scoped kind is admitted
+  only while `tenancy.roles_per_organisation` is on and only if it holds a live row
+  of the area's kind. The gate then records the kind the request is ACTING as
+  (`User::actAs()`), and **`$user->type` on the signed-in model answers with it**
+  for the rest of the request. That is why the shared code that tells a teacher
+  from the office (`SubjectFence`, `HasClassSubjectWork`, the guide books, the
+  lunch board's `notify_emails`) needed no edit. Two consequences:
+  - Use `$request->user()` / `Auth::user()` in the teacher and lunch areas. Never
+    load the signed-in person again by id (`User::find(Auth::id())`, `->fresh()`):
+    the copy knows only the stored kind, and every such site reads "not a Teacher"
+    as "the office", which fails OPEN. `OneLoginTwoRolesRealmTest` sweeps the two
+    areas' controllers for it.
+  - Read `$user->homeType()` when you mean the stored column (the role bridge does).
+- `TenantResolver` binds an organisation for a scoped request only through a row of
+  the kind being acted as. That filter is NOT behind the switch.
+- An administrator's address is refused at the Teachers and lunch-staff doors, on
+  purpose: one login has one global set of permissions (teams are off), so an
+  administrator made a teacher elsewhere would carry `manage contacts` into the
+  classes. Lifting that needs permissions per organisation.
+- **After changing a `users.type` by hand** (tinker), look at that login's rows too:
+  for a scoped login the row now decides. `php artisan staff:cross-kind-roles`
+  lists every row whose role is the other scoped kind's.
+
 ## Permission gates apply ONLY to the new CRM endpoints
 
 - Use the spatie `permission:` middleware **per-route**, and only on the CRM

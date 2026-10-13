@@ -219,9 +219,14 @@ surface), not a global-scope one.
   .claude/rules/migrations.md). It is what makes the single-tenant fallback
   deterministic; do not weaken it to an application check. Moving the default is
   an ordinary update as long as the old row is cleared in the same transaction.
-- `pivot.role` mirrors the values of `User::TYPE_ROLE_MAP` and is **advisory**:
-  authorization still runs on the `users.type` bridge, and spatie's `teams`
-  feature stays off (flipping it ALTERs `model_has_roles`' primary key).
+- `pivot.role` mirrors the values of `User::TYPE_ROLE_MAP`. For an administrator
+  it is **advisory**: authorization runs on the `users.type` bridge, and spatie's
+  `teams` feature stays off (flipping it ALTERs `model_has_roles`' primary key).
+  For a `Teacher` or `LunchStaff` login it is NOT advisory since 2026-10-13: a
+  `teacher` or `lunch-staff` role is what that login IS at that organisation
+  (`MasjidUser::kindFor`, the only reader), and the resolver binds a teacher's or
+  lunch-staff request only through a row of the kind it is acting as. See
+  .claude/rules/auth-permissions.md, "the ROW says what it is".
 - `masjids.user_id` remains the ownership/billing pointer. Since S3 the resolver
   reads `masjid_user` — but while the one-membership gate below is shut,
   ownership is still what selects the single grant, so a membership row in any
