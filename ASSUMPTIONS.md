@@ -480,3 +480,7 @@ Readback timings 3 minutes and +15 minutes are chosen operational delays, not me
 Verified with SQLite, faked provider HTTP, actual database-queue enqueue failure and serialized sender replay. Production transaction refusal was exercised with the application outside testing mode; test fixtures themselves remain in the harness's outer rollback transaction. MySQL DDL, physical multi-connection commits/locking and deployed queues remain unverified. Runtime key reads use application configuration; no actual secrets were opened or copied. Only the named worktree was changed. The sole-writer assignment is the owner's brief; no HANDOFF.md was present.
 ## Menu and member questions, 2026-10-13
 Owner's production state (859995cc, no live question users/answers) is inherited, not queried. Counts represent answer-bearing current directory contacts, retain revoked-login contacts, exclude soft-deleted contacts; no unanswered row. Unknown ages retain existing adult-member assumption. Native apps and production writes are outside this worktree build.
+
+## Small browser/review fixes, 2026-10-13
+
+Assumption: item 2 is the final attendance Keep behavior, retaining saved Absent alongside Late/Excused. Item 1 says Absent becomes Present; optional clarification requested, not answered as of implementation. Regression expectations and office documentation state the item-2 behavior. No browser geometry or deployed/MySQL behavior inferred from mounted/CSS tests.

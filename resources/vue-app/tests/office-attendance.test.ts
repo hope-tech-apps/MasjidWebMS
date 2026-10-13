@@ -27,7 +27,7 @@ async function screen(statuses?: (string | null)[]) {
 test('office controls mark all, absent with a note, save and correct with attribution and allergy', async () => {
     const s = await screen(); try {
         assert.match(s.text(), /Practice Teacher/); assert.match(s.text(), /9:05 AM/); assert.match(s.text(), /Allergy/);
-        click(s.button('Mark all present')); await flush();
+        click(s.button('Mark all present')); await flush(); click(s.button('Mark everyone present')); await flush();
         const row = s.all(n => n.props['data-student'] === 1)[0];
         click(row.children.flatMap(function walk(n: any): any[] { return [n, ...n.children.flatMap(walk)]; }).find(n => n.tag === 'button' && n.textContent === 'Absent'));
         type(s.all(n => n.props.id === 'attendance-note-1')[0], 'Office practice note'); await flush();
@@ -56,7 +56,7 @@ test('an older register response cannot replace a newer committed date or erase 
         s.delay(); type(input, '2026-10-16'); input.props.onKeydown({ key: 'Enter', preventDefault() {} }); await flush();
         type(input, '2026-10-15'); input.props.onKeydown({ key: 'Enter', preventDefault() {} }); await flush();
         s.resolve(); await flush(); assert.equal(input.value, '2026-10-15');
-        click(s.button('Mark all present')); click(s.button('Save register')); await flush(); assert.equal(s.writes[0].body.session_date, '2026-10-15');
+        click(s.button('Mark all present')); await flush(); click(s.button('Mark everyone present')); click(s.button('Save register')); await flush(); assert.equal(s.writes[0].body.session_date, '2026-10-15');
         s.delay(); type(input, '2026-10-14'); input.props.onKeydown({ key: 'Enter', preventDefault() {} }); await flush();
         type(input, '2026-10-13'); await flush(); s.resolve(); await flush(); assert.equal(input.value, '2026-10-13');
         assert.equal(s.button('Save register').disabled, true);
@@ -64,7 +64,7 @@ test('an older register response cannot replace a newer committed date or erase 
 });
 test('a save refusal stays visible and correction retains the earlier marker until saved', async () => {
     const s = await screen(); try {
-        click(s.button('Mark all present')); await flush(); assert.match(s.text(), /Practice Teacher/);
+        click(s.button('Mark all present')); await flush(); click(s.button('Mark everyone present')); await flush(); assert.match(s.text(), /Practice Teacher/);
         s.fail(httpError(422, { status: 'failed', data: { marks: ['That register names a child who has left the class — reload it and mark the rest.'] } }));
         click(s.button('Save register')); await flush(); assert.match(s.text(), /reload it and mark the rest/); assert.doesNotMatch(s.text(), /Saved\./);
     } finally { s.unmount(); }
@@ -76,6 +76,37 @@ test('office register uses theme styles and fluid phone rows', () => {
         assert.doesNotMatch(styles, /#[0-9a-f]{3,8}\b/i);
         assert.doesNotMatch(styles, /[;{]\s*min-width:\s*\d{3,}px/);
     }
+});
+
+test('office mark labels override inherited word breaking and wrap whole 44px buttons', () => {
+    const src = readFileSync(new URL('../views/dashboard/groups/GroupAttendanceTab.vue', import.meta.url), 'utf8');
+    const styles = src.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? '';
+    const postcss = require('postcss');
+    const css = postcss.parse(styles);
+    const button: Record<string, string> = {}; const group: Record<string, string> = {};
+    css.walkRules((rule: any) => {
+        if (rule.parent.type !== 'root') return;
+        const target = rule.selector === '.register-marks .btn' ? button : rule.selector === '.register-marks' ? group : null;
+        if (target) rule.walkDecls((d: any) => { target[d.prop] = d.value; });
+    });
+    assert.equal(button['overflow-wrap'], 'normal');
+    assert.equal(button['word-break'], 'normal');
+    assert.equal(button['white-space'], 'nowrap');
+    assert.equal(button['min-height'], '44px');
+    assert.equal(group.display, 'flex'); assert.equal(group['flex-wrap'], 'wrap');
+});
+
+for (const [statuses, message] of [
+    [['present', null, null, null], 'Saved. 3 students are not marked yet.'],
+    [['absent', null], 'Saved. 1 student is not marked yet.'],
+    [['present', 'late'], 'Saved.'],
+] as const) test(`office save reports unmarked students: ${message}`, async () => {
+    const s = await screen([...statuses]); try {
+        click(s.button('Save register')); await flush();
+        const saved = s.all(n => n.props.role === 'status' && n.textContent.startsWith('Saved.'));
+        assert.equal(saved.length, 1); assert.equal(saved[0].textContent, message);
+        assert.equal(s.writes[0].body.marks.length, statuses.filter(Boolean).length);
+    } finally { s.unmount(); }
 });
 
 test('office sends the read revision and reloads a conflict without restoring untouched stale marks', async () => {
@@ -98,20 +129,43 @@ test('office sends the read revision and reloads a conflict without restoring un
     } finally { s.unmount(); }
 });
 
-test('office mark all protects three saved late or excused marks until confirmed, including after local edits', async () => {
-    const s = await screen(['late', 'excused', 'late', null]); try {
-        const row = s.all(n => n.props['data-student'] === 1)[0];
-        click(row.children.flatMap(function walk(n: any): any[] { return [n, ...n.children.flatMap(walk)]; }).find(n => n.tag === 'button' && n.textContent === 'Absent'));
+for (const [choice, expected] of [
+    ['Keep those marks', ['Absent', 'Late', 'Excused', 'Present', 'Present']],
+    ['Mark everyone present', ['Present', 'Present', 'Present', 'Present', 'Present']],
+] as const) test(`office mark all ${choice} changes only drafts until Save`, async () => {
+    const s = await screen(['absent', 'late', 'excused', null, 'present']); try {
         click(s.button('Mark all present')); await flush();
-        assert.match(s.text(), /3 students are marked late or excused. Mark them present too\?/);
-        click(s.button('Keep late and excused')); await flush();
+        assert.match(s.text(), /3 students are marked absent, late or excused\. Mark them present too\?/);
+        assert.match(s.text(), /1 absent, 1 late, 1 excused/);
+        assert.equal(s.writes.length, 0);
+        click(s.button(choice)); await flush();
+        assert.deepEqual(s.all(n => n.tag === 'button' && n.props['aria-pressed'] === true).map(n => n.textContent), [...expected]);
+        assert.equal(s.writes.length, 0);
+        assert.doesNotMatch(s.text(), /Mark them present too\?/);
         click(s.button('Save register')); await flush();
-        assert.deepEqual(s.writes[0].body.marks.map((m: any) => m.status), ['absent', 'excused', 'late']);
+        assert.deepEqual(s.writes[0].body.marks.map((m: any) => m.status), expected.map(label => label.toLowerCase()));
+        assert.deepEqual(s.writes[0].body.marks.map((m: any) => m.note), ['Note 1', 'Note 2', 'Note 3', 'Note 4', 'Note 5']);
+    } finally { s.unmount(); }
+});
+
+test('office question counts only saved kinds even after local edits', async () => {
+    const s = await screen(['absent', 'late', null]); try {
+        const row = s.all(n => n.props['data-student'] === 2)[0];
+        click(row.children.flatMap(function walk(n: any): any[] { return [n, ...n.children.flatMap(walk)]; }).find(n => n.tag === 'button' && n.textContent === 'Excused'));
         click(s.button('Mark all present')); await flush();
-        click(s.button('Mark them present too')); await flush();
-        click(s.button('Save register')); await flush();
-        assert.deepEqual(s.writes[1].body.marks.map((m: any) => m.status), ['present', 'present', 'present', 'present']);
-        assert.deepEqual(s.writes[1].body.marks.map((m: any) => m.note), ['Note 1', 'Note 2', 'Note 3', 'Note 4']);
+        assert.match(s.text(), /2 students are marked absent, late or excused\. Mark them present too\?/);
+        assert.match(s.text(), /1 absent, 1 late/); assert.doesNotMatch(s.text(), /1 excused/);
+        click(s.button('Keep those marks')); await flush();
+        assert.deepEqual(s.all(n => n.tag === 'button' && n.props['aria-pressed'] === true).map(n => n.textContent), ['Absent', 'Excused', 'Present']);
+        assert.equal(s.writes.length, 0);
+    } finally { s.unmount(); }
+});
+
+test('office question names a single saved absent mark with singular grammar', async () => {
+    const s = await screen(['absent', null]); try {
+        click(s.button('Mark all present')); await flush();
+        assert.match(s.text(), /1 student is marked absent, late or excused\. Mark them present too\?/);
+        assert.match(s.text(), /1 absent/); assert.doesNotMatch(s.text(), /0 late|0 excused/);
     } finally { s.unmount(); }
 });
 

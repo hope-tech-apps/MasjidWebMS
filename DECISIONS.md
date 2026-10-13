@@ -9665,3 +9665,7 @@ Assigned sole writer feature/app-questions-two-and-menu-tab at859995cc, no commi
 Office compatibility audit: retain occupation/occupation_text/help/help_text/interests alongside ordered asked questions, without new reads. Updated block renders asked questions only; filters retain old lists/settings plus new definitions.
 
 Final local gates: whole PHP once11failed/7skipped/10698passed/170858assertions/765.42s (only the11 specified environment cases); final focused58passed/1332assertions; full SPA2018tests/2017pass/0fail/1skip/201377.379917ms; one build1517modules/11.38s,214manifest entries/300files inspected then public/build removed. No commit; actual390/320 browser/MySQL/native/CI/live unverified. Evidence paths in STATE.md.
+
+## Small browser/review fixes, 2026-10-13
+
+Owner supersedes the earlier Late/Excused-only attendance question with Absent/Late/Excused and Keep those marks. Items 1/2 conflict on saved Absent; optional clarification was requested and item 2 is treated as the final behavior meanwhile. Keep retains local choices for saved protected rows and marks the rest Present; both choices require Save. Counts use the existing SchoolRecordsCsv BOM opener/guard. Upgrade preservation runs on a separate in-memory connection outside RefreshDatabase transaction, because SQLite cannot toggle foreign keys during a transaction and its FK table rebuild otherwise cascades seeded help selections. No migration change.
