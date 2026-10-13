@@ -156,7 +156,12 @@ export interface TeacherResponseDeps {
     dropSupersededResponse(label: string): Promise<never>;
     checkEcho(response: any): void;
     handleRefusal(error: any): unknown;
-    onUnauthorized(): Promise<void> | void;
+    /**
+     * Handed the refusal itself: for a login that works in two areas a 401 can be
+     * the teacher ROLE going while the session lives on in the other area, and the
+     * client has to be able to tell that from a dead token (staffAreaGuardCore.ts).
+     */
+    onUnauthorized(error?: any): Promise<void> | void;
 }
 
 /**
@@ -188,7 +193,7 @@ export function createTeacherResponseHandlers(deps: TeacherResponseDeps) {
             deps.handleRefusal(error);
 
             if (error?.response?.status === 401) {
-                await deps.onUnauthorized();
+                await deps.onUnauthorized(error);
             }
 
             return Promise.reject(error);

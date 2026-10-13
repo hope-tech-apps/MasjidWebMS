@@ -10,9 +10,21 @@ import { MSwal } from "@/core/plugins/SweetAlerts2";
 import { getMessageFromObj } from "@/assets/ts/swalMethods";
 import { BackendResponseData } from "@/core/types/config/AxiosCustom";
 import { bumpTenantEpoch, forgetServerTenant, serverTenantId } from "@/core/tenancy/tenantRequests";
-import { resetTeacherSchoolGuard } from "@/core/tenancy/teacherSchoolGuard";
+import { provideSignedInStaff, resetTeacherSchoolGuard } from "@/core/tenancy/teacherSchoolGuard";
 import { grantedMemberships } from "@/core/types/data/Membership";
 import { resetTenantScopedStores } from "@/stores/plugins/tenantStoreReset";
+import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
+import {
+    areaOfEndpoint,
+    areaOfKind,
+    areaToAskInstead,
+    areaUserEndpoint,
+    asStaffArea,
+    firstAreaToAsk,
+    hasStaffAreas,
+    StaffArea,
+    userEndpointOrder,
+} from "@/core/helpers/staffAreas";
 
 export const useAuthStore = defineStore('authStore', () => {
 
@@ -71,6 +83,9 @@ export const useAuthStore = defineStore('authStore', () => {
 
         localStorage.removeItem(LOCAL_STORAGE_KEYS.token);
         localStorage.removeItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
+        // Which area a two-area login was last in. The next person to sign in on
+        // this browser must not be asked about somebody else's area first.
+        localStorage.removeItem(LOCAL_STORAGE_KEYS.staff_area);
         // The teacher shell's "can't open this school" / "wrong school" notices are
         // module state, and this is an SPA navigation: without this the notice's own
         // remedy (sign out, sign in) leaves the next sign-in behind the same notice.
@@ -131,6 +146,142 @@ export const useAuthStore = defineStore('authStore', () => {
         localStorage.removeItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
     }
 
+    // ------------------------------------------------ a login with two areas
+    //
+    // One person can be Friday-lunch staff at one organisation and a teacher at
+    // another (core/helpers/staffAreas.ts). The server answers each area's
+    // `/user` in that area's own voice, so `user.type`, `user.masjid` and
+    // `user.memberships` are always ONE area's, and everything that routes or
+    // picks an API prefix by them is right as it stands. What is kept here is
+    // only which area this browser was last in, and only for such a login: the
+    // key below is written when an answer carries `areas` and removed when one
+    // does not, so a login with one kind of role never has it.
+
+    /** The area this browser was last in, or null. A blocked storage reads as "none". */
+    function readStaffArea(): StaffArea | null {
+        try {
+            return asStaffArea(localStorage.getItem(LOCAL_STORAGE_KEYS.staff_area));
+        } catch {
+            return null;
+        }
+    }
+
+    /** Remember the area a switch is moving to, so the load that follows asks it first. */
+    function saveStaffArea(area: StaffArea) {
+        localStorage.setItem(LOCAL_STORAGE_KEYS.staff_area, area);
+    }
+
+    /**
+     * After every answer that says who this is: remember the area that answered
+     * while the answer carries `areas`, forget it when it does not (the second
+     * role was taken away, or the server's switch was turned off).
+     */
+    function rememberStaffArea() {
+        const area = areaOfKind(user.value?.type);
+
+        try {
+            if (area !== null && hasStaffAreas(user.value?.areas)) {
+                saveStaffArea(area);
+            } else {
+                localStorage.removeItem(LOCAL_STORAGE_KEYS.staff_area);
+            }
+        } catch { /* blocked storage: the area is asked for in today's order */ }
+    }
+
+    /** The organisation this tab is in, in the area that answered: lunch has one, a teacher selects one. */
+    function organisationOfThisTab(area: StaffArea): number | null {
+        const id = Number(area === 'lunch' ? user.value?.masjid?.id : dashboardMasjidId.value);
+
+        return Number.isInteger(id) && id > 0 ? id : null;
+    }
+
+    /**
+     * Ask the area a switch is about to move to whether it will have this login,
+     * BEFORE the shell on screen is taken down.
+     *
+     * There is no switch endpoint: moving to the other area IS asking its `/user`
+     * and then using its prefix. So this is the switch, asked early. Null when the
+     * area answered; otherwise the server's own words for the refusal (its role
+     * there was taken away since this page was loaded), for the shell to show
+     * while the person stays where they are. A refusal also means the list of
+     * places on screen is out of date, so this area is asked again for a new one.
+     */
+    async function askStaffArea(area: StaffArea): Promise<string | null> {
+        let words: string;
+
+        try {
+            const res: AxiosResponse = await ApiService.get(areaUserEndpoint(area) as BackendApiRoute);
+
+            if (res.data?.status === 'success' && res.data?.data) {
+                return null;
+            }
+
+            words = getMessageFromObj(res);
+        } catch (e) {
+            words = getMessageFromObj(e as AxiosError<BackendResponseData>);
+        }
+
+        try {
+            await reaskStaffArea();
+        } catch (e) {
+            console.warn('[staff] could not refresh the places after a refused switch', e);
+        }
+
+        return words || 'No answer.';
+    }
+
+    /**
+     * Ask the area THIS tab is in who the login is now, after it refused a request
+     * (core/tenancy/staffAreaGuardCore.ts).
+     *
+     *   'here'   it still has the organisation this tab is in. The answer replaces
+     *            `user`, so a place that has gone leaves the switcher.
+     *   'moved'  it answers, but no longer names that organisation (a teacher
+     *            removed from one of two schools): the selection is moved to one
+     *            the server grants.
+     *   'gone'   it refuses. Nothing is changed here: the stored area still names
+     *            this one, which is what lets the reload that follows ask it first,
+     *            see the refusal, and start in the area that answers.
+     *
+     * Anything that is not an answer about the login (offline, a 500) is thrown.
+     */
+    async function reaskStaffArea(): Promise<'here' | 'moved' | 'gone'> {
+        const area = areaOfKind(user.value?.type);
+        if (area === null) return 'here';
+
+        const before = organisationOfThisTab(area);
+        let res: AxiosResponse;
+
+        try {
+            res = await ApiService.get(areaUserEndpoint(area) as BackendApiRoute);
+        } catch (e) {
+            const status = (e as AxiosError)?.response?.status;
+            if (status === 401 || status === 403 || status === 404) return 'gone';
+
+            throw e;
+        }
+
+        if (!(res.data?.status === 'success' && res.data?.data)) return 'gone';
+
+        user.value = res.data.data;
+        rememberStaffArea();
+
+        const granted = grantedMemberships(user.value?.memberships);
+        const stillHere = before !== null && (
+            granted.some(membership => Number(membership.masjid_id) === before)
+            || (area === 'lunch' && Number(user.value?.masjid?.id) === before)
+        );
+
+        // Not rehydrateOrganisation() when the selection still stands: that reads
+        // the shared localStorage copy, and a second tab in another school would
+        // move this one there on a refusal that was only about a class.
+        if (stillHere) return 'here';
+
+        rehydrateOrganisation();
+
+        return 'moved';
+    }
+
     /**
      * Sign in. The two-step arguments are OPTIONAL and are sent only when the
      * caller has them.
@@ -172,6 +323,10 @@ export const useAuthStore = defineStore('authStore', () => {
                     twoFactorRequired.value = false;
                     user.value = res.data?.data?.user ?? null;
                     token.value = res.data?.data?.token ?? "";
+                    // A login that works in two areas is signed in to one of them
+                    // (the payload's `type`); remember which, so a reload stays
+                    // there. For everyone else this removes a key they never had.
+                    rememberStaffArea();
                 } else if (res.data?.status === 'two_factor_required') {
                     // A 200 that is NOT a success: correct password, second
                     // factor still owed. Never MSwal this — it is the normal
@@ -282,15 +437,60 @@ export const useAuthStore = defineStore('authStore', () => {
         // whatever is there alone: that build had no concept of a switch.
     }
 
+    /** The page address, for the area it names. Empty outside a browser. */
+    function pagePath(): string {
+        return typeof window !== 'undefined' ? window.location.pathname : '';
+    }
+
+    /**
+     * The answer to keep, given the page that is loading (areaToAskInstead).
+     *
+     * Reached with a second request only by a login whose first answer carries
+     * `areas` while the address names its OTHER area. If that area will not
+     * answer after all, the first answer stands.
+     */
+    async function answerForThisPage(answer: Admin, answered: StaffArea | null, path: string, asked: string[]): Promise<Admin> {
+        const wanted = areaToAskInstead(answer, path, answered, asked);
+        if (wanted === null) return answer;
+
+        try {
+            const res: AxiosResponse = await ApiService.get(areaUserEndpoint(wanted) as BackendApiRoute);
+
+            if (res.data?.status === 'success' && res.data?.data) {
+                return res.data.data;
+            }
+        } catch (e) {
+            console.log(e);
+        }
+
+        return answer;
+    }
+
+    /**
+     * Find out who is signed in, on every page load.
+     *
+     * For a login with one kind of role (nearly every login) this is the loop it
+     * always was: the three routes in `USER_ENDPOINTS` order, first success wins.
+     * `firstAreaToAsk()` is null without a stored area, `answerForThisPage()`
+     * returns its argument without `areas`, and neither makes a request.
+     *
+     * A login that works in two areas is asked in the area the page is in first
+     * (else the one this browser was last in), because every `/user` answers in
+     * its own area's voice and the first one to answer decides which shell opens.
+     */
     async function fetchAuthUser(): Promise<SystemRoute | void> {
         let lastError: unknown = null;
+        const path = pagePath();
+        const asked: string[] = [];
 
-        for (const url of USER_ENDPOINTS) {
+        for (const url of userEndpointOrder(USER_ENDPOINTS, firstAreaToAsk(readStaffArea(), path))) {
             try {
-                const res: AxiosResponse = await ApiService.get(url);
+                asked.push(url);
+                const res: AxiosResponse = await ApiService.get(url as BackendApiRoute);
 
                 if (res.data?.status === 'success' && res.data?.data) {
-                    user.value = res.data.data;
+                    user.value = await answerForThisPage(res.data.data, areaOfEndpoint(url), path, asked);
+                    rememberStaffArea();
 
                     if (user.value?.type === 'SuperAdmin') {
                         const expectedMasjidId = localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
@@ -324,10 +524,15 @@ export const useAuthStore = defineStore('authStore', () => {
             });
     }
 
+    // The area guard reads the signed-in login through this, for the reason the
+    // teacher shell hands the guard its selected school the same way.
+    provideSignedInStaff(() => user.value);
+
     return {
         user, isAuthenticated, token, dashboardMasjidId,
         twoFactorRequired, twoFactorError, signInError,
         login, fetchAuthUser, authenticate, logout, removeAuth, saveDashboardMasjidId,
         forgetDashboardMasjidId, cancelTwoFactorChallenge,
+        saveStaffArea, askStaffArea, reaskStaffArea,
     }
 })

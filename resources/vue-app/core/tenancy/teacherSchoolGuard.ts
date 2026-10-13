@@ -7,7 +7,9 @@ import {
     mayReloadAfterRefusal,
     schoolMismatch,
 } from "@/core/helpers/teacherSchools";
-import { createTeacherSchoolGuard, SchoolMismatch } from "@/core/tenancy/teacherSchoolGuardCore";
+import { areaOfKind, hasStaffAreas, isAreaRequest } from "@/core/helpers/staffAreas";
+import { createStaffAreaGuard } from "@/core/tenancy/staffAreaGuardCore";
+import { createTeacherSchoolGuard, ReloadStamp, SchoolMismatch } from "@/core/tenancy/teacherSchoolGuardCore";
 
 /**
  * What the teacher shell does when the server disagrees with it about which
@@ -37,6 +39,16 @@ import { createTeacherSchoolGuard, SchoolMismatch } from "@/core/tenancy/teacher
  * `resetTeacherSchoolGuard()` is called from `removeAuth()`: without it the notice's
  * own remedy ("sign out and sign in again") would leave the next sign-in stuck
  * behind the same notice.
+ *
+ * A third disagreement arrived with one login holding a role in two areas (lunch
+ * staff at one organisation, a teacher at another), and it is wired here because
+ * it shares the reload stamp and the "still refused" notice:
+ *
+ * 3. **The server refused the AREA** (401 or 403, any sentence): the role this
+ *    shell is for was taken away while the tab was open, and the same token still
+ *    works in the other area. See staffAreaGuardCore.ts. It serves BOTH scoped
+ *    shells: the teacher client hands it its refusals below, and main.ts puts it
+ *    on the client the lunch board rides.
  */
 
 /** Set when the server bound a school other than the selected one. Read by TeacherLayout. */
@@ -50,6 +62,13 @@ export const teacherSchoolRefused = ref<boolean>(false);
 
 const RELOADED_AT_KEY = 'MANARA_TEACHER_SCHOOL_RELOAD_AT';
 
+/** "When did this tab last reload after a refusal". ONE stamp for both guards, so they cannot take turns. */
+const reloadStamp: ReloadStamp = {
+    read: () => sessionStorage.getItem(RELOADED_AT_KEY),
+    write: (ms) => sessionStorage.setItem(RELOADED_AT_KEY, String(ms)),
+    clear: () => sessionStorage.removeItem(RELOADED_AT_KEY),
+};
+
 const guard = createTeacherSchoolGuard({
     mismatch: teacherSchoolMismatch,
     refused: teacherSchoolRefused,
@@ -58,11 +77,7 @@ const guard = createTeacherSchoolGuard({
     isOutsideMembershipsRefusal,
     mayReloadAfterRefusal,
     readStoredSelection: () => localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id),
-    reloadStamp: {
-        read: () => sessionStorage.getItem(RELOADED_AT_KEY),
-        write: (ms) => sessionStorage.setItem(RELOADED_AT_KEY, String(ms)),
-        clear: () => sessionStorage.removeItem(RELOADED_AT_KEY),
-    },
+    reloadStamp,
     now: () => Date.now(),
     refetchUser: async () => {
         // A dynamic import keeps the store graph out of this module's static
@@ -86,9 +101,69 @@ export function checkTeacherSchoolEcho(response: AxiosResponse): void {
     guard.checkEcho(response);
 }
 
-/** Handle a refused school: refetch, rehydrate, reload. One at a time. */
-export function handleTeacherSchoolRefusal(error: any): Promise<void> | null {
-    return guard.handleRefusal(error);
+/** The signed-in login as its tab holds it, for the area guard. Registered by the auth store. */
+let signedInStaff: () => { type?: unknown; areas?: unknown } | null | undefined = () => null;
+
+/**
+ * Tell the area guard where the signed-in login lives (the auth store's `user`).
+ * A provider, as for the selected school above, because the store imports this
+ * module and this module must not import the store back.
+ */
+export function provideSignedInStaff(provider: () => { type?: unknown; areas?: unknown } | null | undefined): void {
+    signedInStaff = provider;
+}
+
+const areaGuard = createStaffAreaGuard({
+    signedIn: () => signedInStaff(),
+    areaOfKind,
+    hasStaffAreas,
+    isAreaRequest,
+    mayReloadAfterRefusal,
+    reask: async () => {
+        // A dynamic import, for the reason refetchUser gives above.
+        const { useAuthStore } = await import("@/stores/authStore");
+        return useAuthStore().reaskStaffArea();
+    },
+    reloadStamp,
+    now: () => Date.now(),
+    reload: () => window.location.reload(),
+    stillRefused: () => { teacherSchoolRefused.value = true; },
+    warn: (...args) => console.warn(...args),
+});
+
+/**
+ * A refusal met by a login that works in two areas, inside the area this tab is
+ * in. Null (at once) for every other refusal and every other login; otherwise a
+ * promise of whether the guard took it (staffAreaGuardCore.ts).
+ */
+export function handleStaffAreaRefusal(error: any): Promise<boolean> | null {
+    return areaGuard.handleRefusal(error);
+}
+
+/**
+ * Handle a refused school: refetch, rehydrate, reload. One at a time.
+ *
+ * A login that works in two areas is asked about first, and when the area guard
+ * answers the school guard is not consulted: its refetch walks every `/user`
+ * route and would move such a login to its other area's voice before the reload,
+ * where the area guard asks this area alone and lets boot do the moving.
+ */
+export function handleTeacherSchoolRefusal(error: any): Promise<unknown> | null {
+    return areaGuard.handleRefusal(error) ?? guard.handleRefusal(error);
+}
+
+/**
+ * Put the area guard on a client that has no refusal handling of its own: the
+ * admin one, which the lunch board rides. It only watches; the refusal is still
+ * rejected to the caller, whose own error path runs. For an administrator, and
+ * for a login with one kind of role, it does nothing at all.
+ */
+export function watchStaffAreaRefusals(client: { interceptors: { response: { use(onFulfilled: undefined, onRejected: (error: any) => any): unknown } } }): void {
+    client.interceptors.response.use(undefined, (error: any) => {
+        areaGuard.handleRefusal(error);
+
+        return Promise.reject(error);
+    });
 }
 
 /** Clear the two notices only (TeacherLayout, on mount). The reload-loop stamp stays. */

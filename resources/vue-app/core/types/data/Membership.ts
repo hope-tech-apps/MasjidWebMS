@@ -30,9 +30,13 @@ export type Membership = {
     masjid_id: number;
 
     /**
-     * `pivot.role`, ADVISORY ONLY (design § Roles). Authorization stays on the
-     * global `users.type` bridge, so nothing here may gate a screen — it is
-     * shown to the user and otherwise ignored.
+     * `pivot.role`. For an administrator it is ADVISORY ONLY (design § Roles):
+     * authorization stays on the global `users.type` bridge. For the two scoped
+     * roles, `teacher` and `lunch-staff`, the SERVER now reads it: it is what the
+     * login is at this organisation, and it decides which area admits it there.
+     * Either way nothing in the SPA may gate a screen on it. The server already
+     * sends each area only its own rows, and refuses the rest at every request;
+     * here it is shown to the user and otherwise ignored.
      */
     role?: string | null;
 

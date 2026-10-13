@@ -20,6 +20,8 @@ import 'vue-tel-input/vue-tel-input.css';
 import Swal from 'sweetalert2';
 import DOMPurify from 'dompurify';
 import { installSwalSanitizer, SWAL_PURIFY_CONFIG } from '@/core/plugins/swalSanitize';
+import { movedAreaHome } from '@/core/helpers/staffAreas';
+import { watchStaffAreaRefusals } from '@/core/tenancy/teacherSchoolGuard';
 
 // Before anything can open a dialog: SweetAlert2 renders a title, a button caption and more as
 // HTML, so every one of them is cleaned at the one door (core/plugins/swalSanitize.ts).
@@ -31,6 +33,13 @@ app.component('admin-dashboard', AdminDashboardApp);
 // Set API Service COnfig
 ApiService.init(app, API_CONFIG.base_url);
 
+// The lunch board rides this client, which has no handling of a refusal. For a
+// login that works in two areas (lunch staff here, a teacher somewhere else) a
+// refusal on the board can be the lunch ROLE going while the session lives on in
+// the other area; the guard asks, and reloads into the area that still has them.
+// It does nothing for an administrator or for a login with one kind of role.
+watchStaffAreaRefusals(ApiService.VueApp.axios);
+
 // Use Pinia Stores
 app.use(pinia);
 
@@ -40,6 +49,9 @@ app.use(pinia);
     // Constants
     const TOKEN = localStorage.getItem(LOCAL_STORAGE_KEYS.token);
     const DASHBOARD_MASJID_ID = localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
+    // Read BEFORE the session is re-identified: fetchAuthUser() rewrites it, and
+    // the last step below needs to know what it was when this page began to load.
+    const STAFF_AREA = localStorage.getItem(LOCAL_STORAGE_KEYS.staff_area);
 
     // Stores
     const authStore = useAuthStore();
@@ -90,6 +102,27 @@ app.use(pinia);
         ApiService.setHeader();
         authStore.removeAuth();
     } finally {
+
+        // A login that works in two areas, loading a page in an area that no
+        // longer has it (that role was taken away, and the other area answered):
+        // start in the area that did answer, instead of on its "401 Unauthorized".
+        //
+        // Navigated here, BEFORE app.use(router), and awaited. Rewriting the
+        // address bar would not do it: createWebHistory() read the address when
+        // router.ts was imported, at the top of this file, and that is where the
+        // router's first navigation goes. Once this one has finished the router
+        // is no longer at its start, so app.use() below does not navigate again.
+        //
+        // Null for every login that was not in a two-area session on this
+        // browser: they start where the address bar says, as they always did.
+        const movedTo = movedAreaHome(STAFF_AREA, window.location.pathname, authStore.user?.type);
+        if (movedTo !== null) {
+            try {
+                await router.replace(movedTo);
+            } catch (error) {
+                console.log('Error: \n', error);
+            }
+        }
 
         // Use Router
         app.use(router);

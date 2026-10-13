@@ -1,6 +1,10 @@
 export const LOCAL_STORAGE_KEYS = {
     token: 'MASJID_APP_AUTH_TOKEN',
-    dashboard_masjid_id: 'MASJID_APP_DASHBOARD_MASJID_ID'
+    dashboard_masjid_id: 'MASJID_APP_DASHBOARD_MASJID_ID',
+    // Which area ('teacher' or 'lunch') this browser was last in. Written ONLY for a
+    // login that works in both (its user payload carries `areas`); a login with one
+    // kind of role never has it. See core/helpers/staffAreas.ts.
+    staff_area: 'MASJID_APP_STAFF_AREA'
 }
 
 export const API_CONFIG = {

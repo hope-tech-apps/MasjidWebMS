@@ -5,7 +5,7 @@ import {
     isFromSupersededEpoch,
     stampTenantEpoch,
 } from "@/core/tenancy/tenantRequests";
-import { checkTeacherSchoolEcho, handleTeacherSchoolRefusal } from "@/core/tenancy/teacherSchoolGuard";
+import { checkTeacherSchoolEcho, handleStaffAreaRefusal, handleTeacherSchoolRefusal } from "@/core/tenancy/teacherSchoolGuard";
 import { createTeacherResponseHandlers } from "@/core/tenancy/teacherSchoolGuardCore";
 
 /**
@@ -77,7 +77,16 @@ class TeacherApiService {
             // 403 "outside memberships": the teacher's school list changed while
             // this tab was open. Refetch, rehydrate, reload (loop-guarded).
             handleRefusal: handleTeacherSchoolRefusal,
-            onUnauthorized: async () => {
+            onUnauthorized: async (error: unknown) => {
+                // A login that works in two areas (lunch staff somewhere, a teacher
+                // here): this 401 can be the teacher ROLE going while the session
+                // lives on in the other area. The area guard asks, and reloads into
+                // the area that still has them; sending them to sign-in instead
+                // would bounce a signed-in login straight back to this shell. For a
+                // login with one kind of role the guard answers null at once and the
+                // lines below run as they always did.
+                if (await handleStaffAreaRefusal(error)) return;
+
                 try {
                     const { default: router } = await import("@/router/router");
                     if (router.currentRoute.value.path !== "/auth/sign-in") {

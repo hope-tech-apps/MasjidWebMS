@@ -1,6 +1,7 @@
 import { Masjid } from "@/core/types/data/Masjid"
 import { Media } from "@/core/types/data/Media"
 import { Membership } from "@/core/types/data/Membership"
+import { StaffAreaEntry } from "@/core/helpers/staffAreas"
 import { User } from "./User";
 
 export type AdminType = 'SuperAdmin' | 'MasjidAdmin' | 'Teacher';
@@ -31,6 +32,15 @@ export type Admin = {
      * Read it through `grantedMemberships()`, never inline.
      */
     memberships?: Membership[];
+    /**
+     * Every place this login works, when it works in TWO areas (Friday-lunch
+     * staff at one organisation, a teacher at another). The same list from sign-in
+     * and from both areas' `/user`. ABSENT, not empty, for every login with one
+     * kind of role, for administrators, and while the server's switch is off:
+     * "has `areas`" is the whole test for showing the switch between areas. Read
+     * it through core/helpers/staffAreas.ts, never inline.
+     */
+    areas?: StaffAreaEntry[];
     avatar: Media;
 }
 
