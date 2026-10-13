@@ -79,6 +79,7 @@
                                     <button class="btn btn-outline-primary" type="button" @click="editMeeting(day.weekday, p, cell(day.weekday, p.id))">{{ cell(day.weekday, p.id).label }}</button>
                                     <p>{{ cell(day.weekday, p.id).teachers.map((t: any) => t.name).join(', ') || 'No teachers' }}</p>
                                     <p v-if="cell(day.weekday, p.id).room_name">{{ cell(day.weekday, p.id).room_name }}</p>
+                                    <p v-if="cell(day.weekday, p.id).joint?.length">With {{ classNames(cell(day.weekday, p.id).joint) }}</p>
                                 </div>
                                 <button class="btn btn-outline-primary" v-else type="button" @click="editMeeting(day.weekday, p)">Place meeting</button>
                             </article>
@@ -90,7 +91,9 @@
             <div v-else>
                 <h2>Clashes</h2><p>Showing clashes as of {{ dateLabel(loadedDate) }}. The office can save a meeting after reviewing its clashes.</p>
                 <p v-if="!clashes.length">No clashes.</p>
-                <ul class="tt-clash-list"><li v-for="(c, i) in clashes" :key="i"><p>{{ clashSentence(c) }}</p><p class="small text-muted">{{ dateLabel(c.effective_from) }} to {{ dateLabel(c.effective_until) }}</p></li></ul>
+                <p v-if="clashes.some(sameLesson)">If two classes take a lesson together, say so and it is no longer a clash.</p>
+                <ul class="tt-clash-list"><li v-for="(c, i) in clashes" :key="i"><p>{{ clashSentence(c) }}</p><p class="small text-muted">{{ dateLabel(c.effective_from) }} to {{ dateLabel(c.effective_until) }}</p>
+                    <button class="btn btn-outline-primary" v-if="sameLesson(c)" type="button" :disabled="saving" @click="joinLessons(c.meetings[0].id, [c.meetings[1].id])">These classes take this lesson together</button></li></ul>
             </div>
         </div>
         <div v-if="editor" class="modal-backdrop fade show"></div>
@@ -103,7 +106,8 @@
                 <div v-if="warnings.length">
                     <h3>Review these clashes</h3>
                     <ul class="tt-clash-list"><li v-for="(c, i) in warnings" :key="i"><p>{{ clashSentence(c) }}</p><p class="small text-muted">{{ dateLabel(c.effective_from) }} to {{ dateLabel(c.effective_until) }}</p></li></ul>
-                    <button class="btn btn-outline-primary" type="button" :disabled="saving" @click="save(true)">Save anyway</button><button class="btn btn-outline-primary" type="button" :disabled="saving" @click="warnings = []">Go back</button>
+                    <p v-if="warnedRequest?.body?.joint_with?.length">The classes will take this lesson together. These clashes remain.</p>
+                    <button class="btn btn-outline-primary" type="button" :disabled="saving" @click="save(true)">Save anyway</button><button class="btn btn-outline-primary" v-if="togetherIds.length" type="button" :disabled="saving" @click="save(false, togetherIds)">These classes take this lesson together</button><button class="btn btn-outline-primary" type="button" :disabled="saving" @click="warnings = []">Go back</button>
                 </div>
                 <form v-else @submit.prevent="save(false)">
                     <div v-if="editor === 'set'">
@@ -131,6 +135,19 @@
                         <fieldset><legend>Teachers</legend><label v-for="t in setup.teachers" :key="t.id" class="tt-check"><input class="form-check-input" v-model="draft.teacher_ids" type="checkbox" :value="t.id" /> {{ t.name }}</label></fieldset>
                         <p v-if="draft.kind === 'activity'">An activity may have no teachers.</p>
                         <label for="meeting-room">Location (optional)</label><select class="form-select" id="meeting-room" v-model="draft.room_id"><option :value="null">Class's location{{ usualRoomName ? ': ' + usualRoomName : '' }}</option><option v-for="r in activeRooms" :key="r.id" :value="r.id">{{ r.name }}</option></select>
+                        <fieldset v-if="draft.id">
+                            <legend>Taken together</legend>
+                            <template v-if="draft.joint?.length">
+                                <p>{{ selectedClass?.name }} takes this lesson together with {{ classNames(draft.joint) }}.</p>
+                                <button class="btn btn-outline-primary" type="button" :disabled="saving" @click="leaveJoint">Take {{ selectedClass?.name }} out of the joint lesson</button>
+                            </template>
+                            <button class="btn btn-outline-primary" v-if="!joint" type="button" :disabled="saving" @click="loadJoint">Take this lesson together with another class…</button>
+                            <template v-else>
+                                <p v-if="!joint.candidates.length">No other class has a lesson at this time on {{ weekdays[draft.weekday] }}.</p>
+                                <label v-for="c in joint.candidates" :key="c.id" class="tt-check"><input class="form-check-input" v-model="jointChoice" type="checkbox" :value="c.id" /> {{ candidateLabel(c) }}</label>
+                                <button class="btn btn-outline-primary" v-if="joint.candidates.length" type="button" :disabled="saving || !jointChoice.length" @click="joinLessons(draft.id, jointChoice)">These classes take this lesson together</button>
+                            </template>
+                        </fieldset>
                     </div>
                     <div v-else-if="editor === 'copy'">
                         <p>Copy {{ weekdays[draft.source_weekday] }} to other weekdays with the same period set.</p>
@@ -165,6 +182,21 @@ const asOf = ref(''); const loadedDate = ref(''); const outOfYear = ref(false); 
 const weekLoading = ref(false); const loading = ref(false); const saving = ref(false); const error = ref(''); const editor = ref(''); const draft = ref<any>({}); const warnings = ref<any[]>([]); const dialog = ref<HTMLElement | null>(null);
 const warningFingerprint = ref<string | null>(null);
 const warnedRequest = ref<any>(null);
+// A lesson two or more classes take together. `joint` holds what the open lesson could be taken with, once asked for.
+const joint = ref<any>(null); const jointChoice = ref<number[]>([]);
+const classNames = (lessons: any[]) => lessons.map((m: any) => m.group_name).join(', ');
+// The server refuses anything else: lessons are one lesson only on the same weekday at the same clock times.
+const sameClocks = (a: any, b: any) => a.starts_at === b.starts_at && a.ends_at === b.ends_at;
+const sameLesson = (c: any) => c.meetings?.length === 2 && c.meetings.every((m: any) => m.id > 0) && sameClocks(c.meetings[0], c.meetings[1]);
+// While reviewing a save: the other classes' lessons at the very time of the one being saved (the server names it 0).
+const togetherIds = computed(() => editor.value !== 'meeting' ? [] : [...new Set(warnings.value.flatMap((c: any) => {
+    const mine = c.meetings?.find((m: any) => m.id === 0);
+    return mine ? c.meetings.filter((m: any) => m.id > 0 && sameClocks(m, mine)).map((m: any) => m.id) : [];
+}))]);
+function candidateLabel(c: any): string {
+    const dated = c.effective_until || joint.value.candidates.filter((o: any) => o.group_id === c.group_id).length > 1;
+    return `${c.group_name} (${c.label})${dated ? ', from ' + dateLabel(c.effective_from) + (c.effective_until ? ' until ' + dateLabel(c.effective_until) : '') : ''}`;
+}
 const weekdays = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const root = computed(() => `/api/admin/masjids/${auth.dashboardMasjidId}/timetable`);
 const base = computed(() => `${root.value}/years/${yearId.value}`);
@@ -255,8 +287,8 @@ async function loadWeek() {
     } catch (e) { if (run === weekGeneration) { week.value = { days: [], meetings: [] }; error.value = e?.response?.status === 422 ? boundsMessage() : 'The timetable could not be loaded. Try again.'; } }
     finally { if (run === weekGeneration) weekLoading.value = false; }
 }
-function openEditor(kind: string, data: any) { restoreFocus = typeof document !== 'undefined' ? document.activeElement as HTMLElement : null; error.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; editor.value = kind; draft.value = data; nextTick(() => dialog.value?.focus?.()); }
-function closeEditor() { editor.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; restoreFocus?.focus?.(); }
+function openEditor(kind: string, data: any) { restoreFocus = typeof document !== 'undefined' ? document.activeElement as HTMLElement : null; error.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; joint.value = null; jointChoice.value = []; editor.value = kind; draft.value = data; nextTick(() => dialog.value?.focus?.()); }
+function closeEditor() { editor.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; joint.value = null; jointChoice.value = []; restoreFocus?.focus?.(); }
 function fromDate() { return [setup.value?.today ?? asOf.value, setup.value?.year?.first_day ?? ''].sort().at(-1); }
 function editSet(set?: any) { openEditor('set', set ? JSON.parse(JSON.stringify(set)) : { name: '', periods: [] }); }
 function editRoom(room?: any) { openEditor('room', room ? { ...room } : { name: '', capacity: '', active: true }); }
@@ -271,8 +303,25 @@ function addPeriod() {
 function movePeriod(i: number, direction: number) { const rows = draft.value.periods; const [p] = rows.splice(i,1); rows.splice(i + direction,0,p); }
 function defaultTeachers() { const g = selectedClass.value; draft.value.teacher_ids = [...(draft.value.kind === 'subject' ? g?.subjects.find((s: any) => s.id === Number(draft.value.class_subject_id))?.teacher_ids ?? g?.teachers ?? [] : g?.teachers ?? [])]; }
 function editMeeting(day: number, period: any, meeting?: any) {
-    openEditor('meeting', { id: meeting?.id, group_id: Number(classId.value), weekday: day, period_id: period.id, periodKind: period.kind, periodName: period.name, label: meeting?.label, kind: meeting?.kind ?? (setup.value.class_subjects_enabled ? (period.kind === 'teaching' && selectedClass.value?.subjects.length ? 'subject' : 'activity') : 'class'), class_subject_id: meeting?.class_subject_id ?? selectedClass.value?.subjects[0]?.id ?? null, activity_name: meeting?.activity_name ?? '', room_id: meeting?.room_id ?? null, teacher_ids: meeting?.teachers.map((t: any) => t.id) ?? [], effective_from: fromDate() });
+    openEditor('meeting', { id: meeting?.id, group_id: Number(classId.value), weekday: day, period_id: period.id, periodKind: period.kind, periodName: period.name, label: meeting?.label, kind: meeting?.kind ?? (setup.value.class_subjects_enabled ? (period.kind === 'teaching' && selectedClass.value?.subjects.length ? 'subject' : 'activity') : 'class'), class_subject_id: meeting?.class_subject_id ?? selectedClass.value?.subjects[0]?.id ?? null, activity_name: meeting?.activity_name ?? '', room_id: meeting?.room_id ?? null, teacher_ids: meeting?.teachers.map((t: any) => t.id) ?? [], joint: meeting?.joint ?? [], effective_from: fromDate() });
     if (!meeting) defaultTeachers();
+}
+// Asked for only when the office wants it: the other classes' lessons on this weekday at this time.
+async function loadJoint() {
+    if (saving.value || !enabled.value) return;
+    const scope = base.value; const id = draft.value.id; saving.value = true; error.value = '';
+    try {
+        const r = await ApiService.get(`${scope}/meetings/${id}/joint` as any);
+        if (scope === base.value && editor.value === 'meeting' && draft.value.id === id) { joint.value = { candidates: r.data.data?.candidates ?? [] }; jointChoice.value = []; }
+    } catch (e) { if (scope === base.value) error.value = message(e); }
+    finally { saving.value = false; }
+}
+// Undated, like a class's location: the lessons as they are stored become one lesson, or stop being one.
+function joinLessons(id: number, others: number[]) { return simpleWrite(`${base.value}/meetings/${id}/joint`, { meeting_ids: others.map(Number) }); }
+async function leaveJoint() {
+    if (saving.value || !enabled.value) return;
+    saving.value = true; error.value = '';
+    try { await ApiService.delete(`${base.value}/meetings/${draft.value.id}/joint` as any); await loadYear(); } catch (e) { error.value = message(e); } finally { saving.value = false; }
 }
 function editCopy(day: number) { openEditor('copy', { group_id: Number(classId.value), source_weekday: day, target_weekdays: [], as_of: asOf.value, effective_from: fromDate() }); }
 function removeSet(s: any) { openEditor('remove-set', { id: s.id, confirmText: `Remove ${s.name}? Period sets with meetings are kept.` }); }
@@ -280,7 +329,7 @@ function removeRoom(r: any) { openEditor('remove-room', { id: r.id, confirmText:
 async function simpleWrite(url: string, data: any) { saving.value = true; error.value = ''; try { await ApiService.put(url as any,data); await loadYear(); } catch(e) { error.value = message(e); } finally { saving.value = false; } }
 function saveDay(day: number, id: number | null, group?: number) { return simpleWrite(`${base.value}/days`, { group_id: group ?? null, days: [{ weekday: day, period_set_id: id }] }); }
 function saveUsualRoom(group: number, room: number | null) { return simpleWrite(`${base.value}/classes/${group}/room`, { room_id: room }); }
-async function save(confirm: boolean) {
+async function save(confirm: boolean, together: number[] = []) {
     if (saving.value || !enabled.value) return;
     saving.value = true; error.value = '';
     const scope = base.value; const run = generation;
@@ -291,6 +340,9 @@ async function save(confirm: boolean) {
     else if (editor.value === 'meeting') { url = `${base.value}/meetings${d.id ? '/' + d.id : ''}`; body = { group_id: d.group_id, weekday: d.weekday, period_id: d.period_id, kind: d.kind, class_subject_id: d.kind === 'subject' ? Number(d.class_subject_id) : null, activity_name: d.kind === 'activity' ? d.activity_name : null, room_id: d.room_id === null || d.room_id === '' ? null : Number(d.room_id), teacher_ids: d.teacher_ids.map(Number), effective_from: d.effective_from, confirm_clashes: confirm }; }
     else { method = 'delete'; url = `${base.value}/${editor.value === 'remove-set' ? 'sets' : editor.value === 'remove-room' ? 'rooms' : 'meetings'}/${d.id}`; body = editor.value === 'remove-meeting' ? { effective_from: d.effective_from } : null; }
     if (confirm && warnedRequest.value) { body = { ...warnedRequest.value.body, confirm_clashes: true, clash_fingerprint: warningFingerprint.value }; url = warnedRequest.value.url; method = warnedRequest.value.method; }
+    // Saying the classes take the lesson together is a new submission of the reviewed lesson, not a confirmation:
+    // the server works the clashes out again with those lessons joined and asks about any that remain.
+    if (together.length && warnedRequest.value) { body = { ...warnedRequest.value.body, joint_with: [...(warnedRequest.value.body.joint_with ?? []), ...together], confirm_clashes: false }; delete body.clash_fingerprint; url = warnedRequest.value.url; method = warnedRequest.value.method; }
     try {
         if (method === 'delete') { if (body) await ApiService.deleteWithBody(url as any,body); else await ApiService.delete(url as any); }
         else if (method === 'put') await ApiService.put(url as any,body); else await ApiService.post(url as any,body);

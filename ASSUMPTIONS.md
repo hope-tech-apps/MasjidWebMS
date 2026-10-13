@@ -484,3 +484,9 @@ Owner's production state (859995cc, no live question users/answers) is inherited
 ## Small browser/review fixes, 2026-10-13
 
 Assumption: item 2 is the final attendance Keep behavior, retaining saved Absent alongside Late/Excused. Item 1 says Absent becomes Present; optional clarification requested, not answered as of implementation. Regression expectations and office documentation state the item-2 behavior. No browser geometry or deployed/MySQL behavior inferred from mounted/CSS tests.
+
+## Timetable: a lesson two classes take together — 2026-10-13
+- Assumption: a student on both rosters is not "in two places" during a joint lesson, so student clashes are skipped for a together pair as teacher and location clashes are. The brief names teachers and the room; one lesson cannot clash with itself is the more defensible reading.
+- Assumption: no switch. Every school with the timetable on is offered the choice; a school that never takes it gets the rows, answers and query counts it had (pinned). The lesson dialog gains one section and the clash review one button only when a clash is with a lesson at the same time.
+- Assumption: families see nothing new because they have no timetable view; if one is added it should read `joint` from the same reader.
+- Unverified here: the migration against a real MySQL server (CI's MySQL job runs it), real browser layout of the dialog and the cards, and production data. Al-Razi's four PE lessons are assumed to sit on the school's own sets with equal clocks (recorded when they were entered on 2026-10-11); if a class had an override set with other clocks the join would be refused in words.
