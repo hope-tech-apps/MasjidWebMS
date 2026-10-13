@@ -27,21 +27,25 @@ class ReadPushOutcomeJob implements ShouldQueue
         if (!$send || !in_array($this->check, [1, 2], true)) {
             return;
         }
-        $inProgress = false;
+        $processed = false;
         foreach ($send->groups()->withoutGlobalScopes()->where('masjid_id', $send->masjid_id)->get() as $group) {
-            DB::transaction(function () use ($group, $send, $onesignal, &$inProgress) {
+            DB::transaction(function () use ($group, $send, $onesignal, &$processed) {
                 $locked = $group->newQueryWithoutScopes()->lockForUpdate()->findOrFail($group->id);
                 if (!$locked->provider_message_id || $locked->status !== 'checking' || $locked->checks >= $this->check) {
                     return;
                 }
+                $processed = true;
                 $key = $onesignal->credentialsForOutcome(Masjid::find($send->masjid_id), $locked->provider_app_id, $locked->legacy);
                 $details = $key ? $onesignal->getNotificationDetails($locked->provider_message_id, $locked->provider_app_id, $key) : [];
                 $valid = $this->countValue($details['successful'] ?? null) !== null
                     && $this->countValue($details['errored'] ?? null) !== null;
-                $done = $valid && ((is_numeric($details['completed_at'] ?? null) && $details['completed_at'] > 0)
+                $processing = $valid && array_key_exists('remaining', $details) && $details['remaining'] === null
+                    && $details['successful'] === 0 && $details['errored'] === 0
+                    && ($this->countValue($details['failed'] ?? null) ?? 0) === 0;
+                $done = $valid && !$processing && ((is_numeric($details['completed_at'] ?? null) && $details['completed_at'] > 0)
                     || (array_key_exists('remaining', $details) && $this->countValue($details['remaining']) === 0));
-                $ongoing = $valid && !$done && $this->countValue($details['remaining'] ?? null) !== null
-                    && $details['remaining'] > 0;
+                $ongoing = $valid && !$done && ($processing
+                    || ($this->countValue($details['remaining'] ?? null) !== null && $details['remaining'] > 0));
                 $platforms = [];
                 if ($valid) {
                     // Whitelist numeric counts and known platform names; never persist the provider response envelope.
@@ -68,16 +72,20 @@ class ReadPushOutcomeJob implements ShouldQueue
                     'errored' => $valid ? (int) $details['errored'] + ($this->countValue($details['failed'] ?? null) ?? 0) : null,
                     'platform_counts' => $platforms ?: null,
                 ])->save();
-                $inProgress = $inProgress || ($ongoing && $this->check === 1);
                 if (!$valid) {
                     Log::warning('Push outcome unknown', ['push_send_id' => $send->id]);
                 }
             });
         }
         $send->aggregate();
-        if ($inProgress) {
-            self::dispatch($send->id, 2)->onConnection(config('queue.default') === 'sync' ? 'database' : config('queue.default'))
-                ->delay(now()->addMinutes(15))->afterCommit();
+        if ($processed) {
+            PushSend::withoutMasjidScope()->whereKey($send->id)->update(['readback_scheduled_at' => null]);
+            try {
+                app(\App\Services\PushOutcomeScheduler::class)->schedule($send->id);
+            } catch (\Throwable $e) {
+                // The provider check succeeded. Keep the next check recoverable during a queue outage.
+                Log::warning('Push outcome enqueue unavailable', ['push_send_id' => $send->id]);
+            }
         }
     }
 

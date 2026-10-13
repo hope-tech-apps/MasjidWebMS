@@ -61,9 +61,12 @@ class PushSendTenantIsolationTest extends TestCase
         $broadcast = \App\Models\Broadcast::create(['masjid_id' => $a->id,'title' => 'Example', 'body' => 'Body', 'channels' => ['push'], 'status' => 'sent']);
         $delivery = $broadcast->deliveries()->create(['masjid_id' => $a->id,'channel' => 'push','status' => 'sent',
             'target_count' => 74,'reference_id' => $note->id]);
+        $group = $send->groups()->create(['masjid_id' => $a->id, 'routing_key' => 'legacy', 'app_label' => 'Example',
+            'provider_app_id' => 'example-app', 'provider_message_id' => 'accepted-example', 'targeted' => 74]);
         foreach ([['checking', null, null, 'Sent to 74 phones. Checking delivery…'],
-            ['complete', 8, 40, 'Sent to 74 phones. Delivered to 8. 40 could not be delivered (iPhone).'],
-            ['unknown', null, null, 'Sent to 74 phones. Delivery could not be checked.']] as [$status, $delivered, $errored, $wording]) {
+            ['complete', 8, 40, 'Sent to 74 phones. Delivered to 8. 40 could not be delivered (iPhone). Delivery could not be confirmed for 26 phones.'],
+            ['unknown', null, null, 'Sent to 74 phones. Delivery could not be confirmed for 74 phones.']] as [$status, $delivered, $errored, $wording]) {
+            $group->forceFill(['status' => $status, 'delivered' => $delivered, 'errored' => $errored])->save();
             $send->forceFill(['status' => $status, 'delivered' => $delivered, 'errored' => $errored,
                 'platform_counts' => $errored ? ['ios' => ['errored' => 40]] : null])->save();
             $this->getJson('/api/admin/masjids/'.$a->id.'/notifications')->assertOk()->assertJsonPath('data.0.push_outcome_text', $wording);

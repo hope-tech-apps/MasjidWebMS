@@ -18,7 +18,6 @@ class UpdateMobileAppUserRequest extends BaseFormRequest
     public function rules(): array
     {
         return [
-            'push_app_id' => ['sometimes', 'nullable', 'string', 'max:128', 'regex:/\A[A-Za-z0-9_-]+\z/'],
             'masjid_id' => 'required|exists:masjids,id',
             'device_id' => 'required|exists:mobile_app_users,device_id',
         ];

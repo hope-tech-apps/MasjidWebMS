@@ -91,7 +91,7 @@ class PushAccountsTest extends TestCase
         Http::assertSentCount(4);
         foreach (Http::recorded() as $index => [$request]) {
             $this->assertSame(config('onesignal.api_url'), $request->url());
-            $this->assertTrue($request->hasHeader('Authorization'));
+            $this->assertTrue($request->hasHeader('Authorization', 'Basic '.($dedicated ? 'invented-dedicated-credential' : 'invented-shared-credential')));
             $this->assertEquals($bodies[$index], $request->data());
         }
     }
@@ -134,7 +134,7 @@ class PushAccountsTest extends TestCase
         $send = PushSend::where('notification_id', $note->id)->firstOrFail();
         $this->assertSame(2, $send->targeted);
         $this->assertSame(2, $send->unknown_app);
-        $this->assertStringContainsString('not deliverable: unknown app', $send->wording());
+        $this->assertStringContainsString('could not be reached: their app is not set up for push.', $send->wording());
     }
 
     #[Test]
@@ -143,18 +143,19 @@ class PushAccountsTest extends TestCase
         $org = $this->org();
         $child = $this->org();
         $child->forceFill(['parent_id' => $org->id])->save();
-        $body = ['device_id' => 'example-install', 'masjid_id' => $org->id, 'push_app_id' => 'app-parent', 'future_extra' => true];
+        $body = ['device_id' => 'example-install', 'masjid_id' => $org->id, 'push_app_id' => 'app-parent', 'onesignal_subscription_id' => 'original-sub', 'future_extra' => true];
         $response = $this->postJson('/api/mobile/user', $body)->assertOk();
         $this->assertSame(['id','device_id','masjid_id','user_agent','created_at','updated_at'], array_keys($response->json('data')));
         $this->putJson('/api/mobile/user', ['device_id' => 'example-install', 'masjid_id' => $child->id])->assertOk();
         $this->assertDatabaseHas('mobile_app_users', ['device_id' => 'example-install', 'push_app_id' => 'app-parent', 'masjid_id' => $child->id]);
-        $this->postJson('/api/mobile/user/heartbeat', ['device_id' => 'example-install', 'push_app_id' => 'app-updated', 'onesignal_subscription_id' => 'new-sub'])->assertOk();
+        $this->postJson('/api/mobile/user/heartbeat', ['device_id' => 'example-install', 'push_app_id' => 'app-updated', 'onesignal_subscription_id' => 'original-sub'])->assertOk();
         $this->assertDatabaseHas('mobile_app_users', ['device_id' => 'example-install', 'push_app_id' => 'app-updated']);
         $this->postJson('/api/mobile/user', ['device_id' => 'old-build', 'masjid_id' => $org->id])->assertOk();
         $this->assertDatabaseHas('mobile_app_users', ['device_id' => 'old-build', 'push_app_id' => null]);
         $this->postJson('/api/mobile/user', $body + [])->assertOk();
         $body['push_app_id'] = 'bad/app?';
-        $this->postJson('/api/mobile/user', $body)->assertStatus(422);
+        $this->postJson('/api/mobile/user', $body)->assertOk();
+        $this->assertDatabaseHas('mobile_app_users', ['device_id' => 'example-install', 'push_app_id' => 'app-parent']);
     }
 
     #[Test]
@@ -220,11 +221,11 @@ class PushAccountsTest extends TestCase
         $send = PushSend::where('notification_id', $note->id)->firstOrFail();
         $this->assertSame(1, $send->unknown_app);
         $this->assertSame('Paused shared', $send->groups->first()->app_label);
-        $this->assertSame('Targeted 1 phone. 1 not deliverable: unknown app.', $send->wording());
+        $this->assertSame('1 phone could not be reached: their app is not set up for push.', $send->wording());
     }
 
     #[Test]
-    public function partial_migration_preserves_null_requests_and_refuses_to_reroute_app_aware_phones(): void
+    public function partial_migration_refuses_all_phones_until_attempt_claims_can_be_stored(): void
     {
         Http::fake(['*' => Http::response(['id' => 'example-message'])]);
         $org = $this->org(); $this->device($org, 'legacy-sub');
@@ -232,10 +233,10 @@ class PushAccountsTest extends TestCase
         $note = $org->notifications()->create(['title' => 'Example', 'message' => 'Body']);
         $service = new OnesignalService;
         $service->notifyAllOfMasjid($org, $note, ['legacy-sub']);
-        Http::assertSentCount(1);
+        Http::assertNothingSent();
         $this->device($org, 'aware-sub', 'another-app');
         $result = $service->notifyAllOfMasjid($org, $note, ['aware-sub']);
-        Http::assertSentCount(1);
+        Http::assertNothingSent();
         $this->assertTrue($result['not_sent']);
         $this->assertNull($result['id']);
     }

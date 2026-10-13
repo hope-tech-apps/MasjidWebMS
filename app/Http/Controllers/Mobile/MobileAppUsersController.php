@@ -16,6 +16,10 @@ class MobileAppUsersController extends Controller
 {
     public function store(StoreMobileAppUserRequest $request)
     {
+        if ($request->has('push_app_id') && \Illuminate\Support\Facades\DB::transactionLevel() === 0) {
+            return \Illuminate\Support\Facades\DB::transaction(fn () => $this->store($request));
+        }
+
         try {
             $masjid = Masjid::findOrFail($request->input('masjid_id'));
             $deviceId = (string) $request->input('device_id');
@@ -26,13 +30,14 @@ class MobileAppUsersController extends Controller
             // launch, spending its network's allowance each time. An existing row
             // is refreshed and returned as it is: its masjid and its member claim
             // are not re-pointed here (PUT /user does that deliberately).
-            $user = MobileAppUser::where('device_id', $deviceId)->first();
+            $user = MobileAppUser::where('device_id', $deviceId)
+                ->when($request->has('push_app_id'), fn ($q) => $q->lockForUpdate())->first();
 
             // What the handset says it is running, body first then the
             // X-Manara-App header, and ONLY the fields that carry a value — a
             // pre-R1 build sends none of them and must not blank what a later
             // build recorded. See App\Support\AppClientHeader::resolve.
-            $client = AppClientHeader::resolve($request) + $this->pushAppRegistration($request);
+            $client = AppClientHeader::resolve($request) + $this->pushAppRegistration($request, $user);
 
             if ($user === null) {
                 try {
@@ -44,7 +49,8 @@ class MobileAppUsersController extends Controller
                     ] + $client);
                 } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
                     // Two registrations of the same install raced and the other won.
-                    $user = MobileAppUser::where('device_id', $deviceId)->firstOrFail();
+                    $user = MobileAppUser::where('device_id', $deviceId)
+                        ->when($request->has('push_app_id'), fn ($q) => $q->lockForUpdate())->firstOrFail();
                 }
             }
 
@@ -52,7 +58,7 @@ class MobileAppUsersController extends Controller
                 $user->forceFill([
                     'user_agent' => $request->userAgent(),
                     'last_active_at' => now(),
-                ] + $client)->save();
+                ] + AppClientHeader::resolve($request) + $this->pushAppRegistration($request, $user))->save();
             }
 
             return response()->json([
@@ -69,8 +75,13 @@ class MobileAppUsersController extends Controller
 
     public function update(UpdateMobileAppUserRequest $request)
     {
+        if ($request->has('push_app_id') && \Illuminate\Support\Facades\DB::transactionLevel() === 0) {
+            return \Illuminate\Support\Facades\DB::transaction(fn () => $this->update($request));
+        }
+
         try {
-            $user = MobileAppUser::where('device_id', $request->input('device_id'))->first();
+            $user = MobileAppUser::where('device_id', $request->input('device_id'))
+                ->when($request->has('push_app_id'), fn ($q) => $q->lockForUpdate())->first();
             $masjid = Masjid::findOrFail($request->input('masjid_id'));
 
             $user->masjid_id = $masjid->id;
@@ -82,7 +93,7 @@ class MobileAppUsersController extends Controller
             // never touched: this verb is how an app re-points a handset at
             // another organisation, and a build too old to send its identity
             // must not erase the identity a newer one recorded.
-            foreach (AppClientHeader::resolve($request) + $this->pushAppRegistration($request) as $field => $value) {
+            foreach (AppClientHeader::resolve($request) + $this->pushAppRegistration($request, $user) as $field => $value) {
                 $user->{$field} = $value;
             }
 
@@ -117,6 +128,10 @@ class MobileAppUsersController extends Controller
      */
     public function heartbeat(Request $request)
     {
+        if ($request->has('push_app_id') && \Illuminate\Support\Facades\DB::transactionLevel() === 0) {
+            return \Illuminate\Support\Facades\DB::transaction(fn () => $this->heartbeat($request));
+        }
+
         // Deliberately NOT extended with AppClientHeader::rules(). The two
         // registration verbs validate the telemetry fields and may 422 on them;
         // this one must not. A 422 here is a heartbeat that did not land, and a
@@ -127,7 +142,6 @@ class MobileAppUsersController extends Controller
         $request->validate([
             'device_id' => 'required|string',
             'onesignal_subscription_id' => 'nullable|string',
-            'push_app_id' => ['sometimes', 'nullable', 'string', 'max:128', 'regex:/\A[A-Za-z0-9_-]+\z/'],
         ]);
 
         $update = ['last_active_at' => now()];
@@ -137,12 +151,15 @@ class MobileAppUsersController extends Controller
         // never-null rule matters most, because it runs on every launch. Merged
         // as a subset: a field the request does not carry is not in the UPDATE
         // statement at all.
-        $update += AppClientHeader::resolve($request) + $this->pushAppRegistration($request);
+        $user = $request->has('push_app_id')
+            ? MobileAppUser::where('device_id', $request->input('device_id'))->lockForUpdate()->first() : null;
+        $update += AppClientHeader::resolve($request) + $this->pushAppRegistration($request, $user);
 
         // The OneSignal subscription id is the only reliable push target
         // (external_id aliases don't resolve), so capture it whenever the app
         // reports it.
-        if ($request->filled('onesignal_subscription_id')) {
+        if ($request->filled('onesignal_subscription_id') && (!$request->filled('push_app_id')
+            || isset($update['push_app_id']))) {
             $update['onesignal_subscription_id'] = $request->input('onesignal_subscription_id');
         }
 
@@ -174,11 +191,17 @@ class MobileAppUsersController extends Controller
         }
     }
 
-    private function pushAppRegistration(Request $request): array
+    private function pushAppRegistration(Request $request, ?MobileAppUser $user): array
     {
-        // An older build must not erase the app a newer build recorded. Tolerate code-before-migration deploys.
-        return $request->filled('push_app_id') && \Illuminate\Support\Facades\Schema::hasColumn('mobile_app_users', 'push_app_id')
-            ? ['push_app_id' => $request->input('push_app_id')] : [];
+        // The caller must know this install's subscription in this same request. No-field calls stay unchanged.
+        $subscription = $request->input('onesignal_subscription_id');
+        $app = $request->input('push_app_id');
+        if (!is_string($app) || !preg_match('/\A[A-Za-z0-9_-]{1,128}\z/', $app) || !is_string($subscription) || trim($subscription) === ''
+            || !\Illuminate\Support\Facades\Schema::hasColumn('mobile_app_users', 'push_app_id')
+            || ($user && filled($user->onesignal_subscription_id) && $user->onesignal_subscription_id !== $subscription)) {
+            return [];
+        }
+        return ['push_app_id' => $request->input('push_app_id'), 'onesignal_subscription_id' => $subscription];
     }
 
     /**

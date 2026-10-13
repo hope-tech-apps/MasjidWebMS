@@ -18,6 +18,13 @@ class NotificationsController extends Controller
         $outcomes = \Illuminate\Support\Facades\Schema::hasTable('push_sends')
             ? \App\Models\PushSend::where('masjid_id', $masjid->id)->whereIn('notification_id', $notes->pluck('id'))->get()->keyBy('notification_id')
             : collect();
+        foreach ($outcomes as $outcome) {
+            try {
+                app(\App\Services\PushOutcomeScheduler::class)->schedule($outcome->id);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Push outcome enqueue unavailable', ['push_send_id' => $outcome->id]);
+            }
+        }
         return response()->json(['status' => 'success', 'data' => $notes->map(function ($note) use ($outcomes) {
             $outcome = $outcomes[$note->id] ?? null;
             return [
@@ -61,8 +68,7 @@ class NotificationsController extends Controller
             return response()->json([
                 'status' => 'success',
                 'data' => array_merge($notification->toArray(), [
-                    'push_outcome_text' => 'Sent to '.count($targetedSubscriptionIds)
-                        .(count($targetedSubscriptionIds) === 1 ? ' phone. ' : ' phones. ').'Checking delivery…',
+                    'push_outcome_text' => 'Waiting to send.',
                 ])
             ], Response::HTTP_ACCEPTED);
         } catch (\Exception $e) {

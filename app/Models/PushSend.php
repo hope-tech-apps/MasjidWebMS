@@ -32,8 +32,8 @@ class PushSend extends Model
                 }
             }
         }
-        $checking = $groups->contains(fn ($g) => $g->status === 'checking');
-        $unknown = $groups->contains(fn ($g) => in_array($g->status, ['unknown', 'send_failed'], true));
+        $checking = $groups->contains(fn ($g) => in_array($g->status, ['pending', 'sending', 'checking'], true));
+        $unknown = $groups->contains(fn ($g) => in_array($g->status, ['unknown', 'send_failed', 'rejected'], true));
         $this->forceFill([
             'targeted' => $groups->sum('targeted'),
             'delivered' => $groups->whereNotNull('delivered')->isEmpty() ? null : $groups->sum('delivered'),
@@ -47,32 +47,57 @@ class PushSend extends Model
     /** Office wording uses only stored counts, with uncounted targets left unclaimed. */
     public function wording(): string
     {
-        $phones = $this->targeted === 1 ? 'phone' : 'phones';
-        $text = $this->unknown_app > 0 ? "Targeted {$this->targeted} {$phones}." : "Sent to {$this->targeted} {$phones}.";
-        if ($this->status === 'checking') {
-            $text .= ' Checking delivery…';
-        } elseif ($this->status === 'unknown') {
-            $text .= ' Delivery could not be checked.';
-        } elseif ($this->delivered !== null) {
-            $text .= " Delivered to {$this->delivered}.";
-        }
-        if ($this->errored > 0) {
-            $platformNames = ['ios' => 'iPhone', 'android' => 'Android'];
-            $failedPlatforms = [];
-            $platformErrors = 0;
-            foreach ($this->platform_counts ?? [] as $platform => $counts) {
-                if (($counts['errored'] ?? 0) > 0) {
-                    $platformErrors += $counts['errored'];
-                    $failedPlatforms[] = $platformNames[$platform] ?? 'other platform';
+        $groups = $this->groups()->withoutGlobalScopes()->where('masjid_id', $this->masjid_id)->get();
+        $accepted = $groups->whereNotNull('provider_message_id');
+        $sent = $accepted->sum('targeted');
+        $rejected = $groups->whereNull('provider_message_id')->where('status', 'rejected')->sum('targeted');
+        $unreachable = $groups->where('status', 'unknown_app')->sum('targeted');
+        $unknown = $groups->whereNull('provider_message_id')
+            ->whereIn('status', ['sending', 'unknown', 'send_failed'])->sum('targeted');
+        $parts = [];
+        $noun = fn ($count) => $count === 1 ? 'phone' : 'phones';
+        if ($sent > 0) {
+            $text = "Sent to {$sent} ".$noun($sent).'.';
+            if ($accepted->contains(fn ($g) => $g->status === 'checking')) {
+                $text .= ' Checking delivery…';
+            } else {
+                $delivered = $accepted->sum('delivered');
+                $errored = $accepted->sum('errored');
+                if ($accepted->whereNotNull('delivered')->isNotEmpty()) {
+                    $text .= " Delivered to {$delivered}.";
+                }
+                if ($errored > 0) {
+                    $names = ['ios' => 'iPhone', 'android' => 'Android'];
+                    $platformErrors = 0; $failedPlatforms = [];
+                    foreach ($this->platform_counts ?? [] as $platform => $counts) {
+                        if (($counts['errored'] ?? 0) > 0) {
+                            $platformErrors += $counts['errored'];
+                            $failedPlatforms[] = $names[$platform] ?? 'other platform';
+                        }
+                    }
+                    $suffix = $platformErrors === $errored && $failedPlatforms
+                        ? ' ('.implode(', ', array_unique($failedPlatforms)).')' : '';
+                    $text .= " {$errored} could not be delivered{$suffix}.";
+                }
+                // Count the unconfirmed remainder per account, so one account's counts cannot mask another's.
+                foreach ($accepted as $group) {
+                    $unknown += max(0, $group->targeted - ($group->delivered ?? 0) - ($group->errored ?? 0));
                 }
             }
-            $suffix = $platformErrors === $this->errored && $failedPlatforms
-                ? ' ('.implode(', ', array_unique($failedPlatforms)).')' : '';
-            $text .= " {$this->errored} could not be delivered{$suffix}.";
+            $parts[] = $text;
         }
-        if ($this->unknown_app > 0) {
-            $text .= " {$this->unknown_app} not deliverable: unknown app.";
+        if ($rejected > 0) {
+            $parts[] = "Could not be sent to {$rejected} ".$noun($rejected).' (the push service refused the request).';
         }
-        return $text;
+        if ($unknown > 0) {
+            $parts[] = "Delivery could not be confirmed for {$unknown} ".$noun($unknown).'.';
+        }
+        if ($unreachable > 0) {
+            $parts[] = "{$unreachable} ".$noun($unreachable).' could not be reached: their app is not set up for push.';
+        }
+        if ($groups->contains(fn ($g) => $g->status === 'pending')) {
+            $parts[] = 'Waiting to send.';
+        }
+        return implode(' ', $parts) ?: 'No phones selected.';
     }
 }

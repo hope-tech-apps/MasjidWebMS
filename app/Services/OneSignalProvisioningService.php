@@ -84,6 +84,23 @@ class OneSignalProvisioningService
             $overrides['apns_key_id'] = $apnsKeyId;
             $overrides['apns_team_id'] = $apnsTeamId;
         }
+        if (!($overrides['attach_to_organisation'] ?? true)) {
+            try {
+                if (!Schema::hasTable('push_apps') || !Schema::hasColumns('push_apps', ['provider_app_id', 'rest_api_key', 'label', 'active'])) {
+                    return ['ok' => false, 'error' => 'Push registry storage is unavailable; no app was created.'];
+                }
+                // Prove a credential row can be written before creating an external resource. Never retain the probe.
+                DB::transaction(function () {
+                    $probe = new PushApp;
+                    $probe->forceFill(['provider_app_id' => 'storage-probe-'.(string) \Illuminate\Support\Str::uuid(),
+                        'rest_api_key' => 'storage-check', 'label' => 'Storage check', 'active' => false]);
+                    $probe->saveQuietly();
+                    $probe->deleteQuietly();
+                });
+            } catch (\Throwable $e) {
+                return ['ok' => false, 'error' => 'Push registry storage is unavailable; no app was created.'];
+            }
+        }
         $payload = $this->buildPayload($masjid, $bundleId, $overrides);
         $url = config('services.onesignal.apps_api_url', 'https://api.onesignal.com/apps');
 
@@ -108,6 +125,10 @@ class OneSignalProvisioningService
         // OneSignal returns the new app's REST API key as `basic_auth_key`.
         $restKey = is_array($body) ? ($body['basic_auth_key'] ?? null) : null;
 
+        if ($response->successful() && is_string($appId) && preg_match('/\A[A-Za-z0-9_-]{1,128}\z/', $appId)
+            && (!is_string($restKey) || trim($restKey) === '')) {
+            return ['ok' => false, 'app_id' => $appId, 'error' => 'Push app created at the provider but not stored: do not use; delete it there.'];
+        }
         if (!$response->successful() || !is_string($appId) || !preg_match('/\A[A-Za-z0-9_-]{1,128}\z/', $appId)
             || !is_string($restKey) || trim($restKey) === '') {
             Log::error('OneSignal app provisioning failed', [
@@ -126,10 +147,16 @@ class OneSignalProvisioningService
         // model cast; the app id is a public identifier.
         try {
             DB::transaction(function () use ($masjid, $appId, $restKey, $overrides) {
+                if (!($overrides['attach_to_organisation'] ?? true) && !Schema::hasTable('push_apps')) {
+                    throw new \RuntimeException('Push registry unavailable.');
+                }
                 if (Schema::hasTable('push_apps')) {
-                    PushApp::updateOrCreate(['provider_app_id' => $appId], [
+                    $stored = PushApp::updateOrCreate(['provider_app_id' => $appId], [
                         'rest_api_key' => $restKey, 'label' => $overrides['name'] ?? $masjid->name, 'active' => true,
                     ]);
+                    if (!$stored->exists || $stored->fresh()?->rest_api_key !== $restKey) {
+                        throw new \RuntimeException('Push registry write was not retained.');
+                    }
                 }
                 // Registry-only provisioning lets the owner prepare a new account before moving legacy installs.
                 if ($overrides['attach_to_organisation'] ?? true) {
@@ -141,7 +168,7 @@ class OneSignalProvisioningService
         } catch (\Throwable $e) {
             // Persistence exceptions can include ciphertext bindings. Do not expose either key material or SQL.
             Log::error('OneSignal app credentials could not be stored', ['masjid_id' => $masjid->id]);
-            return ['ok' => false, 'error' => 'The push app was created but its configuration could not be stored.'];
+            return ['ok' => false, 'app_id' => $appId, 'error' => 'Push app created at the provider but not stored: do not use; delete it there.'];
         }
 
         return [

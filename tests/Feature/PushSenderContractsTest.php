@@ -53,7 +53,7 @@ class PushSenderContractsTest extends TestCase
 
     private function assertNotificationRequest(Notification $note): void
     {
-        Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization')
+        Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization', 'Basic '.($this->appId === 'shared-example' ? 'invented-shared-key' : 'invented-dedicated-key'))
             && $r->data() === ['app_id' => $this->appId, 'include_subscription_ids' => ['example-sub'],
                 'headings' => ['en' => $note->title], 'contents' => ['en' => $note->message], 'target_channel' => 'push',
                 'data' => ['masjid_id' => $this->org->id,'notification_id' => $note->id]]);
@@ -90,7 +90,7 @@ class PushSenderContractsTest extends TestCase
         $job = Queue::pushed(SendPrayerSyncJob::class)->last();
         $job->handle(new OnesignalService);
         Http::assertSentCount(1);
-        Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization')
+        Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization', 'Basic '.($this->appId === 'shared-example' ? 'invented-shared-key' : 'invented-dedicated-key'))
             && $r->data() === ['app_id' => $this->appId, 'include_subscription_ids' => ['example-sub'], 'target_channel' => 'push',
                 'content_available' => true, 'data' => ['type' => 'prayer_sync', 'masjid_id' => $this->org->id]]);
     }
@@ -105,7 +105,7 @@ class PushSenderContractsTest extends TestCase
         $job = Queue::pushed(SendPrayerSyncJob::class)->last();
         $job->handle(new OnesignalService);
         Http::assertSentCount(1);
-        Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization')
+        Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization', 'Basic '.($this->appId === 'shared-example' ? 'invented-shared-key' : 'invented-dedicated-key'))
             && $r->data() === ['app_id' => $this->appId, 'include_subscription_ids' => ['example-sub'], 'target_channel' => 'push',
                 'content_available' => true, 'data' => ['type' => 'prayer_sync', 'masjid_id' => $this->org->id]]);
     }
@@ -117,7 +117,7 @@ class PushSenderContractsTest extends TestCase
         $this->prepare($dedicated);
         $this->artisan('prayers:test-push', ['device_id' => 'example-phone'])->assertExitCode(0);
         Http::assertSentCount(1);
-        Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization')
+        Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization', 'Basic '.($this->appId === 'shared-example' ? 'invented-shared-key' : 'invented-dedicated-key'))
             && $r->data() === ['app_id' => $this->appId, 'include_subscription_ids' => ['example-sub'], 'target_channel' => 'push',
                 'headings' => ['en' => "It's time for Test"],
                 'contents' => ['en' => 'Phase-3 backstop test — if you see this with the adhan sound, the server-side path works.'],
@@ -141,7 +141,7 @@ class PushSenderContractsTest extends TestCase
         Http::assertSentCount(2);
         foreach (['adhan', 'iqama'] as $kind) {
             $iqama = $kind === 'iqama';
-            Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization')
+            Http::assertSent(fn ($r) => $r->url() === config('onesignal.api_url') && $r->hasHeader('Authorization', 'Basic '.($this->appId === 'shared-example' ? 'invented-shared-key' : 'invented-dedicated-key'))
                 && $r->data() === ['app_id' => $this->appId, 'include_subscription_ids' => ['example-sub'], 'target_channel' => 'push',
                     'headings' => ['en' => $iqama ? 'Iqama time for Fajr' : "It's time for Fajr"],
                     'contents' => ['en' => $iqama ? 'The iqama time for Fajr has arrived' : 'The time for Fajr prayer has arrived'],

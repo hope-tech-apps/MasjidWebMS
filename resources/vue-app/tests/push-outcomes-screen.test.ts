@@ -39,7 +39,8 @@ for (const wording of ['Sent to 74 phones. Checking delivery…',
 
 test('legacy push payloads show an unknown outcome instead of a sent target badge', async () => {
     const screen = await broadcastScreen(undefined);
-    assert.ok(screen.text().includes('Sent to 74 phones. Delivery could not be checked.'));
+    assert.ok(screen.text().includes('Delivery could not be confirmed for 74 phones.'));
+    assert.ok(!screen.text().includes('Sent to'));
     assert.ok(!screen.text().includes('Push: sent (74)'));
     screen.unmount();
 });

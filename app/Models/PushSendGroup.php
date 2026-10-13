@@ -10,10 +10,12 @@ class PushSendGroup extends Model
 {
     use BelongsToMasjid;
 
+    protected $hidden = ['subscription_ids'];
+
     protected $guarded = ['id'];
 
     protected $casts = ['legacy' => 'boolean', 'targeted' => 'integer', 'delivered' => 'integer',
-        'errored' => 'integer', 'checks' => 'integer', 'platform_counts' => 'array'];
+        'errored' => 'integer', 'checks' => 'integer', 'subscription_ids' => 'array', 'attempted_at' => 'datetime', 'platform_counts' => 'array'];
 
     public function send()
     {

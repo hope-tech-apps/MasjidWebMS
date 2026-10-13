@@ -106,7 +106,7 @@ async function refreshDelivery() {
 function pushOutcomeText(d: BroadcastDelivery): string {
     if (d.push_outcome_text) return d.push_outcome_text
     return d.target_count === null ? 'Delivery could not be checked.'
-        : `Sent to ${d.target_count} ${d.target_count === 1 ? 'phone' : 'phones'}. Delivery could not be checked.`
+        : `Delivery could not be confirmed for ${d.target_count} ${d.target_count === 1 ? 'phone' : 'phones'}.`
 }
 
 function deliveryClass(d: BroadcastDelivery): string {

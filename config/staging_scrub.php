@@ -237,6 +237,7 @@ return [
     | into a failed transaction half way through the run.
     */
     'null_columns' => [
+        'push_send_groups' => ['subscription_ids'], // frozen handset audience; also covered by drop_rows
 
         'users' => [
             'remember_token',           // live "remember me" cookie material

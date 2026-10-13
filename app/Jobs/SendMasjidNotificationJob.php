@@ -141,14 +141,9 @@ class SendMasjidNotificationJob implements ShouldQueue
             if ($send) {
                 // A worker can stop before storing a provider id. Its last attempt must not leave Checking forever.
                 $send->groups()->withoutGlobalScopes()->where('masjid_id', $masjidId)
-                    ->whereNull('provider_message_id')->where('status', 'checking')->update(['status' => 'unknown']);
+                    ->whereNull('provider_message_id')->whereIn('status', ['pending', 'sending', 'checking'])->update(['status' => 'unknown']);
                 $send->aggregate();
-                if ($send->groups()->withoutGlobalScopes()->where('masjid_id', $masjidId)->whereNotNull('provider_message_id')->exists()
-                    && \App\Models\PushSend::withoutMasjidScope()->whereKey($send->id)->whereNull('readback_scheduled_at')->update(['readback_scheduled_at' => now()])) {
-                    \App\Jobs\ReadPushOutcomeJob::dispatch($send->id)
-                        ->onConnection(config('queue.default') === 'sync' ? 'database' : config('queue.default'))
-                        ->delay(now()->addMinutes(3))->afterCommit();
-                }
+                app(\App\Services\PushOutcomeScheduler::class)->schedule($send->id);
             }
         }
 

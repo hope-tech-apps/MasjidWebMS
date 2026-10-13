@@ -474,3 +474,7 @@ Final cache note: SQLite database-cache infrastructure is now explicitly measure
 
 ## Push accounts — 2026-10-13
 Readback timings 3 minutes and +15 minutes are chosen operational delays, not measured provider completion guarantees. Native builders will report the exact SDK initialization app ID; clients are not modified in this server worktree. Shell command access is platform operator access. Existing shared-config staging guard is retained intentionally. Production deployment, real delivery, MySQL concurrent locks and native registration are not verified locally.
+
+
+## Push review verification limits — 2026-10-13
+Verified with SQLite, faked provider HTTP, actual database-queue enqueue failure and serialized sender replay. Production transaction refusal was exercised with the application outside testing mode; test fixtures themselves remain in the harness's outer rollback transaction. MySQL DDL, physical multi-connection commits/locking and deployed queues remain unverified. Runtime key reads use application configuration; no actual secrets were opened or copied. Only the named worktree was changed. The sole-writer assignment is the owner's brief; no HANDOFF.md was present.

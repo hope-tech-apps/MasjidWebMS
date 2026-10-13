@@ -251,7 +251,7 @@ class OnesignalService
      *        Required for delivery once a masjid is on its own app, since
      *        subscription ids are app-scoped. Defaults null -> current behavior.
      */
-    public function sendDataSync(array $subscription_ids, array $data = [], ?Masjid $masjid = null)
+    public function sendDataSync(array $subscription_ids, array $data = [], ?Masjid $masjid = null, ?string $requestKey = null)
     {
         $subscription_ids = array_values(array_filter($subscription_ids));
 
@@ -280,7 +280,7 @@ class OnesignalService
                 'content_available' => true,
                 'data' => array_merge(['type' => 'prayer_sync'], $data),
             ];
-            return app(PushDeliveryService::class)->send($masjid, $payload, [$appId, $appKey], 'prayer_sync', timeout: 15);
+            return app(PushDeliveryService::class)->send($masjid, $payload, [$appId, $appKey], 'prayer_sync', timeout: 15, requestKey: $requestKey);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning(
                 'OneSignal sendDataSync failed'

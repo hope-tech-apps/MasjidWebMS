@@ -302,13 +302,17 @@ class BroadcastsController extends Controller
                 }
                 $outcome = $outcomes[$delivery['reference_id']] ?? null;
                 if ($outcome) {
+                    try {
+                        app(\App\Services\PushOutcomeScheduler::class)->schedule($outcome->id);
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::warning('Push outcome enqueue unavailable', ['push_send_id' => $outcome->id]);
+                    }
                     $delivery['push_outcome'] = $outcome->toArray();
                     $delivery['push_outcome_text'] = $outcome->wording();
                 } elseif ($delivery['status'] === 'sent') {
                     // Historical records never had readback; queued new sends will gain a ledger when the worker runs.
-                    $delivery['push_outcome_text'] = 'Sent to '.$delivery['target_count']
-                        .($delivery['target_count'] === 1 ? ' phone. ' : ' phones. ')
-                        .($broadcast->created_at->lt(now()->subMinutes(3)) ? 'Delivery could not be checked.' : 'Checking delivery…');
+                    $delivery['push_outcome_text'] = $broadcast->created_at->lt(now()->subMinutes(3))
+                        ? 'Delivery could not be checked.' : 'Waiting to send.';
                 }
             }
             unset($delivery);

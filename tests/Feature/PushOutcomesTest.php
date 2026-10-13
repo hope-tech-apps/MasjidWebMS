@@ -56,7 +56,7 @@ class PushOutcomesTest extends TestCase
         $this->assertSame(8, $send->delivered);
         $this->assertSame(40, $send->errored);
         $this->assertSame(74, $send->targeted);
-        $this->assertSame('Sent to 74 phones. Delivered to 8. 40 could not be delivered (iPhone).', $send->wording());
+        $this->assertSame('Sent to 74 phones. Delivered to 8. 40 could not be delivered (iPhone). Delivery could not be confirmed for 26 phones.', $send->wording());
         $this->assertSame(40, $send->platform_counts['ios']['errored']);
         Http::assertSentCount(1);
     }
@@ -87,7 +87,7 @@ class PushOutcomesTest extends TestCase
         (new ReadPushOutcomeJob($send->id, 2))->handle(new OnesignalService);
         Http::assertSentCount(2);
         Queue::assertPushed(ReadPushOutcomeJob::class, 1);
-        $this->assertStringContainsString('Delivery could not be checked.', $send->fresh()->wording());
+        $this->assertStringContainsString('Delivery could not be confirmed for 74 phones.', $send->fresh()->wording());
     }
 
     #[Test]
@@ -99,7 +99,7 @@ class PushOutcomesTest extends TestCase
         (new ReadPushOutcomeJob($send->id))->handle(new OnesignalService);
         $this->assertSame('unknown', $send->fresh()->status);
         $this->assertNull($send->fresh()->delivered);
-        $this->assertSame('Sent to 74 phones. Delivery could not be checked.', $send->fresh()->wording());
+        $this->assertSame('Sent to 74 phones. Delivery could not be confirmed for 74 phones.', $send->fresh()->wording());
         Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) =>
             !str_contains($message.json_encode($context), 'invented-private-credential'));
     }
@@ -129,17 +129,12 @@ class PushOutcomesTest extends TestCase
             ->push(['id' => 'beta-message']);
         Log::spy();
         $job = new SendMasjidNotificationJob($note, $org, ['alpha', 'beta']);
-        try {
-            $job->handle(new OnesignalService);
-            $this->fail('A failed group must remain retryable.');
-        } catch (\RuntimeException $e) {
-            $this->assertStringNotContainsString('invented-private-credential', $e->getMessage());
-            $this->assertStringNotContainsString('invented-private-credential', $e->getTraceAsString());
-        }
         $job->handle(new OnesignalService);
-        Http::assertSentCount(3);
+        $job->handle(new OnesignalService);
+        Http::assertSentCount(2);
         $saved = PushSend::where('notification_id', $note->id)->firstOrFail();
-        $this->assertSame(['alpha-message', 'beta-message'], $saved->groups->pluck('provider_message_id')->all());
+        $this->assertSame(['alpha-message', null], $saved->groups()->orderBy('id')->pluck('provider_message_id')->all());
+        $this->assertSame('unknown', $saved->groups()->where('routing_key', 'app:beta')->firstOrFail()->status);
         $this->assertStringNotContainsString('invented-private-credential', $saved->toJson());
         $job->failed(new \RuntimeException('invented-private-credential'));
         Log::shouldHaveReceived('error')->withArgs(fn ($message, $context) => !str_contains($message.json_encode($context), 'invented-private-credential'));
