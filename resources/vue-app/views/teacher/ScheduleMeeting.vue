@@ -4,6 +4,7 @@
         <span v-if="status" class="schedule-status badge text-bg-success">{{ status === 'now' ? 'Happening now' : 'Next' }}</span>
         <RouterLink v-if="meeting.href" :to="meeting.href" class="schedule-class"><bdi dir="auto">{{ meeting.group_name }}</bdi></RouterLink>
         <div v-else class="schedule-class"><bdi dir="auto">{{ meeting.group_name }}</bdi></div>
+        <div v-if="meeting.joint?.length" class="schedule-joint small" data-test="joint">With <template v-for="(other, i) in meeting.joint" :key="other.id"><RouterLink v-if="other.href" :to="other.href"><bdi dir="auto">{{ other.group_name }}</bdi></RouterLink><bdi v-else dir="auto">{{ other.group_name }}</bdi>{{ i < meeting.joint.length - 1 ? ', ' : '' }}</template></div>
         <div v-if="meeting.kind !== 'class'" dir="auto">{{ meeting.label }}</div>
         <div v-if="meeting.co_teachers.length" class="small text-muted"><bdi dir="auto">{{ meeting.co_teachers.map(person => person.name).join(', ') }}</bdi></div>
         <div v-if="meeting.room_name" class="small" data-test="location"><bdi dir="auto">{{ meeting.room_name }}</bdi></div>
@@ -21,6 +22,8 @@ export interface ScheduleSlot {
     id: number; group_id: number; group_name: string; kind: string; label: string;
     starts_at: string; ends_at: string; room_name: string | null; href: string | null;
     co_teachers: { id: number; name: string }[]; effective_from: string; effective_until: string | null;
+    /** Only on a lesson other classes take together with this one: those classes, linked where the reader may open them. */
+    joint?: { id: number; group_id: number; group_name: string; href?: string | null }[];
 }
 const props = withDefaults(defineProps<{ meeting: ScheduleSlot; status?: 'now' | 'next' | null; showTime?: boolean; weekStart: string; weekEnd: string }>(), { showTime: true });
 const inWeek = (date: string) => date >= props.weekStart && date <= props.weekEnd;

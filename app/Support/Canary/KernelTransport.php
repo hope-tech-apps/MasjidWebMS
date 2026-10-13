@@ -29,6 +29,7 @@ final class KernelTransport implements ProbeTransport
         private readonly Application $app,
         private readonly string $baseUrl,
         private readonly array $tenantKeys,
+        private readonly array $comparisonRules = [],
     ) {
     }
 
@@ -83,7 +84,8 @@ final class KernelTransport implements ProbeTransport
             durationMs: $elapsed,
             rateLimitRemaining: is_numeric($remaining) ? (int) $remaining : null,
             fingerprint: ResponseFacts::fingerprint($payload),
-            recordIds: ResponseFacts::recordIdentity($payload),
+            recordIds: ResponseFacts::recordIdentity($payload, 6,
+                ResponseFacts::identityPaths($probe->endpoint, $this->comparisonRules)),
         );
     }
 

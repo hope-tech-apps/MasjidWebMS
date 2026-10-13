@@ -69,19 +69,35 @@ class AppMemberQuestionsTest extends TestCase
     #[Test]
     public function upgrade_preserves_old_field_id_ciphertext_and_help_but_seeds_real_professions(): void
     {
-        $migration=require database_path('migrations/2026_10_13_020000_shape_member_questions.php');
-        $migration->down();
-        $old=MemberQuestionOption::create(['masjid_id'=>$this->org->id,'question'=>'occupation','label'=>'Healthcare','position'=>1,'active'=>true]);
-        $cipher=encrypt('Independent maker',false);
-        DB::table('member_question_answers')->insert(['masjid_id'=>$this->org->id,'contact_id'=>$this->member->id,'occupation_id'=>$old->id,'occupation_text'=>$cipher]);
-        $migration->up();
-        $this->assertSame('field',$old->fresh()->question);
-        $answer=DB::table('member_question_answers')->first();
-        $this->assertSame($old->id,$answer->field_id); $this->assertSame($cipher,$answer->field_text);
-        $this->assertNull($answer->occupation_id); $this->assertNull($answer->occupation_text);
-        $this->assertSame(18,MemberQuestionOption::where('question','occupation')->count());
-        $this->assertSame(['field','occupation'],DB::table('member_question_settings')->where('masjid_id',$this->org->id)->where('active',true)->orderBy('id')->pluck('kind')->all());
-        $this->assertFalse((bool)DB::table('member_question_settings')->where('kind','help')->value('active'));
+        // SQLite's table rebuild must toggle foreign keys outside RefreshDatabase's transaction.
+        $original=DB::getDefaultConnection(); $upgrade='member_questions_upgrade';
+        config(['database.connections.'.$upgrade=>config('database.connections.'.$original)]);
+        DB::setDefaultConnection($upgrade);
+        try {
+            $this->artisan('migrate',['--database'=>$upgrade])->assertExitCode(0);
+            $this->org=$this->makeMasjid('upgrade'); $this->member=$this->contact($this->org);
+            $migration=require database_path('migrations/2026_10_13_020000_shape_member_questions.php');
+            $migration->down();
+            $old=MemberQuestionOption::create(['masjid_id'=>$this->org->id,'question'=>'occupation','label'=>'Healthcare','position'=>1,'active'=>true]);
+            $help=MemberQuestionOption::create(['masjid_id'=>$this->org->id,'question'=>'help','label'=>'Translation','position'=>1,'active'=>true]);
+            $cipher=encrypt('Independent maker',false);
+            $helpCipher=encrypt('Can translate',false);
+            $answerId=DB::table('member_question_answers')->insertGetId(['masjid_id'=>$this->org->id,'contact_id'=>$this->member->id,'occupation_id'=>$old->id,'occupation_text'=>$cipher,'help_text'=>$helpCipher]);
+            $selectionId=DB::table('member_question_helps')->insertGetId(['masjid_id'=>$this->org->id,'answer_id'=>$answerId,'option_id'=>$help->id]);
+            $this->assertSame($helpCipher,DB::table('member_question_answers')->where('id',$answerId)->value('help_text'));
+            $this->assertSame($help->id,DB::table('member_question_helps')->where('id',$selectionId)->value('option_id'));
+            $migration->up();
+            $this->assertSame('field',$old->fresh()->question);
+            $answer=DB::table('member_question_answers')->first();
+            $this->assertSame($old->id,$answer->field_id); $this->assertSame($cipher,$answer->field_text);
+            $this->assertNull($answer->occupation_id); $this->assertNull($answer->occupation_text);
+            $this->assertSame($answerId,$answer->id); $this->assertSame($helpCipher,$answer->help_text);
+            $this->assertSame('help',$help->fresh()->question);
+            $this->assertSame(['id'=>$selectionId,'masjid_id'=>$this->org->id,'answer_id'=>$answerId,'option_id'=>$help->id],(array)DB::table('member_question_helps')->where('id',$selectionId)->first(['id','masjid_id','answer_id','option_id']));
+            $this->assertSame(18,MemberQuestionOption::where('question','occupation')->count());
+            $this->assertSame(['field','occupation'],DB::table('member_question_settings')->where('masjid_id',$this->org->id)->where('active',true)->orderBy('id')->pluck('kind')->all());
+            $this->assertFalse((bool)DB::table('member_question_settings')->where('kind','help')->value('active'));
+        } finally { DB::purge($upgrade); DB::setDefaultConnection($original); }
     }
 
     #[Test]
@@ -125,9 +141,12 @@ class AppMemberQuestionsTest extends TestCase
         $this->enable();
         $field=MemberQuestionOption::where('question','field')->value('id');
         $occupation=MemberQuestionOption::where('question','occupation')->where('label','Physician')->value('id');
-        $this->mobile('put',['field_id'=>$field,'occupation_id'=>$occupation])->assertOk();
+        $professionOther=MemberQuestionOption::where('question','occupation')->where('is_other',true)->value('id');
+        $privateText='Private Other profession: violin repair';
+        $this->mobile('put',['field_id'=>$field,'occupation_id'=>$professionOther,'occupation_text'=>$privateText])->assertOk()->assertJsonPath('data.answers.occupation_text',$privateText);
+        $this->assertSame($privateText,MemberQuestionAnswer::where('contact_id',$this->member->id)->firstOrFail()->occupation_text);
         $second=$this->contact($this->org);
-        MemberQuestionAnswer::create(['masjid_id'=>$this->org->id,'contact_id'=>$second->id,'field_id'=>$field]);
+        MemberQuestionAnswer::create(['masjid_id'=>$this->org->id,'contact_id'=>$second->id,'field_id'=>$field,'occupation_id'=>$occupation]);
         $other=$this->makeMasjid('other'); $foreign=$this->contact($other);
         MemberQuestionAnswer::create(['masjid_id'=>$other->id,'contact_id'=>$foreign->id,'field_id'=>$field,'occupation_id'=>$occupation]);
         $this->office(); $url='/api/admin/masjids/'.$this->org->id.'/contacts/from-app-counts';
@@ -135,17 +154,51 @@ class AppMemberQuestionsTest extends TestCase
         $r=$this->getJson($url)->assertOk(); $queries=DB::getQueryLog(); DB::disableQueryLog();
         $this->assertSame(2,count(array_filter($queries,fn($q)=>str_contains(strtolower($q['query']),'count(answer.id)'))));
         $this->assertSame(['id'=>$field,'label'=>'Education','count'=>2],$r->json('data.field.0'));
-        $this->assertSame(['id'=>$occupation,'label'=>'Physician','count'=>1],$r->json('data.occupation.0'));
+        $this->assertContains(['id'=>$occupation,'label'=>'Physician','count'=>1],$r->json('data.occupation'));
+        $this->assertContains(['id'=>$professionOther,'label'=>'Other','count'=>1],$r->json('data.occupation'));
         $this->assertStringNotContainsString($this->member->email,$r->getContent());
         $this->assertStringNotContainsString('contact_id',$r->getContent());
+        $this->assertStringNotContainsString($privateText,$r->getContent());
         MemberQuestionOption::whereKey($field)->update(['label'=>'=SUM(1)']);
         $csv=$this->get($url.'/csv')->assertOk()->streamedContent();
         $this->assertStringContainsString('Members by field',$csv); $this->assertStringContainsString('Members by profession',$csv);
         $this->assertStringContainsString("'=SUM(1)",$csv); $this->assertStringNotContainsString($this->member->email,$csv);
+        $this->assertStringNotContainsString($privateText,$csv);
         $this->getJson('/api/admin/masjids/'.$other->id.'/contacts/from-app-counts')->assertForbidden();
+        $this->admin->syncRoles(['member']); $this->office($this->admin->fresh());
+        $this->assertFalse($this->admin->fresh()->can('view contacts'));
+        $this->getJson($url)->assertForbidden(); $this->get($url.'/csv')->assertForbidden();
+        $this->admin->syncRoles(['masjid-admin']); $this->office($this->admin->fresh());
         $second->delete(); $this->assertSame(1,$this->getJson($url)->assertOk()->json('data.field.0.count'));
         CapabilityWriter::apply($this->org,['app_member_questions'=>false],null);
         $this->getJson($url)->assertNotFound(); $this->get($url.'/csv')->assertNotFound();
+    }
+
+    #[Test]
+    public function counts_data_is_an_empty_object_when_no_counted_kind_is_asked(): void
+    {
+        $this->enable();
+        DB::table('member_question_settings')->where('masjid_id',$this->org->id)->update(['active'=>false]);
+        $this->office();
+        $response=$this->getJson('/api/admin/masjids/'.$this->org->id.'/contacts/from-app-counts')->assertOk();
+        $this->assertInstanceOf(\stdClass::class,json_decode($response->getContent())->data);
+        $this->assertSame([],get_object_vars(json_decode($response->getContent())->data));
+    }
+
+    #[Test]
+    public function counts_csv_starts_with_utf8_bom_and_round_trips_guarded_labels(): void
+    {
+        $this->enable();
+        $label='=SUM(1),"سلام\\"';
+        $option=MemberQuestionOption::where('question','field')->firstOrFail();
+        $option->update(['label'=>$label]);
+        $this->office();
+        $csv=$this->get('/api/admin/masjids/'.$this->org->id.'/contacts/from-app-counts/csv')->assertOk()->streamedContent();
+        $this->assertSame("\xEF\xBB\xBF",substr($csv,0,3));
+        $out=fopen('php://temp','w+'); fwrite($out,substr($csv,3)); rewind($out);
+        $rows=[]; while (($row=fgetcsv($out,0,',','"','')) !== false) $rows[]=$row;
+        fclose($out);
+        $this->assertContains(["'".$label,'0'],$rows);
     }
 
     #[Test]

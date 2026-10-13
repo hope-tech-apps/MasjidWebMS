@@ -94,12 +94,24 @@ const boundsMessage = () => `Pick a date between ${dateLabel(props.setup.year.fi
 const sentenceEnd = (reason: string) => reason.trim().replace(/\.+$/, '') + '.';
 const dayWords = (day: any) => day.state === 'closure' ? `School is closed on ${dateLabel(day.date)}: ${sentenceEnd(day.reason)}` : day.state === 'outside_year' ? 'This day is outside the school year.' : 'The school does not meet on this day.';
 function cells(rowId: number, column: any) {
-    return page.value.meetings.filter((m: any) => (rowsBy.value === 'teacher' ? m.teachers.some((t: any) => t.id === rowId) : m.group_id === rowId) && m.column_key === column.key);
+    const list = page.value.meetings.filter((m: any) => (rowsBy.value === 'teacher' ? m.teachers.some((t: any) => t.id === rowId) : m.group_id === rowId) && m.column_key === column.key);
+    // A teacher who takes two classes at once has one lesson there: the first class's card names the others.
+    return list.filter((m: any, i: number) => !list.slice(0, i).some((first: any) => first.joint?.some((other: any) => other.id === m.id)));
 }
-function forRow(meeting: any, rowId: number) { return { ...meeting, co_teachers: meeting.teachers.filter((t: any) => rowsBy.value !== 'teacher' || t.id !== rowId) }; }
+// The other classes' lessons a teacher's card stands for: the ones this teacher is placed with as well.
+function together(meeting: any, rowId: number) {
+    if (rowsBy.value !== 'teacher') return [];
+    return (meeting.joint ?? []).map((other: any) => page.value.meetings.find((m: any) => m.id === other.id)).filter((m: any) => m?.teachers.some((t: any) => t.id === rowId));
+}
+function forRow(meeting: any, rowId: number) {
+    const teachers = [meeting, ...together(meeting, rowId)].flatMap((m: any) => m.teachers);
+    return { ...meeting, co_teachers: teachers.filter((t: any, i: number) => (rowsBy.value !== 'teacher' || t.id !== rowId) && teachers.findIndex((first: any) => first.id === t.id) === i) };
+}
 function clashTitle(meeting: any, rowId: number) {
-    return page.value.clashes.filter((c: any) => c.meetings.some((m: any) => m.id === meeting.id) && (rowsBy.value === 'class' || c.kind !== 'teacher' || c.id === rowId))
-        .flatMap((c: any) => c.meetings.filter((m: any) => m.id !== meeting.id).map((m: any) => `${c.name}: ${m.group_name} (${m.label}), ${schoolTimeRange(m.starts_at, m.ends_at)}`)).join('; ');
+    const ids = [meeting.id, ...together(meeting, rowId).map((m: any) => m.id)];
+    const titles = page.value.clashes.filter((c: any) => c.meetings.some((m: any) => ids.includes(m.id)) && (rowsBy.value === 'class' || c.kind !== 'teacher' || c.id === rowId))
+        .flatMap((c: any) => c.meetings.filter((m: any) => !ids.includes(m.id)).map((m: any) => `${c.name}: ${m.group_name} (${m.label}), ${schoolTimeRange(m.starts_at, m.ends_at)}`));
+    return [...new Set(titles)].join('; ');
 }
 let generation = 0; let lastKey = ''; let committedDate = date.value;
 // As on the class week: a complete in-year date loads at once, a half-typed year waits.

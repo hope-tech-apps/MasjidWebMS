@@ -45,9 +45,18 @@ final class TeacherSchedule
                         && ($ids === null || in_array($m['class_subject_id'], array_map('intval', $ids), true))
                         && in_array($m['class_subject_id'], $visibleSubjects, true);
                     $href = '/teacher/classes/'.$m['group_id'].($mayOpenSubject ? '?subject='.$m['class_subject_id'] : '');
-                    $rows[] = array_intersect_key($m, array_flip(['id','group_id','group_name','class_subject_id','kind','label','starts_at','ends_at','room_name','effective_from','effective_until']))
+                    $row = array_intersect_key($m, array_flip(['id','group_id','group_name','class_subject_id','kind','label','starts_at','ends_at','room_name','effective_from','effective_until']))
                         + ['href' => $href, 'co_teachers' => array_values(array_filter($m['teachers'], fn ($t) => $t['id'] !== $teacher))];
+                    // The other classes this lesson is taken with on this very date; only such a lesson carries the key.
+                    $with = array_filter($m['joint'] ?? [], fn ($c) => $c['effective_from'] <= $date && ($c['effective_until'] === null || $c['effective_until'] >= $date));
+                    if ($with !== []) $row['joint'] = array_values(array_map(fn ($c) => ['id'=>$c['id'], 'group_id'=>$c['group_id'], 'group_name'=>$c['group_name'], 'href'=>null], $with));
+                    $rows[] = $row;
                 }
+                // One slot for a lesson this teacher takes with two classes at once: the first class's, naming the others with their own links.
+                $rows = TimetableReader::asOneLesson($rows, 'co_teachers', function (array $slot, array $row): array {
+                    foreach ($slot['joint'] ?? [] as $j => $class) if ($class['id'] === $row['id']) $slot['joint'][$j]['href'] = $row['href'];
+                    return $slot;
+                });
             }
             return ['date'=>$date, 'weekday'=>$weekday, 'in_year'=>$year !== null, 'meeting_day'=>$meets, 'reason'=>$closure?->reason, 'closed'=>$closure !== null, 'meetings'=>$rows];
         };

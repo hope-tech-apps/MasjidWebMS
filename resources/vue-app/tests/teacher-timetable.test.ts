@@ -64,6 +64,15 @@ test('teacher schedule OFF menu retains base markup and the new view and layout 
     for(const f of ['layouts/TeacherLayout.vue','views/teacher/TeacherSchedule.vue','views/teacher/ScheduleMeeting.vue']) assert.ok(guards.includes(f),f);
 });
 
+test('teacher schedule icon uses the neighbouring Calendar flex spacing', () => {
+    const source = readFileSync(new URL('../layouts/TeacherLayout.vue', import.meta.url), 'utf8');
+    const classes = (path: string) => source.match(new RegExp(`to="${path}"\\s+class="([^"]+)"`))?.[1].split(/\s+/) ?? [];
+    for (const utility of ['d-inline-flex', 'align-items-center', 'gap-1']) {
+        assert.ok(classes('/teacher/calendar').includes(utility), `Calendar ${utility}`);
+        assert.ok(classes('/teacher/schedule').includes(utility), `My schedule ${utility}`);
+    }
+});
+
 test('teacher schedule menu follows selected school true-only header; OFF keeps base requests and visible menu',async()=>{
 
     const helpers=await loadTs('core/helpers/teacherSchools.ts',{});

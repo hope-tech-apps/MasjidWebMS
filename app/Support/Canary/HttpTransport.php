@@ -22,6 +22,7 @@ final class HttpTransport implements ProbeTransport
         private readonly array $tenantKeys,
         private readonly int $timeout,
         private readonly int $connectTimeout,
+        private readonly array $comparisonRules = [],
     ) {
     }
 
@@ -65,7 +66,8 @@ final class HttpTransport implements ProbeTransport
             durationMs: $elapsed,
             rateLimitRemaining: is_numeric($remaining) ? (int) $remaining : null,
             fingerprint: ResponseFacts::fingerprint($payload),
-            recordIds: ResponseFacts::recordIdentity($payload),
+            recordIds: ResponseFacts::recordIdentity($payload, 6,
+                ResponseFacts::identityPaths($probe->endpoint, $this->comparisonRules)),
         );
     }
 

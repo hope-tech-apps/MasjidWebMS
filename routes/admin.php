@@ -688,6 +688,10 @@ Route::prefix('admin')->group(function () {
                         Route::post('/meetings', 'storeMeeting');
                         Route::put('/meetings/{meeting_id}', 'updateMeeting');
                         Route::delete('/meetings/{meeting_id}', 'destroyMeeting');
+                        // A lesson two or more classes take together: who it is with, say so, take one class out.
+                        Route::get('/meetings/{meeting_id}/joint', 'jointLesson')->whereNumber('meeting_id');
+                        Route::put('/meetings/{meeting_id}/joint', 'joinLessons')->whereNumber('meeting_id');
+                        Route::delete('/meetings/{meeting_id}/joint', 'leaveJointLesson')->whereNumber('meeting_id');
                         Route::post('/copy-day', 'copyDay');
                     });
                 });

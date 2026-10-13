@@ -11,6 +11,7 @@ use App\Support\Canary\Probe;
 use App\Support\Canary\ProbeCatalog;
 use App\Support\Canary\ProbeResult;
 use App\Support\Canary\ProbeTransport;
+use App\Support\Canary\ResponseFacts;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Database\Eloquent\Relations\HasOneOrMany;
@@ -18,6 +19,8 @@ use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
@@ -43,7 +46,7 @@ use Illuminate\Support\Str;
  *     route table says so, so it is named in `config/canary.php` with its
  *     reason and pinned by a test. Assume there are others and check before
  *     adding a prefix to `canary.prefixes`.
- *   - makes four kinds of database query of its own, all SELECT, all once per
+ *   - makes five kinds of database query of its own, all read-only, all once per
  *     RUN rather than once per probe: (1) which organisations exist, (2) which
  *     of them hold the most public content (`resolveTenants`), (3) who owns the
  *     record ids the API just handed back (`resolveOwnership`, one indexed
@@ -58,7 +61,9 @@ use Illuminate\Support\Str;
  *     production's default — from whatever process calls it. The third is
  *     what lets the canary say whose rows these are on a surface that strips
  *     `masjid_id` from every response. Nothing else here touches the database
- *     directly, and nothing here writes.
+ *     directly except (5) schema metadata for every declared table rule,
+ *     bounded by configured tables/rules, with column lists reused per run. Nothing
+ *     here writes.
  *   - never sends a credential, so it can only ever see what an anonymous
  *     caller on the internet already sees. A canary that authenticated could
  *     prove more and would itself become a secret worth stealing.
@@ -723,9 +728,12 @@ class TenancyCanary extends Command
      * every Resource strips `masjid_id` and no detector that reads the body can
      * say whose rows these are. See resolveOwnership().
      *
-     * @var array<string,array<int,int>>
+     * @var array<string,array<int,int|array<int,int>>>
      */
     private array $ownership = [];
+
+    /** @var array<string,array> Explicit rules never participate in name inference. */
+    private array $tableRules = [];
 
     /**
      * Relations named in `canary.compare_by` that CANNOT attribute a row, and
@@ -844,6 +852,7 @@ class TenancyCanary extends Command
         $this->blindDetectors = [];
         $this->comparisonNotApplicable = [];
         $this->ownership = [];
+        $this->tableRules = [];
         $this->ownershipSkipped = [];
         $this->attributed = [];
         $this->unattributed = [];
@@ -869,6 +878,14 @@ class TenancyCanary extends Command
             $this->emitFatal('No base URL: set APP_URL, canary.base_url, or pass --base-url.');
 
             return 2;
+        }
+
+        try {
+            $this->validateTableRules($config);
+        } catch (\InvalidArgumentException $e) {
+            $this->emitFatal($e->getMessage());
+
+            return self::EXIT_INCOMPLETE;
         }
 
         $tenants = $this->resolveTenants($config);
@@ -1100,6 +1117,7 @@ class TenancyCanary extends Command
                 $this->laravel,
                 $baseUrl,
                 $tenantKeys,
+                (array) ($config['compare_by'] ?? []),
             );
         }
 
@@ -1109,6 +1127,7 @@ class TenancyCanary extends Command
             $tenantKeys,
             (int) ($config['timeout'] ?? 10),
             (int) ($config['connect_timeout'] ?? 5),
+            (array) ($config['compare_by'] ?? []),
         );
     }
 
@@ -2394,8 +2413,14 @@ class TenancyCanary extends Command
                 // organisations being handed the same lookup rows is what the
                 // operator has said this list is FOR. The exclusion is named in
                 // the detail rather than applied silently.
-                $leftIds = array_diff_key($left->recordIds, array_flip($declared));
-                $rightIds = array_diff_key($right->recordIds, array_flip($declared));
+                // GLOBAL catalogue ids may legitimately be shared. Their
+                // tenant-pivot membership is enforced by the ownership check.
+                $catalogues = $this->pivotBuckets($uri, config('canary'));
+                $leftIds = array_diff_key($left->recordIds, array_flip(array_merge($declared, $catalogues)));
+                $rightIds = array_diff_key($right->recordIds, array_flip(array_merge($declared, $catalogues)));
+                if ($catalogues !== []) {
+                    $details[] = 'catalogue ids checked through tenant pivots: '.implode(', ', $catalogues);
+                }
 
                 $shared = [];
 
@@ -2632,7 +2657,9 @@ class TenancyCanary extends Command
                 'anchor' => $anchor,
                 // Step 2: of the relations this bucket may be attributed
                 // through, the ones that best explain its ids.
-                'relations' => $anchor === 'declared' ? [] : $this->relationsExplaining($ids, $candidates),
+                'relations' => $anchor === 'declared' ? [] :
+                    ($this->explicitRulesFor($uri, (string) $path, $config) !== []
+                        ? $candidates : $this->relationsExplaining($ids, $candidates)),
                 'ids' => $ids,
                 'verdicts' => [],
                 'rows' => [],
@@ -2651,11 +2678,18 @@ class TenancyCanary extends Command
                 $mine = 0;
                 $ambiguous = 0;
                 $unknown = 0;
+                $unattached = [];
                 /** @var array<int,array<int,int>> $foreign owner => ids */
                 $foreign = [];
 
                 foreach ($ids as $id) {
-                    [$state, $owner] = $this->attribute($id, $buckets[$path]['relations']);
+                    [$state, $owner] = $this->attribute($id, $buckets[$path]['relations'], $tenantId);
+
+                    if ($state === 'unattached') {
+                        $unattached[] = $id;
+
+                        continue;
+                    }
 
                     if ($state === 'unknown') {
                         $unknown++;
@@ -2683,10 +2717,11 @@ class TenancyCanary extends Command
                     'foreign' => $foreign,
                     'ambiguous' => $ambiguous,
                     'unknown' => $unknown,
+                    'unattached' => $unattached,
                 ];
 
                 $buckets[$path]['verdicts'][$tenantId] = match (true) {
-                    $foreign !== [] => 'foreign',
+                    $foreign !== [] || $unattached !== [] => 'foreign',
                     $mine > 0 => 'own',
                     default => 'unreadable',
                 };
@@ -2981,6 +3016,22 @@ class TenancyCanary extends Command
                 $mine += $rows['mine'];
                 $unknown += $rows['unknown'];
 
+                if ($rows['unattached'] !== []) {
+                    $failed = true;
+                    $this->addFinding(
+                        kind: 'global_rows_not_attached_to_requested_tenant',
+                        severity: self::SEVERITY_CRITICAL,
+                        probe: $result->probe,
+                        summary: $uri.' answered masjid '.$tenantId.' with catalogue ids lacking its required tenant pivot: '.
+                            $path.' (ids '.implode(', ', $rows['unattached']).')',
+                        evidence: [
+                            'requested' => $tenantId,
+                            'record_ids' => [$path => $rows['unattached']],
+                            'attributed_by' => $this->tablesUsed($buckets, [$path]),
+                        ],
+                    );
+                }
+
                 foreach ($rows['foreign'] as $owner => $ids) {
                     $foreign[$owner][$path] = array_merge($foreign[$owner][$path] ?? [], $ids);
                 }
@@ -3045,6 +3096,15 @@ class TenancyCanary extends Command
         $contested = [];
 
         foreach ($buckets as $path => $bucket) {
+            if ($this->explicitRulesFor($uri, (string) $path, config('canary')) !== []) {
+                foreach ($bucket['rows'] as $rows) {
+                    if ($rows['unknown'] > 0 || $rows['ambiguous'] > 0) {
+                        // With a declared table, known siblings cannot hide an
+                        // unplaced id. Every emitted non-null id must be checked.
+                        unset($traced[$path]);
+                    }
+                }
+            }
             if ($bucket['anchor'] === 'declared' || isset($traced[$path])) {
                 continue;
             }
@@ -3190,7 +3250,7 @@ class TenancyCanary extends Command
         );
 
         return array_values(array_filter(
-            array_keys($this->ownership),
+            array_keys(array_diff_key($this->ownership, $this->tableRules)),
             static fn (string $relation) => in_array(Str::snake($relation), $segments, true)
         ));
     }
@@ -3250,6 +3310,11 @@ class TenancyCanary extends Command
      */
     private function anchorFor(string $uri, string $path, array $config): array
     {
+        $explicit = $this->explicitRulesFor($uri, $path, $config);
+        if ($explicit !== []) {
+            return ['path', $explicit];
+        }
+
         if (in_array($path, $this->declaredGlobalBuckets($uri, $config), true)) {
             return ['declared', []];
         }
@@ -3263,6 +3328,38 @@ class TenancyCanary extends Command
         $inherited = $this->relationsNamedIn($uri);
 
         return $inherited === [] ? ['none', []] : ['uri', $inherited];
+    }
+
+    /** An explicit table rule outranks inferred relation names and global buckets. */
+    private function explicitRulesFor(string $uri, string $path, array $config): array
+    {
+        $names = [];
+        foreach ((array) ($config['compare_by'] ?? []) as $name => $rule) {
+            if (is_string($name) && is_array($rule)) {
+                foreach (ResponseFacts::identityPaths($uri, [$rule]) as $declared) {
+                    if (ResponseFacts::identityBucket($declared) === $path) {
+                        $names[] = $name;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $names;
+    }
+
+    private function pivotBuckets(string $uri, array $config): array
+    {
+        $paths = [];
+        foreach ((array) ($config['compare_by'] ?? []) as $rule) {
+            if (is_array($rule) && $this->requiredPivots($rule) !== []) {
+                foreach (ResponseFacts::identityPaths($uri, [$rule]) as $path) {
+                    $paths[] = ResponseFacts::identityBucket($path);
+                }
+            }
+        }
+
+        return array_values(array_unique($paths));
     }
 
     /**
@@ -3334,9 +3431,9 @@ class TenancyCanary extends Command
      * this bucket — and only when they agree.
      *
      * @param  array<int,string>  $relations
-     * @return array{0:'attributed'|'ambiguous'|'unknown',1:int|null}
+     * @return array{0:'attributed'|'ambiguous'|'unknown'|'unattached',1:int|null}
      */
-    private function attribute(int $id, array $relations): array
+    private function attribute(int $id, array $relations, ?int $tenantId = null): array
     {
         $owners = [];
 
@@ -3344,6 +3441,10 @@ class TenancyCanary extends Command
             $owner = $this->ownership[$relation][$id] ?? null;
 
             if ($owner !== null) {
+                if (is_array($owner)) {
+                    return in_array($tenantId, $owner, true)
+                        ? ['attributed', $tenantId] : ['unattached', null];
+                }
                 $owners[$owner] = true;
             }
         }
@@ -3386,6 +3487,8 @@ class TenancyCanary extends Command
      * that is not one. So it attributes through the `model` pair in
      * `canary.tenant_morphs`, and a row counts only when its `model_type` says
      * Masjid.
+     * Named table rules use the same bounded SELECT path, with either an
+     * explicit tenant column or required pivots for the same requested tenant.
      *
      * A relation that cannot attribute is named in `coverage.row_ownership.
      * tables_skipped` with its reason, not dropped silently.
@@ -3395,10 +3498,17 @@ class TenancyCanary extends Command
      */
     private function resolveOwnership(array $config, array $results): void
     {
-        /** @var array<string,array{0:HasOneOrMany<covariant \Illuminate\Database\Eloquent\Model>,1:array{foreign:string,type_column:?string,type:?string}}> $usable */
+        /** @var array<string,array> Relation/owner-key pairs or explicit table rules. */
         $usable = [];
 
-        foreach ((array) ($config['compare_by'] ?? []) as $name) {
+        foreach ((array) ($config['compare_by'] ?? []) as $ruleName => $name) {
+            if (is_string($ruleName) && is_array($name)) {
+                $usable[$ruleName] = $name;
+                $this->tableRules[$ruleName] = $name;
+                $this->ownership[$ruleName] = [];
+
+                continue;
+            }
             if (! is_string($name) || ! method_exists(Masjid::class, $name)) {
                 continue;
             }
@@ -3442,12 +3552,14 @@ class TenancyCanary extends Command
         // an `IN` list bounded by the endpoints that name a table, not by the
         // size of the plan.
         $wanted = [];
+        $requestedTenants = [];
 
         foreach ($results as $uri => $endpointResults) {
             foreach ($endpointResults as $result) {
                 if ($result->probe->tenantId === null || ! $result->isSuccessful()) {
                     continue;
                 }
+                $requestedTenants[$result->probe->tenantId] = true;
 
                 foreach ($result->recordIds as $path => $ids) {
                     [$anchor, $candidates] = $this->anchorFor((string) $uri, (string) $path, $config);
@@ -3479,6 +3591,11 @@ class TenancyCanary extends Command
             }
 
             try {
+                if (isset($usable[$name]['table'])) {
+                    $this->ownership[$name] = $this->tableOwnerMap($usable[$name], $ids, $config, array_keys($requestedTenants));
+
+                    continue;
+                }
                 [$relation, $ownerKey] = $usable[$name];
 
                 $this->ownership[$name] = $this->ownerMap($relation, $ownerKey, $ids);
@@ -3487,6 +3604,169 @@ class TenancyCanary extends Command
                 $this->ownershipSkipped[$name] = 'lookup failed: '.$e->getMessage();
             }
         }
+    }
+
+    /** Accept the original single-pivot form as one required membership. */
+    private function requiredPivots(array $rule): array
+    {
+        return $rule['pivots'] ?? (isset($rule['pivot']) ? [$rule['pivot']] : []);
+    }
+
+    /** Validate every declared rule before any endpoint can be probed, even dark keys. */
+    private function validateTableRules(array $config): void
+    {
+        $columns = [];
+        $errors = [];
+        foreach ((array) ($config['compare_by'] ?? []) as $name => $rule) {
+            if (is_int($name) && is_string($rule)) {
+                continue; // Existing relation-name rules retain their discovery behavior.
+            }
+            try {
+                if (! is_string($name) || $name === '' || ! is_array($rule)) {
+                    throw new \InvalidArgumentException('expected a named table rule');
+                }
+                $identifier = static function ($value): string {
+                    if (! is_string($value) || ! preg_match('/^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/D', $value)) {
+                        throw new \InvalidArgumentException('invalid table or column name: '.json_encode($value));
+                    }
+
+                    return $value;
+                };
+                $checkColumns = static function ($table, array $required) use (&$columns, $identifier): void {
+                    $table = $identifier($table);
+                    foreach ($required as $column) {
+                        $identifier($column);
+                    }
+                    if (! isset($columns[$table])) {
+                        if (! Schema::hasTable($table)) {
+                            throw new \InvalidArgumentException('table '.$table.' does not exist');
+                        }
+                        $columns[$table] = Schema::getColumnListing($table);
+                    }
+                    foreach ($required as $column) {
+                        if (! in_array($column, $columns[$table], true)) {
+                            throw new \InvalidArgumentException('column '.$table.'.'.$column.' does not exist');
+                        }
+                    }
+                };
+                if (! isset($rule['paths']) || ! is_array($rule['paths']) || $rule['paths'] === []) {
+                    throw new \InvalidArgumentException('paths must map routes to nonempty path lists');
+                }
+                foreach ($rule['paths'] as $uri => $paths) {
+                    if (! is_string($uri) || ! preg_match('#^[a-zA-Z0-9_{}/-]+$#D', $uri)
+                        || ! is_array($paths) || ! array_is_list($paths) || $paths === []) {
+                        throw new \InvalidArgumentException('paths must map routes to nonempty path lists');
+                    }
+                    foreach ($paths as $path) {
+                        if (! is_string($path) || ! preg_match('/^(?:[a-zA-Z_][a-zA-Z0-9_]*|\*)(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|\*))*$/D', $path)) {
+                            throw new \InvalidArgumentException('invalid response path: '.json_encode($path));
+                        }
+                    }
+                }
+                if (array_key_exists('pivot', $rule) && array_key_exists('pivots', $rule)) {
+                    throw new \InvalidArgumentException('use pivot or pivots, not both');
+                }
+                if (array_key_exists('pivot', $rule) && ! is_array($rule['pivot'])) {
+                    throw new \InvalidArgumentException('pivot must be a membership rule');
+                }
+                if (array_key_exists('pivots', $rule) && ! is_array($rule['pivots'])) {
+                    throw new \InvalidArgumentException('pivots must be a nonempty list of membership rules');
+                }
+                $pivots = $this->requiredPivots($rule);
+                if (! array_is_list($pivots)
+                    || (array_key_exists('pivots', $rule) && $pivots === [])
+                    || ($pivots !== [] && array_key_exists('tenant_key', $rule))) {
+                    throw new \InvalidArgumentException('use a tenant_key or a nonempty list of required pivots');
+                }
+                $checkColumns($rule['table'] ?? null, [array_key_exists('key', $rule) ? $rule['key'] : 'id']);
+                $memberships = $pivots === [] ? [$rule] : $pivots;
+                foreach ($memberships as $pivot) {
+                    if (! is_array($pivot)) {
+                        throw new \InvalidArgumentException('each pivot must be a membership rule');
+                    }
+                    $tenantKey = $identifier($pivot['tenant_key'] ?? null);
+                    $required = [$tenantKey];
+                    if ($pivots !== []) {
+                        $required[] = $pivot['related_key'] ?? null;
+                        $where = array_key_exists('where', $pivot) ? $pivot['where'] : [];
+                        if (! is_array($where)) {
+                            throw new \InvalidArgumentException('pivot where must map columns to scalar values');
+                        }
+                        foreach ($where as $column => $value) {
+                            if (! is_scalar($value) && $value !== null) {
+                                throw new \InvalidArgumentException('pivot where must map columns to scalar values');
+                            }
+                            $required[] = $column;
+                        }
+                    }
+                    $checkColumns($pivot['table'] ?? null, $required);
+                    if (! in_array($tenantKey, (array) ($config['tenant_keys'] ?? ['masjid_id']), true)) {
+                        throw new \InvalidArgumentException('tenant_key '.$tenantKey.' must name an organisation in canary.tenant_keys');
+                    }
+                }
+            } catch (\Throwable $e) {
+                $errors[] = 'Invalid configuration for canary.compare_by.'.$name.': '.$e->getMessage();
+            }
+        }
+        if ($errors !== []) {
+            throw new \InvalidArgumentException(implode("\n", $errors));
+        }
+    }
+
+    /**
+     * Plain SELECTs only: never call model methods or cache readers for a
+     * declared table. A database cache get can DELETE an expired row on prod.
+     * Pivot maps retain every requested tenant permitted a shared GLOBAL id; an
+     * existing catalogue row with no qualifying attachment maps to an empty set.
+     */
+    private function tableOwnerMap(array $rule, array $ids, array $config, array $tenants): array
+    {
+        $table = $rule['table'];
+        $key = $rule['key'] ?? 'id';
+        $query = DB::table($table)->whereIn($table.'.'.$key, $ids);
+        $pivots = $this->requiredPivots($rule);
+        foreach ($pivots as $index => $pivot) {
+            $alias = 'canary_pivot_'.$index;
+            $query->leftJoin($pivot['table'].' as '.$alias, function ($join) use ($pivot, $table, $key, $tenants, $alias, $index, $pivots) {
+                $join->on($alias.'.'.$pivot['related_key'], '=', $table.'.'.$key);
+                $join->whereIn($alias.'.'.$pivot['tenant_key'], $tenants);
+                if ($index > 0) {
+                    // Availability for A and a saved choice for B must never
+                    // combine into permission for either organisation.
+                    $join->on($alias.'.'.$pivot['tenant_key'], '=', 'canary_pivot_0.'.$pivots[0]['tenant_key']);
+                }
+                foreach ($pivot['where'] ?? [] as $column => $value) {
+                    $join->where($alias.'.'.$column, '=', $value);
+                }
+            });
+        }
+
+        $columns = [$table.'.'.$key.' as canary_id'];
+        if ($pivots === []) {
+            $columns[] = $table.'.'.$rule['tenant_key'].' as canary_owner';
+        } else {
+            foreach ($pivots as $index => $pivot) {
+                $columns[] = 'canary_pivot_'.$index.'.'.$pivot['tenant_key'].' as canary_owner_'.$index;
+            }
+        }
+        $owners = [];
+        foreach ($query->get($columns) as $row) {
+            $id = (int) $row->canary_id;
+            if ($pivots !== []) {
+                $owners[$id] ??= [];
+                foreach (array_keys($pivots) as $index) {
+                    if ($row->{'canary_owner_'.$index} === null) {
+                        continue 2;
+                    }
+                }
+                $owners[$id][] = (int) $row->canary_owner_0;
+                $owners[$id] = array_values(array_unique($owners[$id]));
+            } elseif ($row->canary_owner !== null) {
+                $owners[$id] = (int) $row->canary_owner;
+            }
+        }
+
+        return $owners;
     }
 
     /**
@@ -4241,7 +4521,7 @@ class TenancyCanary extends Command
 
     private function attributableRelationsNotConfigured(array $config): array
     {
-        $configured = array_map('strval', (array) ($config['compare_by'] ?? []));
+        $configured = array_values(array_filter((array) ($config['compare_by'] ?? []), 'is_string'));
 
         $available = [];
 
@@ -4453,7 +4733,8 @@ class TenancyCanary extends Command
             'endpoints_reached' => $this->plannedEndpoints - count($this->notProbed) - count($this->unreached),
             'endpoints_not_reached' => $this->unreached,
             'endpoints_not_probed' => array_values($this->notProbed),
-            // Public GET routes the CATALOGUE refused, with the reason. Not a
+            // GET routes the CATALOGUE refused, with the reason, including
+            // explicitly named credential gaps from canary.not_planned. Not a
             // gap in this run — a gap in what any run looks at — so it changes
             // no verdict and appears at every one of them. Before 2026-08-13 a
             // refused route was in the plan, in `blind_spots`, in coverage and
@@ -4885,7 +5166,7 @@ class TenancyCanary extends Command
                     static fn (array $d) => $d['state'] === 'dark'
                 ));
 
-                $unplanned = count($payload['coverage']['routes_not_planned'] ?? []) - $darkNow;
+                $unplanned = ($payload['coverage']['route_table']['public_get_refused'] ?? 0) - $darkNow;
 
                 if ($unplanned > 0) {
                     // The claim's outermost boundary, and the one a reader of

@@ -10,8 +10,14 @@ use App\Models\AppMenuSetting;
 use App\Models\Masjid;
 use App\Models\Page;
 use App\Models\Service;
+use App\Models\AppBottomTab;
+use App\Models\AppVolunteerSetting;
+use App\Models\MemberQuestionOption;
+use App\Models\MobileAppFeature;
 use App\Console\Commands\TenancyCanary;
 use App\Support\AppMenu;
+use App\Support\MemberQuestions;
+use App\Support\Canary\ResponseFacts;
 use App\Support\Canary\AppMenuKillSwitch;
 use Illuminate\Database\Eloquent\Relations\HasOneOrMany;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -27,6 +33,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Tests\Support\Canary\FlippableDarkSwitch;
 use Tests\Support\Canary\NotADarkSwitch;
@@ -484,7 +491,8 @@ class TenancyCanaryTest extends TestCase
         // canary.tenant_morphs; the tests under "The gallery is attributed
         // through its morph pair" pin what that means.
         $this->assertSame([], $ownership['tables_skipped']);
-        $this->assertSame(['announcements', 'services', 'pages', 'gallery'], $ownership['tables']);
+        $this->assertSame(['announcements', 'services', 'pages', 'gallery', 'bottom_tabs',
+            'member_question_options', 'member_interests'], $ownership['tables']);
     }
 
     // ================================================================
@@ -2752,6 +2760,453 @@ class TenancyCanaryTest extends TestCase
     // ================================================================
     // Production safety
     // ================================================================
+
+    public static function appCapabilities(): array
+    {
+        return [
+            'chosen tabs and virtual entries' => ['app_bottom_tabs', 'bottom_tabs'],
+            'saved volunteer address' => ['app_volunteer_entry', 'volunteer'],
+            'seeded onboarding options' => ['app_member_questions', 'onboarding'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('appCapabilities')]
+    public function a_full_run_is_clean_with_each_dark_app_key_on_and_populated(string $capability, string $key): void
+    {
+        $this->seedAppKeys($this->masjidA, $capability);
+
+        // Witness the key on BOTH real carriers before relying on a green run.
+        foreach (['/api/mobile/masjids/'.$this->masjidA->id, '/api/v1/settings'] as $url) {
+            $data = $this->getJson($url, ['masjid-id' => (string) $this->masjidA->id])->assertOk()->json('data');
+            $this->assertArrayHasKey($key, $data);
+            if ($key === 'bottom_tabs') {
+                $this->assertSame(['announcements', 'volunteer', 'menu'], array_column($data[$key], 'key'));
+                $this->assertSame([1, null, null], array_column($data[$key], 'id'));
+            } elseif ($key === 'onboarding') {
+                $this->assertNotEmpty($data[$key]['questions'][0]['options']);
+            } else {
+                $this->assertSame('https://example.invalid/volunteer', $data[$key]['url']);
+                $this->assertSame(['title', 'url'], array_keys($data[$key]));
+            }
+        }
+
+        $before = $this->rowCounts();
+        [$exit, $run] = $this->runCanary(['--all' => true, '--max-requests' => 500]);
+        $this->assertSame(0, $exit, json_encode($run['findings']).' '.json_encode($run['degraded_by']));
+        $this->assertSame('clean', $run['status']);
+        $this->assertNotContains('row_ownership_unplaced', $run['degraded_by']);
+        $this->assertTrue($run['coverage']['row_ownership']['met']);
+        $this->assertSame($before, $this->rowCounts());
+    }
+
+    public static function appKeyLeaks(): array
+    {
+        $cases = [];
+        foreach (self::appCapabilities() as [$capability, $key]) {
+            foreach (['api/v1/settings', 'api/mobile/masjids/{masjid_id}'] as $uri) {
+                $cases[$key.' on '.$uri] = [$capability, $key, $uri];
+            }
+        }
+
+        return $cases;
+    }
+
+    #[Test]
+    #[DataProvider('appKeyLeaks')]
+    public function a_foreign_id_under_each_app_key_fails_loudly(string $capability, string $key, string $uri): void
+    {
+        $this->seedAppKeys($this->masjidA, $capability);
+        $this->seedAppKeys($this->masjidB, $capability);
+        if ($key === 'bottom_tabs') {
+            $foreign = MobileAppFeature::create(['key' => 'donate', 'name' => 'Donate']);
+            $this->masjidB->features()->attach($foreign->id, ['is_available' => 1]);
+            $body = ['bottom_tabs' => [['id' => $foreign->id, 'key' => 'donate', 'name' => 'Donate']]];
+            $kind = 'global_rows_not_attached_to_requested_tenant';
+        } elseif ($key === 'onboarding') {
+            $id = MemberQuestionOption::where('masjid_id', $this->masjidB->id)->value('id');
+            $body = ['onboarding' => ['questions' => [['kind' => 'field', 'options' => [['id' => $id, 'label' => 'Foreign']]]]]];
+            $kind = 'foreign_rows_for_requested_tenant';
+        } else {
+            // Volunteer has no row ids. A foreign tenant id planted inside this
+            // otherwise id-free object must still trip the independent body scan.
+            $body = ['volunteer' => ['title' => 'Volunteer', 'url' => 'https://example.invalid/volunteer',
+                'masjid_id' => $this->masjidB->id]];
+            $kind = 'foreign_tenant_in_body';
+        }
+        $this->registerAppPayloadFixture($uri, $body);
+
+        [$exit, $run] = $this->runCanary(['--all' => true, '--max-requests' => 500]);
+        $this->assertSame(1, $exit);
+        $this->assertSame('leak', $run['status']);
+        $finding = collect($run['findings'])->first(fn ($f) => $f['endpoint'] === $uri && $f['kind'] === $kind);
+        $this->assertNotNull($finding, json_encode($run['findings']));
+        $this->assertSame('critical', $finding['severity']);
+    }
+
+    #[Test]
+    public function enabled_features_never_chosen_as_tabs_cannot_borrow_another_tenants_tabs(): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        $this->seedAppKeys($this->masjidB, 'app_bottom_tabs');
+        $feature = MobileAppFeature::create(['key' => 'donate', 'name' => 'Donate']);
+        foreach ([$this->masjidA, $this->masjidB] as $masjid) {
+            $masjid->features()->attach($feature->id, ['is_available' => 1]);
+        }
+        AppBottomTab::create(['masjid_id' => $this->masjidB->id, 'feature_id' => $feature->id,
+            'position' => 4, 'saved_key' => 'donate', 'saved_title' => 'Donate']);
+        $this->registerAppPayloadFixture('api/v1/settings', ['bottom_tabs' => [['id' => $feature->id]]]);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+        $this->assertSame(1, $exit);
+        $finding = collect($run['findings'])->firstWhere('kind', 'global_rows_not_attached_to_requested_tenant');
+        $this->assertNotNull($finding, json_encode($run['findings']));
+        $this->assertSame('api/v1/settings', $finding['endpoint']);
+        $this->assertSame($this->masjidA->id, $finding['request']['tenant_id']);
+    }
+
+    public static function invalidAbsentTableRules(): array
+    {
+        return [
+            'nonexistent table' => ['member_question_options.table', 'canary_missing_table', 'canary_missing_table'],
+            'nonexistent primary key' => ['member_question_options.key', 'canary_missing_column', 'canary_missing_column'],
+            'nonexistent owner column' => ['member_question_options.tenant_key', 'canary_missing_column', 'canary_missing_column'],
+            'nonexistent pivot table' => ['bottom_tabs.pivots.1.table', 'canary_missing_table', 'canary_missing_table'],
+            'nonexistent pivot relation column' => ['bottom_tabs.pivots.1.related_key', 'canary_missing_column', 'canary_missing_column'],
+            'nonexistent pivot owner column' => ['bottom_tabs.pivots.1.tenant_key', 'canary_missing_column', 'canary_missing_column'],
+            'nonexistent pivot condition column' => ['bottom_tabs.pivots.0.where', ['canary_missing_column' => 1], 'canary_missing_column'],
+            'invalid rule shape' => ['member_question_options', 'invalid', 'named table rule'],
+            'invalid paths shape' => ['member_question_options.paths', [], 'paths'],
+            'invalid path list' => ['member_question_options.paths', ['api/v1/settings' => 'onboarding.*.id'], 'paths'],
+            'invalid path syntax' => ['member_question_options.paths', ['api/v1/settings' => ['onboarding..id']], 'response path'],
+            'invalid table identifier' => ['member_question_options.table', 'options; DROP TABLE options', 'invalid table or column'],
+            'null primary key' => ['member_question_options.key', null, 'invalid table or column'],
+            'invalid pivot list' => ['bottom_tabs.pivots', 'invalid', 'pivots'],
+            'empty pivot list' => ['bottom_tabs.pivots', [], 'nonempty list'],
+            'invalid pivot shape' => ['bottom_tabs.pivots.1', 'invalid', 'each pivot'],
+            'invalid condition shape' => ['bottom_tabs.pivots.0.where', null, 'where'],
+            'invalid condition value' => ['bottom_tabs.pivots.0.where', ['is_available' => []], 'where'],
+            'owner column is not a tenant key' => ['bottom_tabs.pivots.1.tenant_key', 'id', 'must name an organisation'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('invalidAbsentTableRules')]
+    public function invalid_table_rules_fail_before_probing_even_when_the_key_is_absent(string $field, mixed $value, string $error): void
+    {
+        config(['canary.compare_by.'.$field => $value]);
+        $sent = 0;
+        Route::get('api/v1/__canary_config_witness', function () use (&$sent) {
+            $sent++;
+            $id = request()->header('masjid-id');
+            abort_unless($id && Masjid::whereKey($id)->exists(), 403);
+
+            return response()->json(['status' => 'success', 'data' => [
+                'services' => Service::where('masjid_id', $id)->get(['id'])->toArray(),
+            ]]);
+        });
+        [$exit, $run] = $this->runCanary(['--all' => true, '--max-requests' => 500]);
+        $this->assertSame(2, $exit);
+        $this->assertSame('incomplete', $run['status']);
+        $this->assertStringContainsString('canary.compare_by.'.explode('.', $field)[0], implode(' ', $run['errors']));
+        $this->assertStringContainsString($error, implode(' ', $run['errors']));
+        $this->assertSame(0, $sent, 'configuration validation must precede every probe');
+    }
+
+    #[Test]
+    public function table_rule_validation_uses_only_bounded_schema_reads_and_retains_single_pivot_support(): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        $rule = config('canary.compare_by.bottom_tabs');
+        $rule['pivot'] = $rule['pivots'][0];
+        unset($rule['pivots']);
+        $config = config('canary');
+        $config['compare_by']['single_pivot'] = $rule;
+        config(['cache.default' => 'database']);
+        DB::table('cache')->insert(['key' => 'canary-schema-expired-witness', 'value' => 'retained', 'expiration' => 1]);
+        $before = $this->rowCounts();
+        $cache = DB::table('cache')->get()->map(fn ($row) => (array) $row)->all();
+        $validate = new \ReflectionMethod(TenancyCanary::class, 'validateTableRules');
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $validate->invoke(new TenancyCanary, $config);
+        $queries = DB::getQueryLog();
+        DB::flushQueryLog();
+        $config['compare_by']['duplicate_rule'] = $rule;
+        $validate->invoke(new TenancyCanary, $config);
+        $duplicates = DB::getQueryLog();
+        DB::disableQueryLog();
+        $this->assertNotEmpty($queries);
+        $this->assertSame(array_column($queries, 'query'), array_column($duplicates, 'query'), 'repeated tables must not add schema lookups');
+        foreach ($queries as $query) {
+            $this->assertStringStartsWith('select ', strtolower($query['query']));
+            $this->assertMatchesRegularExpression('/sqlite_master|pragma_table_xinfo/', $query['query']);
+        }
+        $this->assertSame($before, $this->rowCounts());
+        $this->assertSame($cache, DB::table('cache')->get()->map(fn ($row) => (array) $row)->all());
+        $lookup = new \ReflectionMethod(TenancyCanary::class, 'tableOwnerMap');
+        $this->assertSame([1 => [$this->masjidA->id]], $lookup->invoke(new TenancyCanary, $rule, [1], $config, [$this->masjidA->id]));
+    }
+
+    #[Test]
+    public function explicit_paths_merge_with_default_identity_instead_of_erasing_it(): void
+    {
+        $this->assertSame(['(root)' => [123]], ResponseFacts::recordIdentity(['id' => 123, 'title' => 'row'], paths: ['*.id']));
+        $this->assertSame(['(root)' => [123]], ResponseFacts::recordIdentity([['id' => 123]], paths: ['*.id', '*.id']));
+    }
+
+    #[Test]
+    public function a_shared_catalogue_id_is_allowed_only_with_each_tenants_enabled_pivot(): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        $this->seedAppKeys($this->masjidB, 'app_bottom_tabs');
+
+        [$exit, $run] = $this->runCanary(['--all' => true, '--max-requests' => 500]);
+        $this->assertSame(0, $exit, json_encode($run['findings']));
+        $this->assertTrue($run['coverage']['row_ownership']['met']);
+        $this->assertSame([], $run['findings']);
+    }
+
+    public static function unavailablePivots(): array
+    {
+        return ['disabled' => [false], 'missing' => [true]];
+    }
+
+    #[Test]
+    #[DataProvider('unavailablePivots')]
+    public function an_existing_global_row_without_an_enabled_tenant_pivot_is_a_failure(bool $missing): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        $pivot = DB::table('masjid_mobile_app_features')->where('masjid_id', $this->masjidA->id);
+        $missing ? $pivot->delete() : $pivot->update(['is_available' => 0]);
+        $this->registerAppPayloadFixture('api/v1/settings', ['bottom_tabs' => [['id' => 1]]]);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+        $this->assertSame(1, $exit);
+        $this->assertContains('global_rows_not_attached_to_requested_tenant', array_column($run['findings'], 'kind'));
+    }
+
+    #[Test]
+    public function a_known_id_cannot_hide_an_unplaced_id_in_an_explicit_rule(): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        $this->seedAppKeys($this->masjidB, 'app_bottom_tabs');
+        $this->registerAppPayloadFixture('api/v1/settings', ['bottom_tabs' => [['id' => 1], ['id' => 999999]]]);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+        $this->assertSame(3, $exit);
+        $this->assertContains('row_ownership_unplaced', $run['degraded_by']);
+        $this->assertFalse($run['coverage']['row_ownership']['met']);
+    }
+
+    #[Test]
+    public function an_explicit_table_lookup_failure_is_named_and_never_clean(): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        $this->registerAppPayloadFixture('api/v1/settings', ['bottom_tabs' => [['id' => 1]]]);
+        config(['canary.compare_by.bottom_tabs.pivots.0.table' => 'canary_missing_pivot']);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+        $this->assertSame(2, $exit);
+        $this->assertSame('incomplete', $run['status']);
+        $this->assertStringContainsString('canary.compare_by.bottom_tabs', implode(' ', $run['errors']));
+        $this->assertStringContainsString('canary_missing_pivot', implode(' ', $run['errors']));
+    }
+
+    #[Test]
+    public function the_http_transport_reads_declared_nested_and_scalar_paths_too(): void
+    {
+        MemberQuestions::seed($this->masjidB);
+        $id = MemberQuestionOption::where('masjid_id', $this->masjidB->id)->value('id');
+        $uri = 'api/v1/settings';
+        Http::fake(['*' => Http::response(['status' => 'success', 'data' => [
+            'onboarding' => ['questions' => [['options' => [['id' => (string) $id]]]]],
+        ]], 200)]);
+        $probe = new \App\Support\Canary\Probe($uri, $uri, [], [],
+            \App\Support\Canary\Probe::VARIANT_TENANT, $this->masjidA->id);
+        $transport = new \App\Support\Canary\HttpTransport(app(\Illuminate\Http\Client\Factory::class),
+            'https://example.invalid', ['masjid_id'], 10, 5, config('canary.compare_by'));
+        $this->assertSame(['onboarding.questions.*.options' => [(int) $id]], $transport->send($probe)->recordIds);
+    }
+
+    public static function memberIdentityPaths(): array
+    {
+        return array_map(static fn ($path) => [$path], [
+            'questions.*.options.*.id', 'occupation.*.id', 'help.*.id',
+            'answers.field_id', 'answers.occupation_id', 'answers.help_ids.*',
+        ]);
+    }
+
+    #[Test]
+    #[DataProvider('memberIdentityPaths')]
+    public function every_member_option_and_answer_path_enforces_ownership(string $path): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_member_questions');
+        // An organisation outside the compared pair must be detected too.
+        $other = $this->makeMasjid();
+        MemberQuestions::seed($other);
+        $foreign = MemberQuestionOption::where('masjid_id', $other->id)->firstOrFail();
+        $foreign->update(['active' => false]); // Retained answers may reference inactive options.
+        $body = [];
+        data_set($body, str_replace('*', '0', $path), $foreign->id);
+        $uri = 'api/mobile/masjids/{masjid_id}/member-questions';
+        $this->registerAppPayloadFixture($uri, $body);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1,member-questions', '--all' => true, '--max-requests' => 500]);
+        $this->assertSame(1, $exit, json_encode($run));
+        $finding = collect($run['findings'])->firstWhere('kind', 'foreign_rows_for_requested_tenant');
+        $this->assertNotNull($finding);
+        $this->assertSame('critical', $finding['severity']);
+        $this->assertArrayHasKey($other->id, $finding['evidence']['foreign_rows']);
+        $this->assertArrayHasKey(ResponseFacts::identityBucket($path), $finding['evidence']['foreign_rows'][$other->id]);
+    }
+
+    #[Test]
+    public function the_member_route_is_named_as_unplanned_because_the_canary_has_no_member_principal(): void
+    {
+        [, $run] = $this->runCanary(['--all' => true, '--max-requests' => 500]);
+        $uri = 'api/mobile/masjids/{masjid_id}/member-questions';
+        $this->assertStringContainsString('no member principal', $run['coverage']['routes_not_planned'][$uri]);
+        $this->assertNotContains($uri, array_column($run['checks'], 'endpoint'));
+        config(['canary.not_planned' => []]);
+        [, $unnamed] = $this->runCanary(['--all' => true, '--max-requests' => 500]);
+        foreach (['public_get_refused', 'credentialed_routes'] as $count) {
+            $this->assertSame($unnamed['coverage']['route_table'][$count], $run['coverage']['route_table'][$count],
+                'naming a credential gap must not count it as a public GET refusal');
+        }
+    }
+
+    #[Test]
+    public function declared_table_and_pivot_lookups_write_neither_database_nor_production_cache(): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        MemberQuestions::seed($this->masjidA);
+        config(['cache.default' => 'database']);
+        DB::table('cache')->insert(['key' => 'canary-expired-witness', 'value' => 'retained', 'expiration' => 1]);
+        $before = DB::table('cache')->get()->map(fn ($row) => (array) $row)->all();
+        $counts = $this->rowCounts();
+        $method = new \ReflectionMethod(TenancyCanary::class, 'tableOwnerMap');
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        foreach (['bottom_tabs', 'member_question_options'] as $name) {
+            $map = $method->invoke(new TenancyCanary, config('canary.compare_by.'.$name), [1], config('canary'), [$this->masjidA->id]);
+            $this->assertNotEmpty($map);
+        }
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        $this->assertCount(2, $queries);
+        foreach ($queries as $query) {
+            $this->assertStringStartsWith('select ', strtolower($query['query']));
+            $this->assertStringNotContainsString('cache', $query['query']);
+        }
+        $this->assertSame($before, DB::table('cache')->get()->map(fn ($row) => (array) $row)->all());
+        $this->assertSame($counts, $this->rowCounts());
+    }
+
+    private function seedAppKeys(Masjid $masjid, string $capability): void
+    {
+        $masjid->forceFill(['capability_overrides' => [$capability => true,
+            'app_volunteer_entry' => $capability === 'app_bottom_tabs' || $capability === 'app_volunteer_entry']])->save();
+        AppVolunteerSetting::create(['masjid_id' => $masjid->id, 'title' => 'Volunteer', 'url' => 'https://example.invalid/volunteer']);
+        MemberQuestions::seed($masjid);
+        $feature = MobileAppFeature::firstOrCreate(['key' => 'announcements'], ['name' => 'Announcements']);
+        $masjid->features()->attach($feature->id, ['is_available' => 1]);
+        foreach (['announcements', 'volunteer', 'menu'] as $position => $key) {
+            AppBottomTab::create(['masjid_id' => $masjid->id, 'feature_id' => $key === 'announcements' ? $feature->id : null,
+                'position' => $position + 1, 'saved_key' => $key, 'saved_title' => ucfirst($key)]);
+        }
+    }
+
+    #[Test]
+    public function every_documented_mobile_response_id_path_has_a_source_level_canary_rule(): void
+    {
+        $doc = file_get_contents(base_path('docs/app-1-0-1-payload.md'));
+        $source = file_get_contents(config_path('canary.php'));
+        preg_match('/^\| `GET \/api\/mobile\/masjids\/\{id\}`[^\n]+\|([^|]+)\|$/m', $doc, $carrier);
+        $this->assertNotEmpty($carrier, 'the documented carrier key inventory was removed');
+        preg_match_all('/`([a-z_]+)`/', $carrier[1], $keys);
+        foreach ($keys[1] as $key) {
+            $this->assertStringContainsString($key, $source, 'documented carrier key '.$key.' needs a rule or an id-free explanation');
+        }
+        // Derive identities from the contract's JSON, including null single
+        // choices and empty plural choices. No hand-maintained list of keys.
+        $sections = [
+            'Carriers and defaults' => ['api/mobile/masjids/{masjid_id}', 'api/v1/settings'],
+            'Member questions' => ['api/mobile/masjids/{masjid_id}/member-questions'],
+            'Program interests (unchanged)' => ['api/mobile/masjids/{masjid_id}/interests'],
+        ];
+        $checked = 0;
+        foreach ($sections as $heading => $uris) {
+            $section = explode("\n## ", explode('## '.$heading."\n", $doc, 2)[1], 2)[0];
+            preg_match_all('/```json\s*([\s\S]*?)```/', $section, $examples);
+            $paths = [];
+            foreach ($examples[1] as $json) {
+                $body = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+                // Flat PUT request examples are not response identities.
+                if ($heading !== 'Carriers and defaults' && ! isset($body['status'])) {
+                    continue;
+                }
+                $this->documentedIdentityPaths($body['data'] ?? $body, '', $paths);
+            }
+            $this->assertNotEmpty($paths, $heading.': the contract must include literal response id examples');
+            foreach ($uris as $uri) {
+                $declared = ResponseFacts::identityPaths($uri, config('canary.compare_by'));
+                foreach (array_unique($paths) as $path) {
+                    $this->assertContains($path, $declared, $uri.': documented id path '.$path.' needs a compare_by rule');
+                    $this->assertStringContainsString("'".$path."'", $source);
+                    $checked++;
+                }
+            }
+        }
+        $this->assertGreaterThan(0, $checked);
+    }
+
+    private function documentedIdentityPaths(array $node, string $prefix, array &$paths): void
+    {
+        if (array_is_list($node)) {
+            foreach ($node as $item) {
+                if (is_array($item)) {
+                    $this->documentedIdentityPaths($item, $prefix === '' ? '*' : $prefix.'.*', $paths);
+                }
+            }
+
+            return;
+        }
+        foreach ($node as $key => $value) {
+            $path = $prefix === '' ? $key : $prefix.'.'.$key;
+            if ($key === 'id' || str_ends_with($key, '_id') || str_ends_with($key, '_ids')) {
+                $paths[] = $path.(str_ends_with($key, '_ids') ? '.*' : '');
+            } elseif (is_array($value)) {
+                $this->documentedIdentityPaths($value, $path, $paths);
+            }
+        }
+    }
+
+    /** Replace a response, never a rule; fixtures contain no foreign masjid_id except the volunteer body test. */
+    private function registerAppPayloadFixture(string $uri, array $body): void
+    {
+        // A member GET normally has a PUT twin, and dispatch correctly refuses
+        // that URI even after replacing its GET. This public response fixture
+        // removes only its write twin; production discovery remains unchanged.
+        $routes = new \Illuminate\Routing\RouteCollection;
+        foreach (Route::getRoutes() as $route) {
+            if ($route->uri() !== $uri || array_intersect(['POST', 'PUT', 'PATCH', 'DELETE'], $route->methods()) === []) {
+                $routes->add($route);
+            }
+        }
+        Route::setRoutes($routes);
+        Route::get($uri, function () use ($uri, $body) {
+            $id = str_starts_with($uri, 'api/v1/') ? request()->header('masjid-id') : request()->route('masjid_id');
+            abort_unless($id && Masjid::whereKey($id)->exists(), 403);
+
+            // Keep the normal tenant-owned sibling distinct: a byte-identical
+            // catalogue-only body would independently trip the fingerprint
+            // detector and mask the ownership result this fixture exercises.
+            return response()->json(['status' => 'success', 'data' => $body + [
+                'services' => Service::where('masjid_id', $id)->get(['id'])->toArray(),
+            ]]);
+        });
+    }
 
     #[Test]
     public function a_full_run_writes_nothing(): void
