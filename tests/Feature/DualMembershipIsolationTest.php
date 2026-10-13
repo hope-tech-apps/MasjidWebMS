@@ -303,8 +303,11 @@ class DualMembershipIsolationTest extends TestCase
      * Phase 1 create-or-attach door: it refuses every login that is not a
      * Teacher and is gated on the same flag, asserted in
      * tests/Feature/TeacherAttachTest.php. (`MasjidsController` writes the
-     * OWNER's row and is not an attach door.) Everything else must still be
-     * unable to reach an existing login.
+     * OWNER's row and is not an attach door.) `LunchStaffController` is the
+     * third, since one login may hold a role at each organisation: behind the
+     * roles switch and the same flag it gives a live Teacher's login lunch
+     * access, asserted in tests/Feature/OneLoginTwoRolesDoorsTest.php.
+     * Everything else must still be unable to reach an existing login.
      *
      * The recogniser for "writes a membership" is itself pinned below, against
      * the spellings the codebase could use (`firstOrCreate`, `updateOrCreate`,
@@ -348,6 +351,34 @@ class DualMembershipIsolationTest extends TestCase
 
                 $this->assertStringContainsString("tenancy.multi_membership", $source, "{$door} attaches an existing login and must consult the gate.");
                 $this->assertStringContainsString("\$existing->type !== 'Teacher'", $source, "{$door} attaches an existing login and must refuse every type but Teacher.");
+                // One login, a role at each organisation: the ONE other type it may
+                // attach is a live lunch-staff login, and only behind the roles
+                // switch (read in App\Support\StaffArea::open() and nowhere else).
+                // Behaviour: OneLoginTwoRolesDoorsTest.
+                $this->assertStringContainsString('StaffArea::open()', $source, "{$door} attaches a lunch-staff login and must consult the roles switch.");
+
+                continue;
+            }
+
+            if (str_contains($door, 'AdminDashboard/LunchStaffController')) {
+                // The THIRD deliberate door, named on purpose. With the roles switch
+                // on it gives a live TEACHER'S login lunch access at this
+                // organisation. It would pass the sweep below without being named,
+                // by accident: its request still spells `Rule::unique('users',
+                // 'email')` (narrowed, while the switch is on, to look past a live
+                // teacher), which is all enforcesAUniqueEmail() looks for. That
+                // silence is what this test exists to prevent, so the door stands
+                // here with the two gates it must consult: the roles switch, and the
+                // same membership gate as the two doors above. Its refusals of every
+                // other login, and of every login while the switch is off, are
+                // pinned by behaviour in OneLoginTwoRolesDoorsTest and
+                // LunchStaffRealmTest.
+                $source = file_get_contents(base_path($door));
+
+                $this->assertStringContainsString('StaffArea::open()', $source, "{$door} attaches an existing teacher's login and must consult the roles switch.");
+                $this->assertStringContainsString('tenancy.multi_membership', $source, "{$door} attaches an existing login and must consult the gate.");
+                $this->assertStringContainsString("\$existing->type !== 'Teacher'", $source, "{$door} attaches an existing login and must refuse every type but Teacher.");
+                $this->assertTrue($this->enforcesAUniqueEmail($door), "{$door} must still validate the email as unique for every login it does not attach.");
 
                 continue;
             }

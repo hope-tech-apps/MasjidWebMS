@@ -36,7 +36,8 @@ final class TimetableReenable
             $bad = ! $g || $g->deleted_at !== null || ! $g->is_active || $g->kind !== 'class'
                 || ! $y || ! in_array((int) $m->weekday, $weekdays, true) || ! $p || $p->period_set_id != $set
                 || ($m->kind === 'subject' && (! SchoolSettings::classSubjects($intended) || ! $s || $s->hidden_at !== null || $p?->kind !== 'teaching'))
-                || ($teachers[$m->id] ?? collect())->contains(fn ($t) => $t->type !== 'Teacher' || $t->deleted_at !== null || $t->role !== 'teacher');
+                // A teacher here is a live login of either scoped kind whose row at this school is a teacher's.
+                || ($teachers[$m->id] ?? collect())->contains(fn ($t) => ! in_array($t->type, OrganisationAccess::SCOPED_TYPES, true) || $t->deleted_at !== null || $t->role !== 'teacher');
             if ($bad) $end[] = $m->id;
         }
         TimetableMeeting::where('masjid_id', $locked->id)->whereIn('id', $end)->update(['effective_until'=>$until]);

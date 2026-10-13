@@ -57,7 +57,9 @@ class SchoolTimetableController extends Controller
         $staff=GroupStaff::whereIn('group_id',Group::where('kind','class')->select('id'))->get()->groupBy('group_id');
         $subjects=ClassSubject::orderBy('position')->get()->groupBy('group_id');
         $usual=TimetableClassRoom::get()->keyBy('group_id');
-        $teachers=User::where('type','Teacher')->whereIn('id',MasjidUser::where('masjid_id',$masjid_id)->where('role','teacher')->select('user_id'))->orderBy('name')->get(['id','name']);
+        // A teacher HERE is a login of either scoped kind whose row at this school is a teacher's: one
+        // login can run lunch at a masjid and teach here (MasjidUser::kindFor). The role is what narrows it.
+        $teachers=User::whereIn('type',\App\Support\OrganisationAccess::SCOPED_TYPES)->whereIn('id',MasjidUser::where('masjid_id',$masjid_id)->where('role','teacher')->select('user_id'))->orderBy('name')->get(['id','name']);
         $valid=$teachers->pluck('id')->all();
         $classes=Group::where('kind','class')->where('is_active',true)->orderBy('name')->get(['id','name'])->map(function ($g) use ($staff,$subjects,$usual,$valid) {
             $gs=($staff[$g->id]??collect())->filter(fn($s)=>in_array($s->user_id,$valid,true));
@@ -253,7 +255,7 @@ class SchoolTimetableController extends Controller
             if($sub!==null || $activity!=='') $this->refuse('kind','A whole-class meeting cannot also name a subject or activity.');
         } elseif($activity==='' || $sub!==null) $this->refuse('activity_name','Name one activity, without a subject.');
         if($data['teacher_ids']!==[]) {
-            $valid=User::where('type','Teacher')->whereIn('id',MasjidUser::where('masjid_id',$org->id)->where('role','teacher')->select('user_id'))->whereIn('id',$data['teacher_ids'])->pluck('id')->all();
+            $valid=User::whereIn('type',\App\Support\OrganisationAccess::SCOPED_TYPES)->whereIn('id',MasjidUser::where('masjid_id',$org->id)->where('role','teacher')->select('user_id'))->whereIn('id',$data['teacher_ids'])->pluck('id')->all();
             if(count($valid)!==count($data['teacher_ids'])) abort(404);
         }
         if($data['kind']!=='activity' && $data['teacher_ids']===[]) $this->refuse('teacher_ids','Choose at least one teacher for this meeting.');

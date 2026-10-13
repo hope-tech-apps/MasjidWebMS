@@ -65,7 +65,10 @@ class ScheduledSendGate
             }
 
             // A teacher who is no longer on the class has no other standing in it.
-            if ($user->type === 'Teacher') {
+            // That is a login of either scoped kind: a lunch-staff login can only
+            // have written to a class as a teacher of it (the role an office gave
+            // it at the school), and it holds no permission that could stand in.
+            if (in_array($user->type, \App\Support\OrganisationAccess::SCOPED_TYPES, true)) {
                 return 'The author no longer teaches this class.';
             }
 

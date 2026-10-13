@@ -11,6 +11,7 @@ use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\Auth\AccountAccessService;
 use App\Support\MembershipSeen;
+use App\Support\OrganisationAccess;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -33,6 +34,13 @@ use Symfony\Component\HttpFoundation\Response;
  *   teacher       users.type Teacher + group_staff: their own classes only.
  *                 LISTED here, but created, edited and removed on the Teachers
  *                 screen, because a teacher is defined by the classes they lead.
+ *
+ * WHICH of the last two a person is HERE is what their row here says, not
+ * `users.type` alone (MasjidUser::kindFor, kindHere() below): one login can run
+ * Friday lunch at one organisation and teach at another. A lunch login that a
+ * school made a teacher is a teacher on that school's screen, with every guard
+ * a teacher has; a teacher given lunch access at a masjid is lunch-only there.
+ * An administrator is always an administrator.
  *
  * Deliberately OUTSIDE the `crm` group: running an organisation's team is not a
  * CRM feature. The administrators endpoints sit inside `crm`, so an
@@ -79,7 +87,11 @@ class TeamController extends Controller
     {
         $masjid = $this->boundMasjid();
 
-        $ids = MasjidUser::where('masjid_id', $masjid->id)->pluck('user_id')
+        // With the role: it is what says whether a teacher's or lunch-staff login is
+        // a teacher or lunch staff HERE.
+        $rows = MasjidUser::where('masjid_id', $masjid->id)->get(['user_id', 'role'])->keyBy('user_id');
+
+        $ids = $rows->keys()
             ->push($masjid->user_id)
             ->filter()
             ->unique();
@@ -90,7 +102,7 @@ class TeamController extends Controller
         $people = User::whereIn('id', $ids)
             ->whereIn('type', self::STAFF_TYPES)
             ->get()
-            ->map(fn (User $u) => $this->serialize($u, $masjid, $request->user(), $seen))
+            ->map(fn (User $u) => $this->serialize($u, $masjid, $request->user(), $seen, self::kindOf($u, $rows->get($u->id))))
             ->sort(fn (array $a, array $b) => [! $a['is_owner'], self::ORDER[$a['access']], mb_strtolower($a['name'])]
                 <=> [! $b['is_owner'], self::ORDER[$b['access']], mb_strtolower($b['name'])])
             ->values();
@@ -164,7 +176,7 @@ class TeamController extends Controller
             'message' => $sent
                 ? 'Added. ' . $user->email . ' has been emailed a link to set their own password.'
                 : 'Added, but no invitation could be sent — check the address.',
-            'data' => $this->serialize($user->fresh(), $masjid, $request->user()),
+            'data' => $this->serialize($user->fresh(), $masjid, $request->user(), null, self::TYPE_FOR_ACCESS[$level]),
         ], Response::HTTP_CREATED);
     }
 
@@ -195,7 +207,10 @@ class TeamController extends Controller
             return $this->refuse('You cannot change your own access. Ask another administrator.', Response::HTTP_CONFLICT);
         }
 
-        if ($user->type === 'Teacher') {
+        // What they are HERE: a lunch login a school made a teacher is a teacher of
+        // this school, and re-typing it would delete nothing but end every session
+        // it has and leave a teacher's row behind an administrator's login.
+        if ($this->kindHere($masjid, $user) === 'Teacher') {
             return $this->refuse('Teachers are managed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
@@ -234,7 +249,7 @@ class TeamController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => $user->name . ' is now ' . $label . '. They have been signed out and will sign in again with their new access.',
-            'data' => $this->serialize($user->fresh(), $masjid, $request->user()),
+            'data' => $this->serialize($user->fresh(), $masjid, $request->user(), null, self::TYPE_FOR_ACCESS[$level]),
         ], Response::HTTP_OK);
     }
 
@@ -251,8 +266,18 @@ class TeamController extends Controller
         // reset), which would sign them out of every other school; merely minting
         // it deletes a Forgot-password link they were waiting on. The Teachers
         // screen's resend has the shared-login guard; this one simply refuses.
-        if ($user->type === 'Teacher') {
+        $kindHere = $this->kindHere($masjid, $user);
+
+        if ($kindHere === 'Teacher') {
             return $this->refuse('Teachers are managed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // The same harm, for the person who runs lunch here and teaches somewhere
+        // else with the same login: they have a password, and a set-password link
+        // would end their sessions at the school. (An administrator of several
+        // organisations is answered as before.)
+        if ($kindHere === User::TYPE_LUNCH_STAFF && $user->belongsOutside((int) $masjid->id)) {
+            return $this->refuse('They already have a Manara login. They can use "Forgot password" on the sign-in page.', Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
         $sent = $access->invite($user, $masjid->name);
@@ -291,12 +316,28 @@ class TeamController extends Controller
             return $this->refuse('You cannot remove your own access. Ask another administrator.', Response::HTTP_CONFLICT);
         }
 
-        if ($user->type === 'Teacher') {
+        $kindHere = $this->kindHere($masjid, $user);
+
+        if ($kindHere === 'Teacher') {
             return $this->refuse('Teachers are removed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        DB::transaction(function () use ($user, $masjid) {
-            $user->tokens()->delete();
+        DB::transaction(function () use ($user, $masjid, $kindHere) {
+            // A person who runs lunch here and still belongs to another LIVE
+            // organisation (a school they teach at) keeps their sessions: a token
+            // names no organisation, so deleting it would sign them out of the
+            // school because a masjid took their lunch access away. Lunch ends for
+            // them on their next request all the same: the resolver binds only
+            // through a row, and this one is about to be gone. Everybody else,
+            // every administrator included, is signed out as before.
+            $keepsSessions = $kindHere === User::TYPE_LUNCH_STAFF && $user->belongsOutside((int) $masjid->id);
+
+            if (! $keepsSessions) {
+                $user->tokens()->delete();
+            }
+
+            $wasDefault = $keepsSessions
+                && (bool) MasjidUser::where('masjid_id', $masjid->id)->where('user_id', $user->id)->value('is_default');
 
             MasjidUser::where('masjid_id', $masjid->id)->where('user_id', $user->id)->delete();
 
@@ -305,6 +346,14 @@ class TeamController extends Controller
 
             if (! $stillBelongs) {
                 $user->delete();
+            } elseif ($wasDefault) {
+                // They must keep a default (the sign-in header and the pickers
+                // read it): the lowest live organisation, as the Teachers door.
+                MasjidUser::where('user_id', $user->id)
+                    ->whereHas('masjid')
+                    ->orderBy('masjid_id')
+                    ->first()
+                    ?->update(['is_default' => true]);
             }
         });
 
@@ -332,6 +381,27 @@ class TeamController extends Controller
         abort_unless($belongs, Response::HTTP_NOT_FOUND);
 
         return User::where('id', $userId)->whereIn('type', self::STAFF_TYPES)->firstOrFail();
+    }
+
+    /**
+     * What this login is AT THIS ORGANISATION: the kind its row here gives it.
+     *
+     * An administrator costs no read (their rows are never re-read). For a
+     * teacher's or lunch-staff login the row here decides, because the same login
+     * can be the other of the two somewhere else.
+     */
+    private function kindHere(Masjid $masjid, User $user): ?string
+    {
+        if (! in_array($user->type, OrganisationAccess::SCOPED_TYPES, true)) {
+            return $user->type;
+        }
+
+        return self::kindOf($user, MasjidUser::where('masjid_id', $masjid->id)->where('user_id', $user->id)->first());
+    }
+
+    private static function kindOf(User $user, ?MasjidUser $row): ?string
+    {
+        return $row === null ? $user->type : $row->kindFor($user->type);
     }
 
     /** @return string[] access levels this organisation can add right now */
@@ -385,10 +455,15 @@ class TeamController extends Controller
     /**
      * @param  \Illuminate\Support\Collection<int, \Illuminate\Support\Carbon|null>|null  $seen
      *         user_id => last opened THIS organisation; read for the one person when omitted
+     * @param  string|null  $kindHere  what the person is at this organisation, when the
+     *         caller already knows it; read from their row here when omitted
      */
-    private function serialize(User $user, Masjid $masjid, ?User $viewer, ?\Illuminate\Support\Collection $seen = null): array
+    private function serialize(User $user, Masjid $masjid, ?User $viewer, ?\Illuminate\Support\Collection $seen = null, ?string $kindHere = null): array
     {
-        $access = match ($user->type) {
+        // From what they are HERE, not from users.type: a lunch login a school made
+        // a teacher is listed as a teacher there (and is not removable from this
+        // screen), and a teacher given lunch access here is lunch-only here.
+        $access = match ($kindHere ?? $this->kindHere($masjid, $user)) {
             'MasjidAdmin' => self::ACCESS_ADMIN,
             User::TYPE_LUNCH_STAFF => self::ACCESS_LUNCH,
             default => self::ACCESS_TEACHER,

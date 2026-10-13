@@ -30,10 +30,17 @@
                 </ul>
               @endif
 
-              <p style="margin:0 0 24px;font-size:15px;line-height:1.6;">
-                Sign in as usual. If you belong to more than one school, choose
-                {{ $orgName }} from the school menu at the top of the page.
-              </p>
+              @if($otherRole)
+                <p style="margin:0 0 24px;font-size:15px;line-height:1.6;">
+                  Sign in as usual. Use the switch at the top of the page to move between
+                  the places you work.
+                </p>
+              @else
+                <p style="margin:0 0 24px;font-size:15px;line-height:1.6;">
+                  Sign in as usual. If you belong to more than one school, choose
+                  {{ $orgName }} from the school menu at the top of the page.
+                </p>
+              @endif
 
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
                 <tr>

@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\Auth\AccountAccessService;
 use App\Support\ContactIdentity;
 use App\Support\MembershipSeen;
+use App\Support\StaffArea;
 use App\Support\TenantContext;
 use Illuminate\Database\DeadlockException;
 use Illuminate\Database\QueryException;
@@ -54,8 +55,30 @@ use Symfony\Component\HttpFoundation\Response;
  *                           means a SuperAdmin trashed them on purpose); then they
  *                           are treated as new: password rotated, tokens dropped,
  *                           name and phone overwritten, set-password invite
- *   any other type          422. A MasjidAdmin, LunchStaff or SuperAdmin is never
- *                           attached, and never restored.
+ *   live LunchStaff         422, as any other type, UNLESS one login may hold a role
+ *                           at each organisation (App\Support\StaffArea::open()).
+ *                           Then it is attached exactly as a live Teacher elsewhere
+ *                           is: a `teacher` row at this school and the classes,
+ *                           `users` not written (its type stays LunchStaff: the ROW
+ *                           is what makes it a teacher here, MasjidUser::kindFor),
+ *                           the "added" notice, and the same gate. A lunch login
+ *                           that already has lunch access AT THIS organisation is
+ *                           refused: one role per organisation.
+ *   any other type          422. A MasjidAdmin or SuperAdmin is never attached, and
+ *                           no other type is ever restored. An administrator has
+ *                           one global set of permissions, and would carry them
+ *                           into the classes.
+ *
+ * WHERE THAT EXCEPTION LIVES. The methods without a suffix are the ones the school
+ * runs while class subjects are off, and their bodies are kept verbatim from before
+ * that feature (ClassSubjectsOffSourceContractTest hashes them). So the exception is
+ * written once, in createOrAttachWithClassSubjects(), and createOrAttach() sends
+ * every request there while the roles switch is on, whether or not the school has
+ * class subjects. That branch differs from the verbatim one only by taking the
+ * school's row lock first; the membership and the classes are still written by
+ * whichever grantMembershipAndClasses the school's own setting selects. With the
+ * roles switch off, a school without class subjects runs the verbatim code, which
+ * refuses a lunch login as it always did.
  *
  * Every success answers with the SAME message and the SAME data shape, built from
  * what the inviter typed, so the reply itself cannot tell the inviter whether the
@@ -349,7 +372,7 @@ class TeachersController extends Controller
      */
     private function createOrAttach(TeacherInviteRequest $request, int $masjidId, $classes): array
     {
-        if ($this->subjectsOn()) {
+        if ($this->subjectsOn() || StaffArea::open()) {
             return $this->createOrAttachWithClassSubjects($request, $masjidId, $classes);
         }
 
@@ -533,8 +556,16 @@ class TeachersController extends Controller
 
             // Never attach, restore or touch any other kind of login — trashed or
             // live. A SuperAdmin is the case that matters most.
+            //
+            // ONE exception, and only while the roles switch is on: a LIVE
+            // lunch-staff login. One person runs Friday lunch at one organisation
+            // and teaches here with the login they already have. It then takes the
+            // very path a live Teacher from another school takes below (already
+            // here? the gate; attach), and nothing about `users` is written.
             if ($existing->type !== 'Teacher') {
-                return ['refusal' => self::CANNOT_ADD];
+                if (! $this->lunchLoginMayTeach($existing)) {
+                    return ['refusal' => self::CANNOT_ADD];
+                }
             }
 
             if ($existing->trashed()) {
@@ -562,13 +593,14 @@ class TeachersController extends Controller
                 return ['user' => $existing, 'mail' => 'invite'];
             }
 
-            // A live Teacher. Already here? (group_staff is tenant-scoped, so any
-            // staff row means "in this school", as resolveTeacher() reads it.)
+            // A live Teacher (or the lunch login above). Already here? (group_staff
+            // is tenant-scoped, so any staff row means "in this school", as
+            // resolveTeacher() reads it.)
             $alreadyHere = MasjidUser::where('masjid_id', $masjidId)->where('user_id', $existing->id)->exists()
                 || GroupStaff::query()->where('user_id', $existing->id)->exists();
 
             if ($alreadyHere) {
-                return ['refusal' => $email.' is already a teacher at this school. Use Edit to change their classes.'];
+                return ['refusal' => $this->alreadyHere($existing, $masjidId, $email)];
             }
 
             // The switch for NEW cross-organisation grants, same meaning as
@@ -585,6 +617,36 @@ class TeachersController extends Controller
 
             return ['user' => $existing, 'mail' => 'added'];
         });
+    }
+
+    /**
+     * Whether an existing login that is NOT a Teacher may still be made one here:
+     * a live lunch-staff login, while one login may hold a role at each
+     * organisation. Every other kind, a retired lunch login, and every login while
+     * the switch is off keeps the refusal it always had.
+     */
+    private function lunchLoginMayTeach(User $existing): bool
+    {
+        return StaffArea::open()
+            && $existing->type === User::TYPE_LUNCH_STAFF
+            && ! $existing->trashed();
+    }
+
+    /**
+     * Why somebody who is already at this organisation is not added again.
+     *
+     * Read only on the refusal: the row's role says whether they are a teacher here
+     * (Edit is the door for their classes) or run Friday lunch here, and one login
+     * holds one role at an organisation (`masjid_user` has one row per person per
+     * organisation).
+     */
+    private function alreadyHere(User $existing, int $masjidId, string $email): string
+    {
+        $row = MasjidUser::where('masjid_id', $masjidId)->where('user_id', $existing->id)->first();
+
+        return $row?->kindFor($existing->type) === User::TYPE_LUNCH_STAFF
+            ? $email.' already has Friday lunch access here. One login can hold one role at an organisation.'
+            : $email.' is already a teacher at this school. Use Edit to change their classes.';
     }
 
     /**
@@ -631,7 +693,9 @@ class TeachersController extends Controller
         MasjidUser::create([
             'masjid_id' => $masjidId,
             'user_id' => $user->id,
-            // Advisory (mirrors the bridged role); authorization runs on users.type.
+            // What this login IS at this school (MasjidUser::kindFor). For a login
+            // created as a Teacher it only repeats users.type; for a lunch-staff
+            // login it is the whole of what makes it a teacher here.
             'role' => 'teacher',
             'is_default' => ! MasjidUser::where('user_id', $user->id)->where('is_default', true)->exists(),
         ]);
@@ -663,6 +727,12 @@ class TeachersController extends Controller
                 'teacher',
                 $classes->pluck('name')->values()->all(),
                 $org?->email ?: null,
+                // A person who now holds roles of two kinds is told about the
+                // switch between the places they work; a teacher of two schools
+                // keeps the sentence about the school menu, word for word. Asked
+                // only while the switch is on, so the attach it has always done
+                // runs the statements it ran.
+                StaffArea::open() && StaffArea::isMixed($user),
             ));
         } catch (\Throwable $e) {
             report($e);
@@ -1139,15 +1209,37 @@ class TeachersController extends Controller
     // ------------------------------------------------------------- helpers
 
     /**
-     * A Teacher who belongs to the BOUND school, or a 404. This is what stops a
-     * MasjidAdmin editing a teacher of another school, or a non-teacher user.
+     * A teacher OF THE BOUND SCHOOL, or a 404. This is what stops a MasjidAdmin
+     * editing a teacher of another school, or a non-teacher user.
+     *
+     * THE FIRST TWO STATEMENTS ARE PINNED, literally and in order, by two fixtures
+     * (ClassSubjectsOffSqlTest "teacher update", TimetableGlobalAccountOffTest), so
+     * a login created as a Teacher is resolved exactly as it always was. What "one
+     * login, a role at each organisation" adds sits around them:
+     *
+     *  - A login created as LUNCH STAFF that an office made a teacher here. The
+     *    first statement cannot find it (its type is not Teacher), so it is looked
+     *    for only on what used to be the 404: lunchLoginTeachingHere(). Driven by
+     *    the row, not by the switch, so a school can still edit and remove such a
+     *    teacher after the switch has been turned off.
+     *
+     *  - The mirror: a login created as a Teacher whose row HERE is a lunch row. It
+     *    runs Friday lunch at this organisation and is no teacher of it, but the
+     *    `exists` below cannot see a role. While the switch is on, one more read
+     *    says so and it is a 404, for every action on this screen. It is behind the
+     *    switch because, off, that read would move the pinned statements of every
+     *    ordinary teacher's edit and removal. So with the switch off and such a row
+     *    still present (which takes the switch having been on), this organisation's
+     *    own office can address its lunch person on this screen by typing the id.
+     *    That opens no area: the teacher area reads the row (TenantResolver), and
+     *    the row is a lunch row.
      */
     private function resolveTeacher($userId): User
     {
         $user = User::where('id', $userId)->where('type', 'Teacher')->first();
 
         if ($user === null) {
-            abort(Response::HTTP_NOT_FOUND);
+            return $this->lunchLoginTeachingHere($userId);
         }
 
         $inSchool = MasjidUser::where('masjid_id', (int) $this->tenant->get())
@@ -1157,6 +1249,31 @@ class TeachersController extends Controller
             || GroupStaff::query()->where('user_id', $user->id)->exists();
 
         if (! $inSchool) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        if (StaffArea::open()) {
+            $row = MasjidUser::where('masjid_id', (int) $this->tenant->get())->where('user_id', $user->id)->first();
+
+            abort_if($row?->kindFor($user->type) === User::TYPE_LUNCH_STAFF, Response::HTTP_NOT_FOUND);
+        }
+
+        return $user;
+    }
+
+    /**
+     * The lunch-staff login with this id that holds the TEACHER role at the bound
+     * school, or a 404 (which is what every other id that is not a Teacher's got).
+     */
+    private function lunchLoginTeachingHere($userId): User
+    {
+        $user = User::where('id', $userId)->where('type', User::TYPE_LUNCH_STAFF)->first();
+
+        $row = $user === null
+            ? null
+            : MasjidUser::where('masjid_id', (int) $this->tenant->get())->where('user_id', $user->id)->first();
+
+        if ($row?->kindFor(User::TYPE_LUNCH_STAFF) !== 'Teacher') {
             abort(Response::HTTP_NOT_FOUND);
         }
 

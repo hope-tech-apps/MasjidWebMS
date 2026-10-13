@@ -19,7 +19,7 @@ use Illuminate\Queue\SerializesModels;
  * absence is the safety property: nothing in this mail can change their login.
  *
  * One template for every role so the wording cannot drift between the doors
- * (teacher now, lunch staff and administrators later).
+ * (teachers, and lunch staff since one login may hold a role at each organisation).
  */
 class StaffAddedToOrganisation extends Mailable
 {
@@ -31,6 +31,12 @@ class StaffAddedToOrganisation extends Mailable
     /**
      * @param  list<string>  $classNames  the classes assigned (teacher only), by name
      * @param  string|null  $contactEmail  who at the organisation to ask, when it has one
+     * @param  bool  $otherRole  the person now holds roles of two kinds (a teacher at one
+     *                           organisation, lunch staff at another). They move between
+     *                           the two with the switch at the top of the page, not with the
+     *                           school menu, so the one sentence about finding this
+     *                           organisation differs. False for the teacher of two schools
+     *                           this mail was written for, whose wording is unchanged.
      */
     public function __construct(
         public User $user,
@@ -38,6 +44,7 @@ class StaffAddedToOrganisation extends Mailable
         public string $roleLabel = 'teacher',
         public array $classNames = [],
         public ?string $contactEmail = null,
+        public bool $otherRole = false,
     ) {
         $this->signInUrl = rtrim((string) config('app.url'), '/').'/auth/sign-in';
     }

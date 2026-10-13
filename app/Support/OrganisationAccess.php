@@ -13,11 +13,15 @@ use Illuminate\Support\Collection;
  * (the SuperAdmin's Users & Access list and user details). The organisation's
  * own Team & Access screen (TeamController) is the per-organisation side.
  *
- * Access comes from users.type — the realm boundary — never from the
- * advisory masjid_user.role:
+ * Access is what the login IS at each organisation:
  *   MasjidAdmin -> admin         (everything the organisation has)
  *   LunchStaff  -> jummah_lunch  (the Friday lunch board only)
  *   Teacher     -> teacher       (their own classes)
+ *
+ * For an administrator that is users.type, everywhere. For a teacher's or
+ * lunch-staff login it is what the row at THAT organisation says
+ * (MasjidUser::kindFor): one login can run lunch at a masjid and teach at a
+ * school, and this list shows it as each of those where it is each.
  */
 final class OrganisationAccess
 {
@@ -49,7 +53,7 @@ final class OrganisationAccess
         // (TenantResolver skips them), but a membership there still blocks an
         // access change (TeamController::update), so the list must show them.
         $owned = Masjid::withoutGlobalScopes()->whereIn('user_id', $ids)->get();
-        $memberships = MasjidUser::whereIn('user_id', $ids)->get(['masjid_id', 'user_id']);
+        $memberships = MasjidUser::whereIn('user_id', $ids)->get(['masjid_id', 'user_id', 'role']);
 
         $masjids = Masjid::withoutGlobalScopes()
             ->whereIn('id', $memberships->pluck('masjid_id')->merge($owned->pluck('id'))->unique()->all())
@@ -58,7 +62,7 @@ final class OrganisationAccess
 
         $out = [];
 
-        $add = function (int $userId, int $masjidId, bool $isOwner) use (&$out, $masjids, $types, $withCapabilities) {
+        $add = function (int $userId, int $masjidId, bool $isOwner, ?MasjidUser $membership = null) use (&$out, $masjids, $types, $withCapabilities) {
             $masjid = $masjids->get($masjidId);
 
             if (! $masjid) {
@@ -68,7 +72,7 @@ final class OrganisationAccess
             $row = $out[$userId][$masjidId] ?? [
                 'masjid_id' => (int) $masjidId,
                 'name' => $masjid->name,
-                'access' => self::ACCESS_FOR_TYPE[$types[$userId] ?? ''] ?? null,
+                'access' => self::ACCESS_FOR_TYPE[($membership?->kindFor($types[$userId] ?? null) ?? $types[$userId] ?? '')] ?? null,
                 'is_owner' => false,
                 'archived' => $masjid->trashed(),
             ];
@@ -95,7 +99,7 @@ final class OrganisationAccess
         }
 
         foreach ($memberships as $membership) {
-            $add((int) $membership->user_id, (int) $membership->masjid_id, false);
+            $add((int) $membership->user_id, (int) $membership->masjid_id, false, $membership);
         }
 
         return array_map('array_values', $out);

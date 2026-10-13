@@ -118,6 +118,8 @@ class AttendanceRegister
     public static function marker(?string $name, ?string $type): string
     {
         if ($name === null) return 'Former staff member';
-        return $type === 'Teacher' ? $name : 'Office: '.$name;
+        // A mark by a teacher is their name; "Office:" is for an administrator's. A lunch-staff login can
+        // only have marked a register as a teacher (the role an office gave it at a school), never as the office.
+        return in_array($type, \App\Support\OrganisationAccess::SCOPED_TYPES, true) ? $name : 'Office: '.$name;
     }
 }

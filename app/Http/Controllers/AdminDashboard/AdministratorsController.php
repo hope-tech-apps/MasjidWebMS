@@ -194,7 +194,9 @@ class AdministratorsController extends Controller
         $user = User::find((int) $user_id);
 
         if ($user !== null && $user->type !== 'MasjidAdmin') {
-            $screen = $user->type === 'Teacher' ? 'Teachers' : 'Team & Access';
+            // By what they are HERE: a lunch login a school made a teacher is
+            // removed on that school's Teachers screen (MasjidUser::kindFor).
+            $screen = $membership->kindFor($user->type) === 'Teacher' ? 'Teachers' : 'Team & Access';
 
             return response()->json([
                 'status' => 'failed',

@@ -107,6 +107,10 @@ trait OneLoginWorld
         $id = $person instanceof User ? $person->id : $this->{$person}->id;
         $fresh = User::findOrFail($id);
 
+        // Nothing left over from a request that carried a bearer token.
+        $this->withoutHeader('Authorization');
+        Auth::forgetGuards();
+
         Sanctum::actingAs($fresh, ['staff']);
 
         return $fresh;

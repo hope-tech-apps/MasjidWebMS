@@ -3,7 +3,9 @@
 namespace App\Http\Requests\Admin\LunchStaff;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\StaffArea;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Unique;
 
 /**
  * Creating a Jummah-lunch staff login.
@@ -19,10 +21,35 @@ class StoreLunchStaffRequest extends BaseFormRequest
     {
         return [
             'name' => 'required|string|max:120',
-            // Unique across the whole users table, not per masjid: one address
-            // is one login, and a duplicate would make the invite ambiguous.
-            'email' => ['required', 'email', 'max:190', Rule::unique('users', 'email')],
+            'email' => ['required', 'email', 'max:190', $this->oneAddressOneLogin()],
             'phone' => 'nullable|string|max:32',
         ];
+    }
+
+    /**
+     * Unique across the whole users table, not per masjid: one address is one
+     * login, and a duplicate would make the invite ambiguous.
+     *
+     * While one login may hold a role at each organisation (StaffArea::open()) there
+     * is exactly one address with a login that this door does not turn away here: a
+     * LIVE TEACHER'S, because a teacher may be given lunch access with the login
+     * they already have (LunchStaffController::store decides whether, under a lock).
+     * The rule is narrowed to look past that one row and nothing else, so every
+     * other address with a login (lunch staff, an administrator, a member, anybody
+     * archived) is still refused by this rule, in the same body and alongside any
+     * other field's error, exactly as before. With the switch off it is the rule it
+     * always was.
+     */
+    private function oneAddressOneLogin(): Unique
+    {
+        $rule = Rule::unique('users', 'email');
+
+        if (! StaffArea::open()) {
+            return $rule;
+        }
+
+        return $rule->where(fn ($query) => $query->where(
+            fn ($login) => $login->where('type', '!=', 'Teacher')->orWhereNotNull('deleted_at')
+        ));
     }
 }
