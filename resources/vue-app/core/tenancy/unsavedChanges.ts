@@ -5,6 +5,7 @@ export function registerUnsavedChanges(check: () => Promise<boolean>): () => voi
     return () => { checks.delete(check); };
 }
 export async function confirmUnsavedChanges(): Promise<boolean> {
-    for (const check of checks) if (!await check()) return false;
+    // A screen that unregistered while its question was open no longer has a say.
+    for (const check of [...checks]) if (!await check() && checks.has(check)) return false;
     return true;
 }

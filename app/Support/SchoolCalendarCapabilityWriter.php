@@ -48,6 +48,8 @@ final class SchoolCalendarCapabilityWriter
             DutyRotaMode::switchChanged($locked, $changes);
             if (($changes['class_subjects'] ?? false) === true) ClassSubjectInitializer::assertReady($locked);
             if (($changes['class_subjects'] ?? null) === false) ClassSubjectDisabler::assertAllowed($locked);
+            // The same seeding the ordinary writer does: a request that also carries the calendar switch lands here.
+            if (($changes['app_member_questions'] ?? false) === true) MemberQuestions::seed($locked);
             // Only the two switches that stay out of the panel while off skip a
             // hidden OFF -> OFF write, as main's writer does for class subjects.
             // Every other key stores its override and its audit row, no-ops included.

@@ -185,6 +185,17 @@ class AppMemberQuestionsTest extends TestCase
     }
 
     #[Test]
+    public function switching_on_together_with_the_calendar_switch_still_seeds_the_lists(): void
+    {
+        // A capabilities request that also names school_calendar_terms is handled by the calendar writer.
+        \App\Support\CapabilityWriter::apply($this->org->fresh(), ['app_member_questions' => false], null);
+        \Illuminate\Support\Facades\DB::table('member_question_options')->where('masjid_id', $this->org->id)->delete();
+        \App\Support\CapabilityWriter::apply($this->org->fresh(), ['school_calendar_terms' => false, 'app_member_questions' => true], null);
+        $this->assertTrue($this->org->fresh()->hasCapability('app_member_questions'));
+        $this->assertGreaterThan(0, \Illuminate\Support\Facades\DB::table('member_question_options')->where('masjid_id', $this->org->id)->count());
+    }
+
+    #[Test]
     public function defaults_seed_once_and_super_only_can_rename_reorder_and_deactivate(): void
     {
         $this->enable(); $this->assertSame(10, MemberQuestionOption::where('question','occupation')->count());
