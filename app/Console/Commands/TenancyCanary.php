@@ -20,6 +20,7 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
@@ -45,7 +46,7 @@ use Illuminate\Support\Str;
  *     route table says so, so it is named in `config/canary.php` with its
  *     reason and pinned by a test. Assume there are others and check before
  *     adding a prefix to `canary.prefixes`.
- *   - makes four kinds of database query of its own, all SELECT, all once per
+ *   - makes five kinds of database query of its own, all read-only, all once per
  *     RUN rather than once per probe: (1) which organisations exist, (2) which
  *     of them hold the most public content (`resolveTenants`), (3) who owns the
  *     record ids the API just handed back (`resolveOwnership`, one indexed
@@ -60,7 +61,9 @@ use Illuminate\Support\Str;
  *     production's default — from whatever process calls it. The third is
  *     what lets the canary say whose rows these are on a surface that strips
  *     `masjid_id` from every response. Nothing else here touches the database
- *     directly, and nothing here writes.
+ *     directly except (5) schema metadata for every declared table rule,
+ *     bounded by configured tables/rules, with column lists reused per run. Nothing
+ *     here writes.
  *   - never sends a credential, so it can only ever see what an anonymous
  *     caller on the internet already sees. A canary that authenticated could
  *     prove more and would itself become a secret worth stealing.
@@ -875,6 +878,14 @@ class TenancyCanary extends Command
             $this->emitFatal('No base URL: set APP_URL, canary.base_url, or pass --base-url.');
 
             return 2;
+        }
+
+        try {
+            $this->validateTableRules($config);
+        } catch (\InvalidArgumentException $e) {
+            $this->emitFatal($e->getMessage());
+
+            return self::EXIT_INCOMPLETE;
         }
 
         $tenants = $this->resolveTenants($config);
@@ -3341,7 +3352,7 @@ class TenancyCanary extends Command
     {
         $paths = [];
         foreach ((array) ($config['compare_by'] ?? []) as $rule) {
-            if (is_array($rule) && isset($rule['pivot'])) {
+            if (is_array($rule) && $this->requiredPivots($rule) !== []) {
                 foreach (ResponseFacts::identityPaths($uri, [$rule]) as $path) {
                     $paths[] = ResponseFacts::identityBucket($path);
                 }
@@ -3477,7 +3488,7 @@ class TenancyCanary extends Command
      * `canary.tenant_morphs`, and a row counts only when its `model_type` says
      * Masjid.
      * Named table rules use the same bounded SELECT path, with either an
-     * explicit tenant column or a qualifying pivot for the requested tenants.
+     * explicit tenant column or required pivots for the same requested tenant.
      *
      * A relation that cannot attribute is named in `coverage.row_ownership.
      * tables_skipped` with its reason, not dropped silently.
@@ -3595,6 +3606,113 @@ class TenancyCanary extends Command
         }
     }
 
+    /** Accept the original single-pivot form as one required membership. */
+    private function requiredPivots(array $rule): array
+    {
+        return $rule['pivots'] ?? (isset($rule['pivot']) ? [$rule['pivot']] : []);
+    }
+
+    /** Validate every declared rule before any endpoint can be probed, even dark keys. */
+    private function validateTableRules(array $config): void
+    {
+        $columns = [];
+        $errors = [];
+        foreach ((array) ($config['compare_by'] ?? []) as $name => $rule) {
+            if (is_int($name) && is_string($rule)) {
+                continue; // Existing relation-name rules retain their discovery behavior.
+            }
+            try {
+                if (! is_string($name) || $name === '' || ! is_array($rule)) {
+                    throw new \InvalidArgumentException('expected a named table rule');
+                }
+                $identifier = static function ($value): string {
+                    if (! is_string($value) || ! preg_match('/^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/D', $value)) {
+                        throw new \InvalidArgumentException('invalid table or column name: '.json_encode($value));
+                    }
+
+                    return $value;
+                };
+                $checkColumns = static function ($table, array $required) use (&$columns, $identifier): void {
+                    $table = $identifier($table);
+                    foreach ($required as $column) {
+                        $identifier($column);
+                    }
+                    if (! isset($columns[$table])) {
+                        if (! Schema::hasTable($table)) {
+                            throw new \InvalidArgumentException('table '.$table.' does not exist');
+                        }
+                        $columns[$table] = Schema::getColumnListing($table);
+                    }
+                    foreach ($required as $column) {
+                        if (! in_array($column, $columns[$table], true)) {
+                            throw new \InvalidArgumentException('column '.$table.'.'.$column.' does not exist');
+                        }
+                    }
+                };
+                if (! isset($rule['paths']) || ! is_array($rule['paths']) || $rule['paths'] === []) {
+                    throw new \InvalidArgumentException('paths must map routes to nonempty path lists');
+                }
+                foreach ($rule['paths'] as $uri => $paths) {
+                    if (! is_string($uri) || ! preg_match('#^[a-zA-Z0-9_{}/-]+$#D', $uri)
+                        || ! is_array($paths) || ! array_is_list($paths) || $paths === []) {
+                        throw new \InvalidArgumentException('paths must map routes to nonempty path lists');
+                    }
+                    foreach ($paths as $path) {
+                        if (! is_string($path) || ! preg_match('/^(?:[a-zA-Z_][a-zA-Z0-9_]*|\*)(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|\*))*$/D', $path)) {
+                            throw new \InvalidArgumentException('invalid response path: '.json_encode($path));
+                        }
+                    }
+                }
+                if (array_key_exists('pivot', $rule) && array_key_exists('pivots', $rule)) {
+                    throw new \InvalidArgumentException('use pivot or pivots, not both');
+                }
+                if (array_key_exists('pivot', $rule) && ! is_array($rule['pivot'])) {
+                    throw new \InvalidArgumentException('pivot must be a membership rule');
+                }
+                if (array_key_exists('pivots', $rule) && ! is_array($rule['pivots'])) {
+                    throw new \InvalidArgumentException('pivots must be a nonempty list of membership rules');
+                }
+                $pivots = $this->requiredPivots($rule);
+                if (! array_is_list($pivots)
+                    || (array_key_exists('pivots', $rule) && $pivots === [])
+                    || ($pivots !== [] && array_key_exists('tenant_key', $rule))) {
+                    throw new \InvalidArgumentException('use a tenant_key or a nonempty list of required pivots');
+                }
+                $checkColumns($rule['table'] ?? null, [array_key_exists('key', $rule) ? $rule['key'] : 'id']);
+                $memberships = $pivots === [] ? [$rule] : $pivots;
+                foreach ($memberships as $pivot) {
+                    if (! is_array($pivot)) {
+                        throw new \InvalidArgumentException('each pivot must be a membership rule');
+                    }
+                    $tenantKey = $identifier($pivot['tenant_key'] ?? null);
+                    $required = [$tenantKey];
+                    if ($pivots !== []) {
+                        $required[] = $pivot['related_key'] ?? null;
+                        $where = array_key_exists('where', $pivot) ? $pivot['where'] : [];
+                        if (! is_array($where)) {
+                            throw new \InvalidArgumentException('pivot where must map columns to scalar values');
+                        }
+                        foreach ($where as $column => $value) {
+                            if (! is_scalar($value) && $value !== null) {
+                                throw new \InvalidArgumentException('pivot where must map columns to scalar values');
+                            }
+                            $required[] = $column;
+                        }
+                    }
+                    $checkColumns($pivot['table'] ?? null, $required);
+                    if (! in_array($tenantKey, (array) ($config['tenant_keys'] ?? ['masjid_id']), true)) {
+                        throw new \InvalidArgumentException('tenant_key '.$tenantKey.' must name an organisation in canary.tenant_keys');
+                    }
+                }
+            } catch (\Throwable $e) {
+                $errors[] = 'Invalid configuration for canary.compare_by.'.$name.': '.$e->getMessage();
+            }
+        }
+        if ($errors !== []) {
+            throw new \InvalidArgumentException(implode("\n", $errors));
+        }
+    }
+
     /**
      * Plain SELECTs only: never call model methods or cache readers for a
      * declared table. A database cache get can DELETE an expired row on prod.
@@ -3606,31 +3724,43 @@ class TenancyCanary extends Command
         $table = $rule['table'];
         $key = $rule['key'] ?? 'id';
         $query = DB::table($table)->whereIn($table.'.'.$key, $ids);
-        $pivot = $rule['pivot'] ?? null;
-        $tenantKey = $pivot['tenant_key'] ?? ($rule['tenant_key'] ?? null);
-        if (! in_array($tenantKey, (array) ($config['tenant_keys'] ?? ['masjid_id']), true)) {
-            throw new \InvalidArgumentException('table rule tenant_key must name an organisation in canary.tenant_keys');
-        }
-
-        if ($pivot !== null) {
-            $query->leftJoin($pivot['table'].' as canary_pivot', function ($join) use ($pivot, $table, $key, $tenants) {
-                $join->on('canary_pivot.'.$pivot['related_key'], '=', $table.'.'.$key);
-                $join->whereIn('canary_pivot.'.$pivot['tenant_key'], $tenants);
-                foreach ((array) ($pivot['where'] ?? []) as $column => $value) {
-                    $join->where('canary_pivot.'.$column, '=', $value);
+        $pivots = $this->requiredPivots($rule);
+        foreach ($pivots as $index => $pivot) {
+            $alias = 'canary_pivot_'.$index;
+            $query->leftJoin($pivot['table'].' as '.$alias, function ($join) use ($pivot, $table, $key, $tenants, $alias, $index, $pivots) {
+                $join->on($alias.'.'.$pivot['related_key'], '=', $table.'.'.$key);
+                $join->whereIn($alias.'.'.$pivot['tenant_key'], $tenants);
+                if ($index > 0) {
+                    // Availability for A and a saved choice for B must never
+                    // combine into permission for either organisation.
+                    $join->on($alias.'.'.$pivot['tenant_key'], '=', 'canary_pivot_0.'.$pivots[0]['tenant_key']);
+                }
+                foreach ($pivot['where'] ?? [] as $column => $value) {
+                    $join->where($alias.'.'.$column, '=', $value);
                 }
             });
         }
 
-        $ownerColumn = $pivot === null ? $table.'.'.$tenantKey : 'canary_pivot.'.$tenantKey;
+        $columns = [$table.'.'.$key.' as canary_id'];
+        if ($pivots === []) {
+            $columns[] = $table.'.'.$rule['tenant_key'].' as canary_owner';
+        } else {
+            foreach ($pivots as $index => $pivot) {
+                $columns[] = 'canary_pivot_'.$index.'.'.$pivot['tenant_key'].' as canary_owner_'.$index;
+            }
+        }
         $owners = [];
-        foreach ($query->get([$table.'.'.$key.' as canary_id', $ownerColumn.' as canary_owner']) as $row) {
+        foreach ($query->get($columns) as $row) {
             $id = (int) $row->canary_id;
-            if ($pivot !== null) {
+            if ($pivots !== []) {
                 $owners[$id] ??= [];
-                if ($row->canary_owner !== null) {
-                    $owners[$id][] = (int) $row->canary_owner;
+                foreach (array_keys($pivots) as $index) {
+                    if ($row->{'canary_owner_'.$index} === null) {
+                        continue 2;
+                    }
                 }
+                $owners[$id][] = (int) $row->canary_owner_0;
+                $owners[$id] = array_values(array_unique($owners[$id]));
             } elseif ($row->canary_owner !== null) {
                 $owners[$id] = (int) $row->canary_owner;
             }

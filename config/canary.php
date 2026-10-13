@@ -140,11 +140,14 @@ return [
     |
     | Alongside relation names, named table rules bind exact response paths
     | (relative to data; * walks a list) to a table. tenant_key names its owner.
-    | A GLOBAL table instead names a pivot: every emitted id must have a pivot
-    | for the requested organisation satisfying where. Shared catalogue ids
-    | are allowed only by that membership check, never by a blanket ignore.
+    | A GLOBAL table instead names required pivots: every emitted id must match
+    | ALL pivots for the SAME requested organisation, including each where.
+    | Shared catalogue ids are allowed only by that membership check, never by
+    | a blanket ignore.
     | These rules do not rank tenants or invoke model methods, and use SELECTs
     | only, with the same observed-id cap as the existing relation lookups.
+    | Every rule is validated before probing, including keys absent everywhere;
+    | invalid shapes/tables/columns use the existing fatal configuration error.
     |
     | This list does TWO jobs. Both are about the same fact — these are the
     | tables that back the graded surface — but the second one is newer and
@@ -213,11 +216,18 @@ return [
                 'api/mobile/masjids/{masjid_id}' => ['bottom_tabs.*.id'],
                 'api/v1/settings' => ['bottom_tabs.*.id'],
             ],
-            'pivot' => [
-                'table' => 'masjid_mobile_app_features',
-                'related_key' => 'feature_id',
-                'tenant_key' => 'masjid_id',
-                'where' => ['is_available' => 1],
+            'pivots' => [
+                [
+                    'table' => 'masjid_mobile_app_features',
+                    'related_key' => 'feature_id',
+                    'tenant_key' => 'masjid_id',
+                    'where' => ['is_available' => 1],
+                ],
+                [
+                    'table' => 'app_bottom_tabs',
+                    'related_key' => 'feature_id',
+                    'tenant_key' => 'masjid_id',
+                ],
             ],
         ],
         'member_question_options' => [

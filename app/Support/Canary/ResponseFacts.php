@@ -165,10 +165,11 @@ final class ResponseFacts
         self::collectIds($payload, '', $buckets, $maxDepth);
 
         // Explicit paths alone may descend into rows or read scalar foreign
-        // keys. The default walker still avoids nested GLOBAL lookup objects.
+        // keys. They merge into default buckets so declaring a path cannot
+        // erase an identity the default walker already found.
         foreach ($paths as $path) {
             $bucket = self::identityBucket($path);
-            $buckets[$bucket] = [];
+            $buckets[$bucket] ??= [];
             self::collectPathIds($payload, explode('.', $path), $buckets[$bucket]);
         }
 

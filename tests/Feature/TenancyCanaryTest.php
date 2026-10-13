@@ -2845,6 +2845,117 @@ class TenancyCanaryTest extends TestCase
     }
 
     #[Test]
+    public function enabled_features_never_chosen_as_tabs_cannot_borrow_another_tenants_tabs(): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        $this->seedAppKeys($this->masjidB, 'app_bottom_tabs');
+        $feature = MobileAppFeature::create(['key' => 'donate', 'name' => 'Donate']);
+        foreach ([$this->masjidA, $this->masjidB] as $masjid) {
+            $masjid->features()->attach($feature->id, ['is_available' => 1]);
+        }
+        AppBottomTab::create(['masjid_id' => $this->masjidB->id, 'feature_id' => $feature->id,
+            'position' => 4, 'saved_key' => 'donate', 'saved_title' => 'Donate']);
+        $this->registerAppPayloadFixture('api/v1/settings', ['bottom_tabs' => [['id' => $feature->id]]]);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+        $this->assertSame(1, $exit);
+        $finding = collect($run['findings'])->firstWhere('kind', 'global_rows_not_attached_to_requested_tenant');
+        $this->assertNotNull($finding, json_encode($run['findings']));
+        $this->assertSame('api/v1/settings', $finding['endpoint']);
+        $this->assertSame($this->masjidA->id, $finding['request']['tenant_id']);
+    }
+
+    public static function invalidAbsentTableRules(): array
+    {
+        return [
+            'nonexistent table' => ['member_question_options.table', 'canary_missing_table', 'canary_missing_table'],
+            'nonexistent primary key' => ['member_question_options.key', 'canary_missing_column', 'canary_missing_column'],
+            'nonexistent owner column' => ['member_question_options.tenant_key', 'canary_missing_column', 'canary_missing_column'],
+            'nonexistent pivot table' => ['bottom_tabs.pivots.1.table', 'canary_missing_table', 'canary_missing_table'],
+            'nonexistent pivot relation column' => ['bottom_tabs.pivots.1.related_key', 'canary_missing_column', 'canary_missing_column'],
+            'nonexistent pivot owner column' => ['bottom_tabs.pivots.1.tenant_key', 'canary_missing_column', 'canary_missing_column'],
+            'nonexistent pivot condition column' => ['bottom_tabs.pivots.0.where', ['canary_missing_column' => 1], 'canary_missing_column'],
+            'invalid rule shape' => ['member_question_options', 'invalid', 'named table rule'],
+            'invalid paths shape' => ['member_question_options.paths', [], 'paths'],
+            'invalid path list' => ['member_question_options.paths', ['api/v1/settings' => 'onboarding.*.id'], 'paths'],
+            'invalid path syntax' => ['member_question_options.paths', ['api/v1/settings' => ['onboarding..id']], 'response path'],
+            'invalid table identifier' => ['member_question_options.table', 'options; DROP TABLE options', 'invalid table or column'],
+            'null primary key' => ['member_question_options.key', null, 'invalid table or column'],
+            'invalid pivot list' => ['bottom_tabs.pivots', 'invalid', 'pivots'],
+            'empty pivot list' => ['bottom_tabs.pivots', [], 'nonempty list'],
+            'invalid pivot shape' => ['bottom_tabs.pivots.1', 'invalid', 'each pivot'],
+            'invalid condition shape' => ['bottom_tabs.pivots.0.where', null, 'where'],
+            'invalid condition value' => ['bottom_tabs.pivots.0.where', ['is_available' => []], 'where'],
+            'owner column is not a tenant key' => ['bottom_tabs.pivots.1.tenant_key', 'id', 'must name an organisation'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('invalidAbsentTableRules')]
+    public function invalid_table_rules_fail_before_probing_even_when_the_key_is_absent(string $field, mixed $value, string $error): void
+    {
+        config(['canary.compare_by.'.$field => $value]);
+        $sent = 0;
+        Route::get('api/v1/__canary_config_witness', function () use (&$sent) {
+            $sent++;
+            $id = request()->header('masjid-id');
+            abort_unless($id && Masjid::whereKey($id)->exists(), 403);
+
+            return response()->json(['status' => 'success', 'data' => [
+                'services' => Service::where('masjid_id', $id)->get(['id'])->toArray(),
+            ]]);
+        });
+        [$exit, $run] = $this->runCanary(['--all' => true, '--max-requests' => 500]);
+        $this->assertSame(2, $exit);
+        $this->assertSame('incomplete', $run['status']);
+        $this->assertStringContainsString('canary.compare_by.'.explode('.', $field)[0], implode(' ', $run['errors']));
+        $this->assertStringContainsString($error, implode(' ', $run['errors']));
+        $this->assertSame(0, $sent, 'configuration validation must precede every probe');
+    }
+
+    #[Test]
+    public function table_rule_validation_uses_only_bounded_schema_reads_and_retains_single_pivot_support(): void
+    {
+        $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
+        $rule = config('canary.compare_by.bottom_tabs');
+        $rule['pivot'] = $rule['pivots'][0];
+        unset($rule['pivots']);
+        $config = config('canary');
+        $config['compare_by']['single_pivot'] = $rule;
+        config(['cache.default' => 'database']);
+        DB::table('cache')->insert(['key' => 'canary-schema-expired-witness', 'value' => 'retained', 'expiration' => 1]);
+        $before = $this->rowCounts();
+        $cache = DB::table('cache')->get()->map(fn ($row) => (array) $row)->all();
+        $validate = new \ReflectionMethod(TenancyCanary::class, 'validateTableRules');
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $validate->invoke(new TenancyCanary, $config);
+        $queries = DB::getQueryLog();
+        DB::flushQueryLog();
+        $config['compare_by']['duplicate_rule'] = $rule;
+        $validate->invoke(new TenancyCanary, $config);
+        $duplicates = DB::getQueryLog();
+        DB::disableQueryLog();
+        $this->assertNotEmpty($queries);
+        $this->assertSame(array_column($queries, 'query'), array_column($duplicates, 'query'), 'repeated tables must not add schema lookups');
+        foreach ($queries as $query) {
+            $this->assertStringStartsWith('select ', strtolower($query['query']));
+            $this->assertMatchesRegularExpression('/sqlite_master|pragma_table_xinfo/', $query['query']);
+        }
+        $this->assertSame($before, $this->rowCounts());
+        $this->assertSame($cache, DB::table('cache')->get()->map(fn ($row) => (array) $row)->all());
+        $lookup = new \ReflectionMethod(TenancyCanary::class, 'tableOwnerMap');
+        $this->assertSame([1 => [$this->masjidA->id]], $lookup->invoke(new TenancyCanary, $rule, [1], $config, [$this->masjidA->id]));
+    }
+
+    #[Test]
+    public function explicit_paths_merge_with_default_identity_instead_of_erasing_it(): void
+    {
+        $this->assertSame(['(root)' => [123]], ResponseFacts::recordIdentity(['id' => 123, 'title' => 'row'], paths: ['*.id']));
+        $this->assertSame(['(root)' => [123]], ResponseFacts::recordIdentity([['id' => 123]], paths: ['*.id', '*.id']));
+    }
+
+    #[Test]
     public function a_shared_catalogue_id_is_allowed_only_with_each_tenants_enabled_pivot(): void
     {
         $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
@@ -2893,12 +3004,13 @@ class TenancyCanaryTest extends TestCase
     {
         $this->seedAppKeys($this->masjidA, 'app_bottom_tabs');
         $this->registerAppPayloadFixture('api/v1/settings', ['bottom_tabs' => [['id' => 1]]]);
-        config(['canary.compare_by.bottom_tabs.pivot.table' => 'canary_missing_pivot']);
+        config(['canary.compare_by.bottom_tabs.pivots.0.table' => 'canary_missing_pivot']);
 
         [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
-        $this->assertSame(3, $exit);
-        $this->assertContains('row_ownership_unplaced', $run['degraded_by']);
-        $this->assertStringContainsString('lookup failed', $run['coverage']['row_ownership']['tables_skipped']['bottom_tabs']);
+        $this->assertSame(2, $exit);
+        $this->assertSame('incomplete', $run['status']);
+        $this->assertStringContainsString('canary.compare_by.bottom_tabs', implode(' ', $run['errors']));
+        $this->assertStringContainsString('canary_missing_pivot', implode(' ', $run['errors']));
     }
 
     #[Test]
