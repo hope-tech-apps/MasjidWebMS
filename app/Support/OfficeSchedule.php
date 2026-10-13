@@ -32,6 +32,8 @@ final class OfficeSchedule
                 'location'=>$m['resolved_room_id']===$id,
                 default=>true,
             })) : [];
+            // A teacher's or a location's day shows a lesson two classes take together once; a class's own day keeps its row.
+            if (in_array($lens, ['teacher','location'], true)) $rows=TimetableReader::asOneLesson($rows);
             $periods=$lens === 'class' ? ($sets[$overrides[$id][$dw]??$schoolDays[$dw]??null]??[]) : null;
             $days[]=['date'=>$iso, 'weekday'=>$dw, 'state'=>$state, 'reason'=>$closureByDate[$iso]??null, 'periods'=>$periods, 'meetings'=>array_map(fn($m)=>self::slot($m, $lens === 'teacher' ? $id : null), $rows)];
         }

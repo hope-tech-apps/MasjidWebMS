@@ -4,7 +4,7 @@ namespace App\Support;
 
 use Illuminate\Support\Facades\DB;
 
-/** Bulk date reader: two queries for every lens, three for computed clashes. */
+/** Bulk date reader: two queries for every lens, three for computed clashes; a narrower lens holding a joint lesson asks once more for its other classes. */
 final class TimetableReader
 {
     public function meetings(int $school, int $year, ?string $date, string $lens = 'school', ?int $id = null, ?int $weekday = null): array
@@ -38,7 +38,7 @@ final class TimetableReader
             ->orderBy('m.weekday')->orderBy('p.starts_at')->orderBy('m.id')->get();
         $teachers = DB::table('timetable_meeting_teachers as mt')->join('users as u','u.id','=','mt.user_id')
             ->where('mt.masjid_id',$school)->whereIn('mt.meeting_id',$rows->pluck('id'))->select(['mt.meeting_id','u.id','u.name'])->orderBy('u.name')->orderBy('u.id')->get()->groupBy('meeting_id');
-        return $rows->map(function ($row) use ($teachers) {
+        return $this->withJoint($rows->map(function ($row) use ($teachers) {
             $m = (array) $row;
             foreach (['id','masjid_id','school_year_id','group_id','period_id','weekday'] as $key) $m[$key]=(int)$m[$key];
             foreach (['room_id','resolved_room_id','class_subject_id'] as $key) $m[$key]=$m[$key]===null?null:(int)$m[$key];
@@ -48,7 +48,62 @@ final class TimetableReader
             $m['teachers']=($teachers[$m['id']]??collect())->map(fn($t)=>['id'=>(int)$t->id,'name'=>$t->name])->all();
             unset($m['created_at'],$m['updated_at'],$m['masjid_id']);
             return $m;
-        })->all();
+        })->all(), $school, $years, $date, $lens);
+    }
+
+    /**
+     * One lesson two or more classes take together. The office joins lesson rows by giving them one key; they ARE
+     * together only while the facts agree: different classes of one year, the same weekday, the same clocks, and
+     * dates that meet. Rows that are get `joint`, naming the other classes' rows; the key itself never leaves here,
+     * and a row with no partner is returned exactly as it was before joint lessons existed.
+     */
+    private function withJoint(array $meetings, int $school, array $years, ?string $date, string $lens): array
+    {
+        $keys = array_values(array_unique(array_filter(array_column($meetings, 'joint_key'))));
+        $slot = fn ($m) => array_intersect_key($m, array_flip(['id','joint_key','school_year_id','group_id','group_name','weekday','starts_at','ends_at','effective_from','effective_until']));
+        // A whole-school read already holds every partner; a narrower lens asks once for the other classes' rows.
+        $pool = $keys === [] ? [] : ($lens === 'school' ? array_map($slot, $meetings) : $this->jointRows($school, $years, $date, $keys));
+        foreach ($meetings as $i => $m) {
+            $key = $m['joint_key']; unset($meetings[$i]['joint_key']);
+            if ($key === null) continue;
+            $partners = [];
+            foreach ($pool as $p) {
+                if ($p['joint_key'] !== $key || $p['group_id'] === $m['group_id'] || $p['school_year_id'] !== $m['school_year_id'] || $p['weekday'] !== $m['weekday']
+                    || $p['starts_at'] !== $m['starts_at'] || $p['ends_at'] !== $m['ends_at']) continue;
+                if (max($p['effective_from'], $m['effective_from']) > min($p['effective_until'] ?? '9999-12-31', $m['effective_until'] ?? '9999-12-31')) continue;
+                $partners[] = ['id'=>$p['id'], 'group_id'=>$p['group_id'], 'group_name'=>$p['group_name'], 'effective_from'=>$p['effective_from'], 'effective_until'=>$p['effective_until']];
+            }
+            usort($partners, fn ($a, $b) => [$a['group_name'], $a['id']] <=> [$b['group_name'], $b['id']]);
+            if ($partners !== []) $meetings[$i]['joint'] = $partners;
+        }
+        return $meetings;
+    }
+
+    private function jointRows(int $school, array $years, ?string $date, array $keys): array
+    {
+        $q = DB::table('timetable_meetings as m')->join('groups as g', 'g.id', '=', 'm.group_id')->join('timetable_periods as p', 'p.id', '=', 'm.period_id')
+            ->where('m.masjid_id', $school)->where('g.masjid_id', $school)->where('p.masjid_id', $school)->whereIn('m.school_year_id', $years)->whereIn('m.joint_key', $keys);
+        if ($date !== null) $q->whereDate('m.effective_from','<=',$date)->where(fn($q)=>$q->whereNull('m.effective_until')->orWhereDate('m.effective_until','>=',$date));
+        return $q->select(['m.id','m.joint_key','m.school_year_id','m.group_id','g.name as group_name','m.weekday','p.starts_at','p.ends_at','m.effective_from','m.effective_until'])->orderBy('m.id')->get()
+            ->map(fn ($r) => ['id'=>(int)$r->id, 'joint_key'=>$r->joint_key, 'school_year_id'=>(int)$r->school_year_id, 'group_id'=>(int)$r->group_id, 'group_name'=>$r->group_name, 'weekday'=>(int)$r->weekday,
+                'starts_at'=>substr($r->starts_at,0,5), 'ends_at'=>substr($r->ends_at,0,5), 'effective_from'=>substr($r->effective_from,0,10), 'effective_until'=>$r->effective_until===null?null:substr($r->effective_until,0,10)])->all();
+    }
+
+    /** The reader has already decided that these two rows are one lesson their classes take together. */
+    public static function together(array $a, array $b): bool
+    {
+        return in_array($b['id'], array_column($a['joint'] ?? [], 'id'), true) || in_array($a['id'], array_column($b['joint'] ?? [], 'id'), true);
+    }
+
+    /** Rows shown side by side read as one lesson: the first of each joint lesson stays, and its `joint` names the rest. */
+    public static function asOneLesson(array $rows): array
+    {
+        $kept = [];
+        foreach ($rows as $row) {
+            foreach ($kept as $first) if (self::together($first, $row)) continue 2;
+            $kept[] = $row;
+        }
+        return $kept;
     }
 
     public function rosters(int $school, int $year): array
@@ -73,6 +128,8 @@ final class TimetableReader
         for ($i=0;$i<count($meetings);$i++) for ($j=$i+1;$j<count($meetings);$j++) {
             $a=$meetings[$i]; $b=$meetings[$j];
             if ($a['group_id']===$b['group_id'] || $a['weekday']!==$b['weekday'] || $a['starts_at'] >= $b['ends_at'] || $b['starts_at'] >= $a['ends_at']) continue;
+            // One lesson cannot clash with itself: not over its teacher, its location, or a student on both rosters.
+            if (self::together($a, $b)) continue;
             $first=max($a['effective_from'],$b['effective_from']); $last=min($a['effective_until']??$a['year_last_day'],$b['effective_until']??$b['year_last_day']);
             if (! $this->containsWeekday($first,$last,$a['weekday'])) continue;
             $add=function ($kind,$id,$name,$from,$until) use (&$out,$a,$b) { $out[]=['kind'=>$kind,'id'=>(int)$id,'name'=>$name,'weekday'=>$a['weekday'],'effective_from'=>$from,'effective_until'=>$until,'meetings'=>[$a,$b]]; };

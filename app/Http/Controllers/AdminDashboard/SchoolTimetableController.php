@@ -226,7 +226,7 @@ class SchoolTimetableController extends Controller
             // Use exactly the teacher portal's dated days, with office read-only cards instead of teacher links.
             $teacherWeek=app(TeacherSchedule::class)->read((int)$school, $id, $date);
             $payload['days']=array_map(function ($day) {
-                $day['meetings']=array_map(fn($m)=>array_replace($m, ['href'=>null]), $day['meetings']);
+                $day['meetings']=array_map(fn($m)=>array_replace($m, ['href'=>null]+(isset($m['joint']) ? ['joint'=>array_map(fn($c)=>array_replace($c, ['href'=>null]), $m['joint'])] : [])), $day['meetings']);
                 return $day;
             }, array_values(array_filter($teacherWeek['days'], fn($day)=>$day['meeting_day'])));
         }
@@ -234,7 +234,7 @@ class SchoolTimetableController extends Controller
     }
     private function meetingData(Request $r,SchoolYear $year,Masjid $org,?TimetableMeeting $old=null): array
     {
-        $data=$r->validate(['group_id'=>'required|integer','weekday'=>'required|integer|min:0|max:6','period_id'=>'required|integer','kind'=>['required',Rule::in(['subject','activity','class'])],'class_subject_id'=>'nullable|integer','activity_name'=>'nullable|string|max:60','room_id'=>'nullable|integer','teacher_ids'=>'present|array','teacher_ids.*'=>'integer|distinct','effective_from'=>'required|date_format:Y-m-d','effective_until'=>'nullable|date_format:Y-m-d','confirm_clashes'=>'sometimes|boolean','clash_fingerprint'=>'nullable|string|size:64']);
+        $data=$r->validate(['group_id'=>'required|integer','weekday'=>'required|integer|min:0|max:6','period_id'=>'required|integer','kind'=>['required',Rule::in(['subject','activity','class'])],'class_subject_id'=>'nullable|integer','activity_name'=>'nullable|string|max:60','room_id'=>'nullable|integer','teacher_ids'=>'present|array','teacher_ids.*'=>'integer|distinct','effective_from'=>'required|date_format:Y-m-d','effective_until'=>'nullable|date_format:Y-m-d','confirm_clashes'=>'sometimes|boolean','clash_fingerprint'=>'nullable|string|size:64','joint_with'=>'sometimes|array','joint_with.*'=>'integer|distinct']);
         if ($old && $old->effective_until !== null && $data['effective_from'] > $old->effective_until) $this->refuse('effective_from','This meeting has already ended before that date. Choose the meeting live on that date.');
         $g=$this->group($data['group_id']); if($old && $old->group_id!=$g->id) $this->refuse('group_id','Change this meeting within its own class.');
         $p=TimetablePeriod::whereIn('period_set_id',TimetablePeriodSet::where('school_year_id',$year->id)->select('id'))->findOrFail($data['period_id']);
@@ -258,11 +258,17 @@ class SchoolTimetableController extends Controller
         }
         if($data['kind']!=='activity' && $data['teacher_ids']===[]) $this->refuse('teacher_ids','Choose at least one teacher for this meeting.');
         $room=$data['room_id']??null; if($room!==null) TimetableRoom::where('active',true)->findOrFail($room);
-        return ['masjid_id'=>$org->id,'school_year_id'=>$year->id,'group_id'=>$g->id,'weekday'=>$data['weekday'],'period_id'=>$p->id,'kind'=>$data['kind'],'class_subject_id'=>$data['kind']==='subject'?$sub:null,'activity_name'=>$data['kind']==='activity'?$activity:null,'room_id'=>$room,'effective_from'=>$data['effective_from'],'effective_until'=>$until,'teacher_ids'=>$data['teacher_ids'],'confirm_clashes'=>$data['confirm_clashes']??false,'clash_fingerprint'=>$data['clash_fingerprint']??null];
+        return ['masjid_id'=>$org->id,'school_year_id'=>$year->id,'group_id'=>$g->id,'weekday'=>$data['weekday'],'period_id'=>$p->id,'kind'=>$data['kind'],'class_subject_id'=>$data['kind']==='subject'?$sub:null,'activity_name'=>$data['kind']==='activity'?$activity:null,'room_id'=>$room,'effective_from'=>$data['effective_from'],'effective_until'=>$until,'teacher_ids'=>$data['teacher_ids'],'confirm_clashes'=>$data['confirm_clashes']??false,'clash_fingerprint'=>$data['clash_fingerprint']??null]+$this->jointWith($data);
+    }
+    /** Present only when the office names lessons to take this one with, so every other submission is fingerprinted as before. */
+    private function jointWith(array $data): array
+    {
+        $ids=array_values(array_map('intval',$data['joint_with']??[])); sort($ids);
+        return $ids===[]?[]:['joint_with'=>$ids];
     }
     private function candidate(array $data,SchoolYear $year): array
     {
-        unset($data['confirm_clashes'], $data['clash_fingerprint']);
+        unset($data['confirm_clashes'], $data['clash_fingerprint'], $data['joint_with']);
         $p=TimetablePeriod::findOrFail($data['period_id']); $g=$this->group($data['group_id']); $rid=$data['room_id']??TimetableClassRoom::where('group_id',$g->id)->value('room_id');
         return $data+['id'=>0,'group_name'=>$g->name,'label'=>$data['kind']==='subject'?ClassSubject::findOrFail($data['class_subject_id'])->name:($data['kind']==='activity'?$data['activity_name']:$g->name),'starts_at'=>substr($p->starts_at,0,5),'ends_at'=>substr($p->ends_at,0,5),'resolved_room_id'=>$rid===null?null:(int)$rid,'room_name'=>$rid===null?null:TimetableRoom::findOrFail($rid)->name,'year_last_day'=>$year->last_day->toDateString(),'teachers'=>User::whereIn('id',$data['teacher_ids'])->orderBy('name')->get(['id','name'])->toArray()];
     }
@@ -272,6 +278,14 @@ class SchoolTimetableController extends Controller
         $replace=$old!==null && $data['effective_from']<=$old->effective_from && ! $this->hasPastSchoolDay($old,$year);
         $inPlace=$old!==null && $data['effective_from']<=$old->effective_from && ! $replace;
         $candidate=$this->candidate($data,$year);
+        // A dated change that keeps its weekday and period is still the same joint lesson; a lesson that moves is not.
+        $kept=$old!==null && (int)$old->weekday===$data['weekday'] && (int)$old->period_id===$data['period_id'];
+        $with=$this->jointLessons($candidate,$data['joint_with']??[],$all,'joint_with');
+        // The clashes below are worked out with these lessons already together, so only what remains is reported.
+        $mates=$kept?(collect($all)->firstWhere('id',$old->id)['joint']??[]):[];
+        foreach($with as $m) $mates=[...$mates,array_intersect_key($m,array_flip(['id','group_id','group_name','effective_from','effective_until'])),...($m['joint']??[])];
+        $mates=array_values(array_filter(array_column($mates,null,'id'),fn($m)=>$m['id']!==$old?->id && $m['group_id']!==$candidate['group_id']));
+        if($mates!==[]) $candidate['joint']=$mates;
         $others=[];
         foreach($all as $m) {
             if($old && $m['id']===$old->id) { if($inPlace || $replace) continue; $m['effective_until']=\Carbon\CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(); }
@@ -282,10 +296,12 @@ class SchoolTimetableController extends Controller
         $fingerprint=\App\Support\TimetableClashConfirmation::fingerprint($data+['changed_meeting_id'=>$old?->id],$clashes);
         if (!$copy && ($clashes || ($data['confirm_clashes'] && $data['clash_fingerprint'] !== null)) && (! $data['confirm_clashes'] || ! hash_equals($fingerprint, $data['clash_fingerprint'] ?? ''))) return ['clashes'=>$clashes,'clash_fingerprint'=>$fingerprint];
         $previousTeachers=$inPlace?array_column(collect($all)->firstWhere('id',$old->id)['teachers']??[],'id'):[];
-        $teachers=$data['teacher_ids']; unset($data['teacher_ids'],$data['confirm_clashes'],$data['clash_fingerprint']);
+        $teachers=$data['teacher_ids']; unset($data['teacher_ids'],$data['confirm_clashes'],$data['clash_fingerprint'],$data['joint_with']);
+        $key=$kept?$old->joint_key:null;
+        if($with!==[]) $key=$this->shareJointKey($year,$key,array_column($with,'id'));
         if($replace) $old->delete();
         if($old && !$inPlace && !$replace) { $old->effective_until=\Carbon\CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(); $old->save(); }
-        $row=$inPlace?$old:new TimetableMeeting(); $row->fill($data); $row->save();
+        $row=$inPlace?$old:new TimetableMeeting(); $row->fill($data); $row->joint_key=$key; $row->save();
         TimetableMeetingTeacher::where('meeting_id',$row->id)->delete(); foreach($teachers as $id) TimetableMeetingTeacher::create(['masjid_id'=>$year->masjid_id,'meeting_id'=>$row->id,'user_id'=>$id]);
         $row->setAttribute('group_name',$candidate['group_name']); $row->setAttribute('label',$candidate['label']);
         if ($previousTeachers) \App\Support\TimetableRetention::instance()->refreshAccounts($previousTeachers);
@@ -299,6 +315,61 @@ class SchoolTimetableController extends Controller
             $old=$id===null?null:TimetableMeeting::where('school_year_id',$y->id)->findOrFail($id);
             $saved=$this->saveMeeting($this->meetingData($r,$y,$org,$old),$y,$old);
             return isset($saved['clashes'])?response()->json(['status'=>'clashes','clashes'=>$saved['clashes'],'clash_fingerprint'=>$saved['clash_fingerprint']],409):$this->result($saved['meeting'],$id===null?201:200);
+        });
+    }
+    /** Lessons named to be taken together with this one: this year's lessons of other classes, same weekday and clocks, dates that meet. */
+    private function jointLessons(array $lesson,array $ids,array $all,string $field): array
+    {
+        $rows=array_values(array_filter($all,fn($m)=>in_array($m['id'],$ids,true))); abort_unless(count($rows)===count($ids),404);
+        foreach($rows as $m) {
+            if($m['group_id']===$lesson['group_id']) $this->refuse($field,'Choose a lesson of another class.');
+            if($m['weekday']!==$lesson['weekday'] || $m['starts_at']!==$lesson['starts_at'] || $m['ends_at']!==$lesson['ends_at']) $this->refuse($field,'Classes can only take a lesson together on the same weekday at the same time.');
+            if(max($m['effective_from'],$lesson['effective_from'])>min($m['effective_until']??$m['year_last_day'],$lesson['effective_until']??$lesson['year_last_day'])) $this->refuse($field,'These lessons are never in effect on the same dates.');
+        }
+        return $rows;
+    }
+    /** One key for a lesson and the lessons named with it. A joint lesson any of them was already part of becomes this one. */
+    private function shareJointKey(SchoolYear $year,?string $own,array $ids): string
+    {
+        $keys=TimetableMeeting::where('school_year_id',$year->id)->whereIn('id',$ids)->whereNotNull('joint_key')->orderBy('id')->pluck('joint_key')->unique()->values()->all();
+        $key=$own??$keys[0]??(string) \Illuminate\Support\Str::uuid();
+        TimetableMeeting::where('school_year_id',$year->id)->where(fn($q)=>$q->whereIn('id',$ids)->orWhereIn('joint_key',$keys))->update(['joint_key'=>$key]);
+        return $key;
+    }
+    private function jointData(int $school,SchoolYear $year,int $id): array
+    {
+        $all=$this->reader->meetings($school,$year->id,null); $m=collect($all)->firstWhere('id',$id); abort_if($m===null,404);
+        $brief=fn($row)=>array_intersect_key($row,array_flip(['id','group_id','group_name','label','weekday','starts_at','ends_at','effective_from','effective_until']));
+        $with=array_column($m['joint']??[],'id');
+        $same=array_values(array_filter($all,fn($o)=>$o['group_id']!==$m['group_id'] && $o['weekday']===$m['weekday'] && $o['starts_at']===$m['starts_at'] && $o['ends_at']===$m['ends_at']
+            && max($o['effective_from'],$m['effective_from'])<=min($o['effective_until']??$o['year_last_day'],$m['effective_until']??$m['year_last_day'])));
+        usort($same,fn($a,$b)=>[$a['group_name'],$a['id']]<=>[$b['group_name'],$b['id']]);
+        return ['meeting'=>$brief($m),'joint'=>array_values(array_map($brief,array_filter($same,fn($o)=>in_array($o['id'],$with,true)))),'candidates'=>array_values(array_map($brief,array_filter($same,fn($o)=>!in_array($o['id'],$with,true))))];
+    }
+    /** A lesson, the other classes' lessons it is taken together with, and those at its weekday and clocks it could be. */
+    public function jointLesson($masjid_id,$year_id,$meeting_id): JsonResponse
+    {
+        return $this->result($this->jointData((int)$masjid_id,$this->year($year_id),(int)$meeting_id));
+    }
+    /** Undated, like a class's usual location: the stored lessons are one lesson wherever their dates meet. */
+    public function joinLessons(Request $r,$masjid_id,$year_id,$meeting_id): JsonResponse
+    {
+        return $this->write($masjid_id,$year_id,function($year) use($r,$meeting_id) {
+            $m=TimetableMeeting::where('school_year_id',$year->id)->findOrFail($meeting_id);
+            $d=$r->validate(['meeting_ids'=>'required|array|min:1','meeting_ids.*'=>'integer|distinct']);
+            $all=$this->reader->meetings($year->masjid_id,$year->id,null); $lesson=collect($all)->firstWhere('id',$m->id); abort_if($lesson===null,404);
+            $with=$this->jointLessons($lesson,array_map('intval',$d['meeting_ids']),$all,'meeting_ids');
+            $this->shareJointKey($year,$m->joint_key,[$m->id,...array_column($with,'id')]);
+            return $this->result($this->jointData($year->masjid_id,$year,$m->id));
+        });
+    }
+    /** Takes this class's lesson out. The others stay together; a class left alone reads as an ordinary lesson. */
+    public function leaveJointLesson($masjid_id,$year_id,$meeting_id): JsonResponse
+    {
+        return $this->write($masjid_id,$year_id,function($year) use($meeting_id) {
+            $m=TimetableMeeting::where('school_year_id',$year->id)->findOrFail($meeting_id);
+            $m->joint_key=null; $m->save();
+            return $this->result($this->jointData($year->masjid_id,$year,$m->id));
         });
     }
     /** History follows the stored weekday, even when the calendar's current weekdays have changed. */

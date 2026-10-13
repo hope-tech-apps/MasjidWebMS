@@ -11,5 +11,7 @@ class TimetableMeeting extends Model
     use BelongsToMasjid;
 
     protected $table = 'timetable_meetings';
-    protected $fillable = ['masjid_id', 'school_year_id', 'group_id', 'weekday', 'period_id', 'kind', 'class_subject_id', 'activity_name', 'room_id', 'effective_from', 'effective_until'];
+    protected $fillable = ['masjid_id', 'school_year_id', 'group_id', 'weekday', 'period_id', 'kind', 'class_subject_id', 'activity_name', 'room_id', 'effective_from', 'effective_until', 'joint_key'];
+    /** The key that lessons taken together share is the server's own; TimetableReader turns it into `joint`. */
+    protected $hidden = ['joint_key'];
 }
