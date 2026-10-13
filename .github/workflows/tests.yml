@@ -113,6 +113,70 @@ jobs:
             exit 1
           fi
 
+  suite-roles-on:
+    name: PHP suite (sqlite), one login a role at each organisation switched ON
+    runs-on: ubuntu-latest
+
+    # The suite above runs with TENANCY_ROLES_PER_ORGANISATION unset, which is how the
+    # feature ships. The day that switch is set in production, the run above stops
+    # describing production at one screen: every school's Teachers screen then goes
+    # through one shared path, and nothing in the default run would notice a later
+    # change breaking it. So the whole suite is run a second time with the switch on.
+    #
+    # It cannot be judged by "zero failures": four existing tests pin the
+    # switched-OFF behaviour without setting the switch, and are left unedited on
+    # purpose (they are the proof that a login and a school the feature does not
+    # touch run what they always ran). The run passes when EXACTLY those four fail,
+    # listed with the reason for each in tests/fixtures/roles-switch-on-expected-failures.txt.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, sqlite3, mbstring, bcmath, intl, gd, zip, exif
+          coverage: none
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Cache composer packages
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
+
+      - name: Discover packages
+        env:
+          APP_ENV: testing
+        run: php artisan package:discover --ansi
+
+      - name: Build the admin SPA assets
+        # The suite renders the SPA's blade view and reads public/build/manifest.json.
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run the suite with the switch on
+        env:
+          APP_ENV: testing
+          TENANCY_ROLES_PER_ORGANISATION: 'true'
+        # `|| true`: this run is EXPECTED to fail in four tests; the next step judges it.
+        run: |
+          php vendor/bin/pest --log-junit junit-roles-on.xml --colors=never || true
+
+      - name: Exactly the tests that pin the switched-off behaviour failed, and nothing else
+        # Also refuses a run that did not really happen (no file, too few tests, zero
+        # assertions), for the reason the job above gives.
+        run: php scripts/junit-expected-failures.php junit-roles-on.xml tests/fixtures/roles-switch-on-expected-failures.txt
+
   public-repo-scan:
     name: Public repo scan (added lines in docs, rules and fixtures)
     runs-on: ubuntu-latest

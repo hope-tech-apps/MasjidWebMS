@@ -1,0 +1,30 @@
+# The tests that fail BY DESIGN when the whole suite is run with
+# TENANCY_ROLES_PER_ORGANISATION=true ("one login, a role at each organisation"
+# switched on). Read by scripts/junit-expected-failures.php; the run passes only
+# when exactly these fail.
+#
+# Each is an existing test that pins the SWITCHED-OFF behaviour without setting the
+# switch, and is deliberately left unedited: together they are the proof that a
+# school and a login untouched by the feature run what they always ran. With the
+# switch on, every school's Teachers screen runs one path
+# (TeachersController::createOrAttachWithClassSubjects, and resolveTeacher()'s read
+# of the row's role), which costs ONE more statement on add, edit and remove, and
+# the Teachers door attaches a live lunch-staff login instead of refusing it.
+#
+# If a test here starts to pass, or another starts to fail, the switched-on path
+# moved: look before changing this list, and say why in the commit.
+
+# One more statement on edit: resolveTeacher() reads the row's role (a lunch person
+# of this organisation is not a teacher on its Teachers screen).
+Tests\Feature\ClassSubjectsOffSqlTest :: it preserves literal main statement order with at most one primary key capability select with data set "('teacher update')"
+
+# One more statement on add: the school's row lock that the shared attach path takes.
+Tests\Feature\ClassSubjectsOffSqlTest :: it preserves literal main statement order with at most one primary key capability select with data set "('teacher invite')"
+
+# One more statement on remove: the same read of the row's role.
+Tests\Feature\TimetableGlobalAccountOffTest :: it Timetable unused OFF school teacher removal matches literal base SQL
+
+# The refusal the feature removes: a live lunch-staff login is now made a teacher
+# (201) where this case pins 422. Its switched-on behaviour is pinned in
+# OneLoginTwoRolesDoorsTest.
+Tests\Feature\TeacherAttachTest :: A login of any other type is refused and nothing is written with data set "LunchStaff"
