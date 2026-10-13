@@ -49,7 +49,7 @@ export const ES: Record<string, string> = {
     signin_panel_no_pw: "Usted inicia sesión con un código de seis dígitos que le enviamos por correo electrónico. Si prefiere usar una contraseña, puede configurarla aquí; los códigos seguirán funcionando de todas formas.",
     pw_new: "Nueva contraseña",
     pw_again: "Escríbala de nuevo",
-    pw_hint: "Al menos 12 caracteres. Una frase corta que pueda recordar funciona bien.",
+    pw_hint: "Al menos 8 caracteres. Una frase corta que pueda recordar funciona bien.",
     pw_saving: "Guardando…",
     pw_change: "Cambiar contraseña",
     pw_set: "Configurar contraseña",

@@ -197,7 +197,7 @@ return [
          * length, and raising this number would silently lock out every parent
          * whose password predates the change.
          */
-        'min_length' => (int) env('FAMILY_PASSWORD_MIN_LENGTH', 12),
+        'min_length' => (int) env('FAMILY_PASSWORD_MIN_LENGTH', 8),
 
         /*
          * Check the chosen password against Have I Been Pwned.

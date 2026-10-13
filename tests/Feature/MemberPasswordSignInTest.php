@@ -62,7 +62,7 @@ class MemberPasswordSignInTest extends TestCase
 
     private const OTHER = 'copper-kettle-19-morning';
 
-    private const SHORT_MESSAGE = 'Please choose a password of at least 12 characters. A short phrase you will remember works well.';
+    private const SHORT_MESSAGE = 'Please choose a password of at least 8 characters. A short phrase you will remember works well.';
 
     private Masjid $masjid;
 
@@ -493,14 +493,14 @@ class MemberPasswordSignInTest extends TestCase
         $withRightCode = $this->verify($this->masjid, $new, $newCode, [
             'first_name' => 'Amina',
             'last_name' => 'Yusuf',
-            'password' => 'too-short',
+            'password' => 'short-7',
         ]);
         $withRightCode->assertStatus(422)->assertExactJson($expected);
 
         // The same answer with a WRONG code, and for an address that has an
         // account: the rule looks only at what was typed.
-        $withWrongCode = $this->verify($this->masjid, $new, $this->wrongCode($newCode), ['password' => 'too-short']);
-        $forKnown = $this->verify($this->masjid, $known, $knownCode, ['password' => 'too-short']);
+        $withWrongCode = $this->verify($this->masjid, $new, $this->wrongCode($newCode), ['password' => 'short-7']);
+        $forKnown = $this->verify($this->masjid, $known, $knownCode, ['password' => 'short-7']);
 
         $this->assertSame($withRightCode->getContent(), $withWrongCode->getContent());
         $this->assertSame($withRightCode->getContent(), $forKnown->getContent());
@@ -565,7 +565,7 @@ class MemberPasswordSignInTest extends TestCase
             'first_name' => 'Amina',
             'last_name' => 'Yusuf',
             'password' => str_repeat('k', 19),
-        ])->assertStatus(422)->assertJsonPath('data.password.0', str_replace('12', '20', self::SHORT_MESSAGE));
+        ])->assertStatus(422)->assertJsonPath('data.password.0', str_replace('at least 8', 'at least 20', self::SHORT_MESSAGE));
 
         $this->assertNull($this->codeRow($email)->consumed_at);
     }
