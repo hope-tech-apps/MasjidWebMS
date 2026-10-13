@@ -8,12 +8,13 @@
             <label for="volunteer-title" class="form-label">Title</label>
             <input id="volunteer-title" v-model="title" class="form-control mb-3" maxlength="30" />
             <label for="volunteer-url" class="form-label">Address</label>
-            <input id="volunteer-url" v-model="address" class="form-control mb-3" type="url" maxlength="500" placeholder="https://example.org/volunteer" />
+            <input id="volunteer-url" v-model="address" class="form-control mb-3" type="url" maxlength="500" placeholder="https://example.org/volunteer" :aria-invalid="!!address && !testUrl" :aria-describedby="address && !testUrl ? 'volunteer-url-help' : undefined" />
+            <p v-if="address && !testUrl" id="volunteer-url-help" class="text-danger" role="alert">Use a full address that starts with https://, for example https://example.org/volunteer.</p>
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 <a v-if="testUrl" class="btn btn-outline-secondary" :href="testUrl" target="_blank" rel="noopener noreferrer">Test this link</a>
                 <button type="button" class="btn btn-success" :disabled="!title.trim() || (!!address && !testUrl)" @click="save">{{ saving ? 'Saving…' : 'Save Volunteer link' }}</button>
             </div>
-            <p v-if="saved" class="text-success mt-2 mb-0" role="status">Saved.</p>
+            <p v-if="saved && !dirty" class="text-success mt-2 mb-0" role="status">Saved.</p>
         </fieldset>
     </section>
 </template>

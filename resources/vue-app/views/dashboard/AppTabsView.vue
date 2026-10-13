@@ -22,7 +22,7 @@
                     <p v-if="validChosen.length === 0" class="text-muted">Your app is using its standard tabs.</p>
                     <p v-if="hasUnavailable" class="text-warning-emphasis">Unavailable choices are left out on phones. Saving removes them from this list.</p>
                     <p v-if="dirty" class="text-warning-emphasis" role="status">Unsaved changes</p>
-                    <p v-if="saved" class="text-success" role="status">Saved.</p>
+                    <p v-if="saved && !dirty" class="text-success" role="status">Saved.</p>
                     <fieldset :disabled="saving" class="border-0 p-0 m-0">
                         <legend class="h5">Chosen tabs</legend>
                         <ol v-if="chosen.length" class="app-tabs-choices p-0">
