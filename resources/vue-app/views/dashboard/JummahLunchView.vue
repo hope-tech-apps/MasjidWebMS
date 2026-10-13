@@ -291,14 +291,26 @@
             <div class="card shadow-lg" style="max-width: 460px; width: 100%;">
                 <div class="card-header">{{ staffModal.isEdit ? 'Edit access' : 'Give someone lunch access' }}</div>
                 <div class="card-body">
+                    <!-- What the door said, under the field it said it about, in its
+                         own words: an address that already has a login, a teacher who
+                         is already here, a person whose name is shared with another
+                         organisation. -->
                     <div class="mb-2">
-                        <label class="form-label">Name</label>
-                        <input v-model="staffModal.form.name" class="form-control" maxlength="120" />
+                        <label class="form-label" for="jl-staff-name">Name</label>
+                        <input id="jl-staff-name" v-model="staffModal.form.name" class="form-control" maxlength="120"
+                               :class="{ 'is-invalid': staffModal.errors.name }"
+                               :aria-invalid="staffModal.errors.name ? 'true' : undefined"
+                               :aria-describedby="staffModal.errors.name ? 'jl-staff-name-error' : undefined" />
+                        <div v-if="staffModal.errors.name" id="jl-staff-name-error" class="invalid-feedback" role="alert">{{ staffModal.errors.name }}</div>
                     </div>
                     <div class="mb-2">
-                        <label class="form-label">Email</label>
-                        <input v-model="staffModal.form.email" type="email" class="form-control" maxlength="190"
+                        <label class="form-label" for="jl-staff-email">Email</label>
+                        <input id="jl-staff-email" v-model="staffModal.form.email" type="email" class="form-control" maxlength="190"
+                               :class="{ 'is-invalid': staffModal.errors.email }"
+                               :aria-invalid="staffModal.errors.email ? 'true' : undefined"
+                               :aria-describedby="staffModal.errors.email ? 'jl-staff-email-error' : undefined"
                                :disabled="staffModal.isEdit" />
+                        <div v-if="staffModal.errors.email" id="jl-staff-email-error" class="invalid-feedback" role="alert">{{ staffModal.errors.email }}</div>
                         <div class="text-muted small">
                             <template v-if="staffModal.isEdit">
                                 The email can't be changed — it's what their sign-in and invite are tied to.
@@ -310,8 +322,12 @@
                         </div>
                     </div>
                     <div class="mb-2">
-                        <label class="form-label">Phone <span class="text-muted small">(optional)</span></label>
-                        <input v-model="staffModal.form.phone" class="form-control" maxlength="32" />
+                        <label class="form-label" for="jl-staff-phone">Phone <span class="text-muted small">(optional)</span></label>
+                        <input id="jl-staff-phone" v-model="staffModal.form.phone" class="form-control" maxlength="32"
+                               :class="{ 'is-invalid': staffModal.errors.phone }"
+                               :aria-invalid="staffModal.errors.phone ? 'true' : undefined"
+                               :aria-describedby="staffModal.errors.phone ? 'jl-staff-phone-error' : undefined" />
+                        <div v-if="staffModal.errors.phone" id="jl-staff-phone-error" class="invalid-feedback" role="alert">{{ staffModal.errors.phone }}</div>
                     </div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
@@ -838,29 +854,57 @@ const isLunchStaff = computed(() => store.isLunchStaff());
 // ---------------------------------------------------------- lunch-only logins
 const staff = computed(() => store.staff);
 const savingStaff = ref(false);
-const staffModal = reactive<{ show: boolean; isEdit: boolean; id: number | null; form: any }>({
+const staffModal = reactive<{ show: boolean; isEdit: boolean; id: number | null; form: any; errors: Record<string, string> }>({
     show: false, isEdit: false, id: null,
     form: { name: "", email: "", phone: "" },
+    errors: {},
 });
 
 function openAddStaff() {
     staffModal.isEdit = false; staffModal.id = null;
     staffModal.form = { name: "", email: "", phone: "" };
+    staffModal.errors = {};
     staffModal.show = true;
 }
 function openEditStaff(p: any) {
     staffModal.isEdit = true; staffModal.id = p.id;
     staffModal.form = { name: p.name, email: p.email, phone: p.phone ?? "" };
+    staffModal.errors = {};
     staffModal.show = true;
+}
+// What the lunch-staff door said about each field of this form, in its words.
+//
+// Its refusals come as validation does: `data` is an object of field -> sentences,
+// and for an address that cannot be added there is NO top-level `message`. So
+// serverReason() found nothing to read and the office was shown axios's "Request
+// failed with status code 422" for an address that already had a login. That
+// mattered less while the only such sentence was "has already been taken"; the
+// door now also says that the address is a teacher's here, or that adding an
+// existing login is switched off, and each of those is the whole explanation.
+function staffFieldSentences(e: any): Record<string, string> {
+    const bag = e?.response?.status === 422 ? e?.response?.data?.data : null;
+    const found: Record<string, string> = {};
+    if (!bag || typeof bag !== "object" || Array.isArray(bag)) return found;
+    for (const field of ["name", "email", "phone"]) {
+        const said = [bag[field]].flat().filter((line: unknown) => typeof line === "string" && line);
+        if (said.length) found[field] = said.join(" ");
+    }
+    return found;
 }
 async function saveStaff() {
     savingStaff.value = true;
+    staffModal.errors = {};
     try {
         if (staffModal.isEdit && staffModal.id) await store.updateStaff(staffModal.id, staffModal.form);
         else await store.createStaff(staffModal.form);
         staffModal.show = false;
         toast(staffModal.isEdit ? "Access updated" : "Access granted — invitation sent");
-    } catch (e) { toastError(e); } finally { savingStaff.value = false; }
+    } catch (e) {
+        staffModal.errors = staffFieldSentences(e);
+        // Anything the form has no field for (a capability switched off, a server
+        // error) is still said, where it always was.
+        if (Object.keys(staffModal.errors).length === 0) toastError(e);
+    } finally { savingStaff.value = false; }
 }
 async function resendInvite(p: any) {
     try { await store.inviteStaff(p.id); toast("Invitation re-sent to " + p.email); }
