@@ -1,0 +1,1533 @@
+{
+    "owner administrator": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "memberships",
+                    "avatar",
+                    "masjid"
+                ],
+                "type": "MasjidAdmin",
+                "masjid_id": 1,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 1,
+                        "role": "masjid-admin",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 1,
+                            "name": "Pin Masjid",
+                            "org_type": "masjid"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 200,
+            "sql": [
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "avatar",
+                    "memberships",
+                    "masjid"
+                ],
+                "type": "MasjidAdmin",
+                "masjid_id": 1,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 1,
+                        "role": "masjid-admin",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 1,
+                            "name": "Pin Masjid",
+                            "org_type": "masjid"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 200,
+            "sql": [
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"users\" where \"users\".\"id\" in (1) and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"media\" where \"model_type\" = ? and \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"media\" where \"model_type\" = ? and \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"countries\" where \"countries\".\"id\" in (1)",
+                "select * from \"cities\" where \"cities\".\"id\" in (1)"
+            ]
+        }
+    },
+    "second administrator": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (2) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" in (1) and \"masjids\".\"deleted_at\" is null",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "memberships",
+                    "avatar",
+                    "masjid"
+                ],
+                "type": "MasjidAdmin",
+                "masjid_id": 1,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 1,
+                        "role": "masjid-admin",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 1,
+                            "name": "Pin Masjid",
+                            "org_type": "masjid"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 200,
+            "sql": [
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" in (1) and \"masjids\".\"deleted_at\" is null",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+                "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "avatar",
+                    "memberships",
+                    "masjid"
+                ],
+                "type": "MasjidAdmin",
+                "masjid_id": 1,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 1,
+                        "role": "masjid-admin",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 1,
+                            "name": "Pin Masjid",
+                            "org_type": "masjid"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 200,
+            "sql": [
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"users\" where \"users\".\"id\" in (1) and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"media\" where \"model_type\" = ? and \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"media\" where \"model_type\" = ? and \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"countries\" where \"countries\".\"id\" in (1)",
+                "select * from \"cities\" where \"cities\".\"id\" in (1)",
+                "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+            ]
+        }
+    },
+    "super administrator": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (3) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "avatar"
+                ],
+                "type": "SuperAdmin",
+                "masjid_id": null,
+                "masjid_keys": null,
+                "memberships": null
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 200,
+            "sql": [
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "avatar"
+                ],
+                "type": "SuperAdmin",
+                "masjid_id": null,
+                "masjid_keys": null,
+                "memberships": null
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 200,
+            "sql": [
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"users\" where \"users\".\"id\" in (1) and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"media\" where \"model_type\" = ? and \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"media\" where \"model_type\" = ? and \"collection_name\" = ? and \"media\".\"model_id\" in (1) order by \"created_at\" desc, \"created_at\" desc",
+                "select * from \"countries\" where \"countries\".\"id\" in (1)",
+                "select * from \"cities\" where \"cities\".\"id\" in (1)"
+            ]
+        }
+    },
+    "teacher of one school": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (4) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" in (2) and \"masjids\".\"deleted_at\" is null",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "memberships",
+                    "avatar",
+                    "masjid"
+                ],
+                "type": "Teacher",
+                "masjid_id": 2,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 2,
+                        "role": "teacher",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 2,
+                            "name": "Pin School",
+                            "org_type": "school"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 200,
+            "sql": [
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" in (2) and \"masjids\".\"deleted_at\" is null",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select exists(select * from \"school_years\" where \"masjid_id\" = ?) as \"exists\"",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "avatar",
+                    "school_calendar_published",
+                    "memberships",
+                    "masjid"
+                ],
+                "type": "Teacher",
+                "masjid_id": 2,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo",
+                    "logo_url"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 2,
+                        "role": "teacher",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 2,
+                            "name": "Pin School",
+                            "org_type": "school"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 200,
+            "sql": [
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select exists(select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ?) as \"exists\"",
+                "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+            ]
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        }
+    },
+    "teacher of two schools": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (5) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" in (2) and \"masjids\".\"deleted_at\" is null",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "memberships",
+                    "avatar",
+                    "masjid"
+                ],
+                "type": "Teacher",
+                "masjid_id": 2,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 2,
+                        "role": "teacher",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 2,
+                            "name": "Pin School",
+                            "org_type": "school"
+                        }
+                    },
+                    {
+                        "masjid_id": 3,
+                        "role": "teacher",
+                        "is_default": false,
+                        "masjid": {
+                            "id": 3,
+                            "name": "Pin Second School",
+                            "org_type": "school"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 200,
+            "sql": [
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" in (2) and \"masjids\".\"deleted_at\" is null",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select exists(select * from \"school_years\" where \"masjid_id\" = ?) as \"exists\"",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "avatar",
+                    "school_calendar_published",
+                    "memberships",
+                    "masjid"
+                ],
+                "type": "Teacher",
+                "masjid_id": 2,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo",
+                    "logo_url"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 2,
+                        "role": "teacher",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 2,
+                            "name": "Pin School",
+                            "org_type": "school"
+                        }
+                    },
+                    {
+                        "masjid_id": 3,
+                        "role": "teacher",
+                        "is_default": false,
+                        "masjid": {
+                            "id": 3,
+                            "name": "Pin Second School",
+                            "org_type": "school"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 200,
+            "sql": [
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? limit 1",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select exists(select * from \"school_years\" where \"masjid_id\" = ? and \"school_years\".\"masjid_id\" = ?) as \"exists\"",
+                "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+            ]
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        }
+    },
+    "lunch staff": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (6) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" in (1) and \"masjids\".\"deleted_at\" is null",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "memberships",
+                    "avatar",
+                    "masjid"
+                ],
+                "type": "LunchStaff",
+                "masjid_id": 1,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 1,
+                        "role": "lunch-staff",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 1,
+                            "name": "Pin Masjid",
+                            "org_type": "masjid"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 200,
+            "sql": [
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" in (1) and \"masjids\".\"deleted_at\" is null",
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"model_type\" = ? and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select \"masjid_id\" from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1"
+            ],
+            "user": {
+                "keys": [
+                    "id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "created_at",
+                    "updated_at",
+                    "phone",
+                    "phone_verified_at",
+                    "type",
+                    "deleted_at",
+                    "two_factor_confirmed_at",
+                    "two_factor_last_used_at",
+                    "two_factor_failed_attempts",
+                    "two_factor_locked_until",
+                    "avatar",
+                    "memberships",
+                    "masjid"
+                ],
+                "type": "LunchStaff",
+                "masjid_id": 1,
+                "masjid_keys": [
+                    "id",
+                    "user_id",
+                    "name",
+                    "email",
+                    "email_verified_at",
+                    "phone",
+                    "phone_verified_at",
+                    "country_id",
+                    "city_id",
+                    "address",
+                    "latitude",
+                    "longitude",
+                    "website_link",
+                    "created_by",
+                    "updated_by",
+                    "deleted_by",
+                    "created_at",
+                    "updated_at",
+                    "deleted_at",
+                    "timezone",
+                    "copyright_text",
+                    "app_store_link",
+                    "google_play_link",
+                    "google_maps_key",
+                    "stripe_account_id",
+                    "stripe_charges_enabled",
+                    "stripe_payouts_enabled",
+                    "crm_enabled",
+                    "assistant_enabled",
+                    "tax_id",
+                    "statement_signatory",
+                    "mailing_locale",
+                    "org_type",
+                    "listed_at",
+                    "parent_id",
+                    "capability_overrides",
+                    "forms_card_via_masjid_id",
+                    "forms_card_via_set_at",
+                    "forms_card_via_set_by",
+                    "stripe_deauthorized_at",
+                    "slug",
+                    "description",
+                    "privacy_policy_url",
+                    "logo"
+                ],
+                "memberships": [
+                    {
+                        "masjid_id": 1,
+                        "role": "lunch-staff",
+                        "is_default": true,
+                        "masjid": {
+                            "id": 1,
+                            "name": "Pin Masjid",
+                            "org_type": "masjid"
+                        }
+                    }
+                ]
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 200,
+            "sql": [
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and \"masjid_id\" = ? limit 1",
+                "select * from \"masjids\" where \"masjids\".\"id\" = ? and \"masjids\".\"deleted_at\" is null limit 1",
+                "select \"meal_menus\".*, (select count(*) from \"meal_menu_items\" where \"meal_menus\".\"id\" = \"meal_menu_items\".\"meal_menu_id\" and \"meal_menu_items\".\"masjid_id\" = ?) as \"items_count\", (select count(*) from \"meal_orders\" where \"meal_menus\".\"id\" = \"meal_orders\".\"meal_menu_id\" and \"meal_orders\".\"masjid_id\" = ?) as \"orders_count\", (select count(*) from \"meal_orders\" where \"meal_menus\".\"id\" = \"meal_orders\".\"meal_menu_id\" and \"status\" != ? and \"meal_orders\".\"masjid_id\" = ?) as \"live_orders_count\" from \"meal_menus\" where \"meal_menus\".\"masjid_id\" = ? and \"meal_menus\".\"deleted_at\" is null order by \"service_date\" desc",
+                "update \"masjid_user\" set \"last_seen_at\" = ? where \"masjid_id\" = ? and \"user_id\" = ? and (\"last_seen_at\" is null or \"last_seen_at\" < ?)"
+            ]
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        }
+    },
+    "administrator of nothing": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (7) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)",
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1"
+            ],
+            "body": {
+                "status": "failed",
+                "message": "Sorry, you don't have a related masjid to your account."
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 403,
+            "sql": [
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc"
+            ],
+            "body": {
+                "status": "error",
+                "message": "You are not authorized to access this masjid."
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 403,
+            "sql": [
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc"
+            ],
+            "body": {
+                "status": "error",
+                "message": "You are not authorized to access this masjid."
+            }
+        }
+    },
+    "teacher of nothing": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (8) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1"
+            ],
+            "body": {
+                "status": "failed",
+                "message": "Sorry, you are not assigned to a school yet."
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 500,
+            "sql": [
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1"
+            ],
+            "body": {
+                "status": "error",
+                "message": "Method Illuminate\\Auth\\RequestGuard::logout does not exist."
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 403,
+            "sql": [
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc"
+            ],
+            "body": {
+                "status": "error",
+                "message": "You are not authorized to access this masjid."
+            }
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        }
+    },
+    "lunch staff of nothing": {
+        "POST /api/admin/login": {
+            "status": 200,
+            "sql": [
+                "select count(*) as aggregate from \"users\" where \"email\" = ?",
+                "select * from \"users\" where LOWER(email) = ? and \"users\".\"deleted_at\" is null",
+                "select * from \"media\" where \"collection_name\" = ? and \"media\".\"model_id\" in (9) order by \"created_at\" desc, \"created_at\" desc",
+                "insert into \"personal_access_tokens\" (\"name\", \"token\", \"abilities\", \"expires_at\", \"tokenable_id\", \"tokenable_type\", \"updated_at\", \"created_at\") values (?, ?, ?, ?, ?, ?, ?, ?)",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1"
+            ],
+            "body": {
+                "status": "failed",
+                "message": "Sorry, your account is not linked to a masjid yet."
+            }
+        },
+        "GET /api/admin/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/teacher/user": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/user": {
+            "status": 500,
+            "sql": [
+                "select * from \"media\" where \"media\".\"model_id\" = ? and \"media\".\"model_id\" is not null and \"collection_name\" = ? order by \"created_at\" desc, \"created_at\" desc limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"is_default\" desc, \"masjid_id\" asc limit 1"
+            ],
+            "body": {
+                "status": "error",
+                "message": "Method Illuminate\\Auth\\RequestGuard::logout does not exist."
+            }
+        },
+        "GET /api/teacher/masjids/{school}/school": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        },
+        "GET /api/lunch/masjids/{masjid}/jummah-lunch/menus": {
+            "status": 403,
+            "sql": [
+                "select * from \"masjids\" where \"masjids\".\"user_id\" = ? and \"masjids\".\"user_id\" is not null and \"masjids\".\"deleted_at\" is null limit 1",
+                "select * from \"masjid_user\" where \"masjid_user\".\"user_id\" = ? and \"masjid_user\".\"user_id\" is not null and exists (select * from \"masjids\" where \"masjid_user\".\"masjid_id\" = \"masjids\".\"id\" and \"masjids\".\"deleted_at\" is null) order by \"masjid_id\" asc"
+            ],
+            "body": {
+                "status": "error",
+                "message": "You are not authorized to access this masjid."
+            }
+        },
+        "GET /api/admin/masjids/{masjid}": {
+            "status": 401,
+            "sql": [],
+            "body": {
+                "status": "failed",
+                "data": "Unauthorized."
+            }
+        }
+    }
+}
