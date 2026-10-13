@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\User;
+use App\Support\StaffArea;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -10,7 +11,12 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Gate for the lunch realm (routes/lunch.php): the caller must be a staff User
- * whose `users.type` is 'LunchStaff'.
+ * whose `users.type` is 'LunchStaff', or, while one login may hold a role at each
+ * organisation (App\Support\StaffArea), a teacher's login that an office has
+ * given lunch access somewhere. The second kind is then ACTING as lunch staff for
+ * this request, and `tenant` binds an organisation in the URL only where its row
+ * is a lunch row. A login whose own kind is 'LunchStaff' takes the first test,
+ * with no query, exactly as before.
  *
  * A SEPARATE gate rather than an extra entry in UserAdminMiddleware::ADMIN_TYPES,
  * for the same reason TeacherMiddleware is separate: the whole point of this login
@@ -31,7 +37,7 @@ class LunchStaffMiddleware
     {
         $user = Auth::user();
 
-        if ($user instanceof User && $user->type === User::TYPE_LUNCH_STAFF) {
+        if ($user instanceof User && StaffArea::admits($user, User::TYPE_LUNCH_STAFF)) {
             return $next($request);
         }
 

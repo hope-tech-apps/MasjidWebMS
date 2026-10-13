@@ -103,6 +103,62 @@ class User extends Authenticatable implements HasMedia
     protected $searchableFields = ['name', 'email', 'phone'];
 
     /**
+     * The kind this request is acting as, when that is not the stored `type`.
+     *
+     * One login can be lunch staff at one organisation and a teacher at another
+     * (App\Models\MasjidUser::kindFor, App\Support\StaffArea). `type` holds ONE
+     * of those, the kind the login was created as. When such a login enters the
+     * area of its OTHER role, the area's gate records that kind here, on this one
+     * model instance, for this one request, and `$user->type` answers with it
+     * (getTypeAttribute below).
+     *
+     * That is why it is an accessor and not a helper to call at each site. About
+     * twenty places in shared code read `$user->type` to tell a teacher from the
+     * office (SubjectFence, HasClassSubjectWork, the guide books, the lunch
+     * board's administrator-only field) and every one of them treats "not a
+     * Teacher" as "the office", which fails OPEN: a lunch login admitted to the
+     * teacher area and still reading as `LunchStaff` would see and write MORE
+     * than a real teacher of the same class. With the accessor there is no site
+     * to miss, including one written tomorrow.
+     *
+     * A plain PHP property on purpose: it is not an attribute, so it is never
+     * saved, never dirty, and absent from getAttributes(), getOriginal() and a
+     * serialized model. Only the two scoped gates and the sign-in set it, and
+     * only ever to `Teacher` or `LunchStaff`, so it can never make a login read
+     * as an administrator.
+     */
+    private ?string $actingKind = null;
+
+    /**
+     * Record (or, with null, clear) the kind this request is acting as.
+     *
+     * Called by App\Support\StaffArea::admits() and by sign-in; nothing else may.
+     */
+    public function actAs(?string $kind): static
+    {
+        $this->actingKind = $kind;
+
+        return $this;
+    }
+
+    /**
+     * The stored `users.type`: the kind this login was created as, whatever the
+     * request is acting as. Anything that must not follow the acting kind reads
+     * this: the spatie role bridge, and every question about "which of this
+     * person's rows mean what".
+     */
+    public function homeType(): ?string
+    {
+        return $this->attributes['type'] ?? null;
+    }
+
+    /** `$user->type`: the acting kind when an area's gate set one, else the column. */
+    public function getTypeAttribute($value)
+    {
+        return $this->actingKind ?? $value;
+    }
+
+    /**
      * The attributes that should be hidden for serialization.
      *
      * @var list<string>
@@ -291,7 +347,10 @@ class User extends Authenticatable implements HasMedia
      */
     public function syncRoleFromType(): void
     {
-        $roleName = self::TYPE_ROLE_MAP[$this->type] ?? null;
+        // The STORED kind, never the one a request is acting as: the observer
+        // runs this on every save, and a login saved while it is in the area of
+        // its other role must not have its one bridged role moved to that kind.
+        $roleName = self::TYPE_ROLE_MAP[$this->homeType()] ?? null;
 
         if ($roleName === null) {
             return;

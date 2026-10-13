@@ -56,6 +56,49 @@ class MasjidUser extends Model
     ];
 
     /**
+     * The two roles that say what a login IS at this organisation, by the kind
+     * (`users.type`) each one gives.
+     *
+     * Every other role value (`masjid-admin`, and the `admin`, `owner`, `member`
+     * that fixtures and old rows carry) says nothing of its own: the login's kind
+     * decides, as it always did.
+     */
+    public const SCOPED_ROLES = [
+        'Teacher' => 'teacher',
+        User::TYPE_LUNCH_STAFF => 'lunch-staff',
+    ];
+
+    /**
+     * The kind this row gives a login whose own kind (`users.type`) is $homeKind.
+     *
+     * The one rule that reads a row's role. One person can be lunch staff at one
+     * organisation and a teacher at another with a single login, and `users.type`
+     * holds one value for everything, so for those two kinds the ROW answers:
+     * a `teacher` row makes its login a teacher here, a `lunch-staff` row makes it
+     * lunch staff here, whichever of the two the login was created as.
+     *
+     * Only a login of one of those two kinds is ever re-read. An administrator's
+     * row, a SuperAdmin's and a member's always answer their own kind, so no hand
+     * edit of a row can lock an owner out of their organisation or move an
+     * administrator into the teacher or lunch area: their one global set of
+     * permissions (spatie teams are off) must not follow them into a classroom.
+     *
+     * Compared exactly, in PHP. Nothing else compares role strings: the area gate
+     * (App\Support\StaffArea), the tenant resolver, sign-in and the office doors
+     * all ask this method, so they cannot disagree about what a row means.
+     */
+    public function kindFor(?string $homeKind): ?string
+    {
+        if (! in_array($homeKind, array_keys(self::SCOPED_ROLES), true)) {
+            return $homeKind;
+        }
+
+        $kind = array_search($this->role, self::SCOPED_ROLES, true);
+
+        return $kind === false ? $homeKind : $kind;
+    }
+
+    /**
      * Make sure a masjid's OWNER also holds a membership row for it.
      *
      * `masjids.user_id` and this table are two answers to "who administers this
@@ -102,8 +145,8 @@ class MasjidUser extends Model
         return static::create([
             'masjid_id' => $masjidId,
             'user_id' => $userId,
-            // Advisory only — authorization stays on the global `users.type`
-            // bridge (docs/multi-tenant-admin-design.md, "Roles").
+            // Says nothing of its own: an administrator's authority stays on the
+            // global `users.type` bridge, and kindFor() never re-reads their rows.
             'role' => 'masjid-admin',
             'is_default' => ! $hasDefaultElsewhere,
         ]);

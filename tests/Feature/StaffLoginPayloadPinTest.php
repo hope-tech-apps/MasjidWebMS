@@ -25,6 +25,9 @@ use Tests\TestCase;
  * written by this test on commit 15759078, the last one before the feature, and
  * every case below must reproduce it in BOTH switch states.
  *
+ * One statement, and only one, differs with the switch on, and it is written down
+ * below as a constant rather than re-recorded away: THE_GATES_ONE_READ.
+ *
  * Per login it holds seven requests: the sign-in, the three `/user` routes (its own
  * and the two that refuse it), and one organisation-bound request in each area. For
  * each: the status, the SQL statement list, and either the refusal's body or, for an
@@ -132,6 +135,10 @@ class StaffLoginPayloadPinTest extends TestCase
         foreach ($recorded as $request => $expected) {
             $state = $switchOn ? 'on' : 'off';
 
+            if ($switchOn && $this->isRefusedByTheOtherScopedArea($login, $request)) {
+                $expected['sql'] = [self::THE_GATES_ONE_READ];
+            }
+
             foreach ($expected as $part => $value) {
                 $this->assertSame(
                     $value,
@@ -142,6 +149,34 @@ class StaffLoginPayloadPinTest extends TestCase
 
             $this->assertSame(array_keys($expected), array_keys($observed[$request]));
         }
+    }
+
+    /**
+     * THE ONE STATEMENT THE SWITCH COSTS A ONE-ROLE LOGIN, named so that it cannot grow.
+     *
+     * With the switch on, a teacher's login that knocks on the LUNCH area (or a lunch
+     * login on the teacher area) may be a person an office gave that second role to,
+     * and only its rows can say. So that gate reads the login's live rows once, finds
+     * none of its kind, and answers the 401 it always answered. Recorded as running
+     * nothing; with the switch on it runs exactly this.
+     *
+     * Everything else in the recording holds in both switch states: the sign-in, the
+     * login's own `/user`, every request inside its own area, an administrator's and a
+     * SuperAdmin's every request. The SPA's boot asks the three `/user` routes in a
+     * fixed order (admin, teacher, lunch), so the login that pays this is a lunch
+     * login, once per page load, on its way past the teacher route.
+     */
+    private const THE_GATES_ONE_READ = 'select * from "masjid_user" where "masjid_user"."user_id" = ? and "masjid_user"."user_id" is not null and exists (select * from "masjids" where "masjid_user"."masjid_id" = "masjids"."id" and "masjids"."deleted_at" is null) order by "masjid_id" asc';
+
+    private function isRefusedByTheOtherScopedArea(string $login, string $request): bool
+    {
+        $otherArea = match ($this->logins[$login]->type) {
+            'Teacher' => 'lunch',
+            User::TYPE_LUNCH_STAFF => 'teacher',
+            default => null,
+        };
+
+        return $otherArea !== null && str_contains($request, "/api/{$otherArea}/");
     }
 
     /** @return array<string, array<string, mixed>> the seven requests, in the order they are always sent */

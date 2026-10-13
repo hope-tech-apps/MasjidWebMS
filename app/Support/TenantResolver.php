@@ -160,6 +160,31 @@ final class TenantResolver
     {
         $grants = $this->grantsFor($user);
 
+        // ONE LOGIN, A ROLE AT EACH ORGANISATION. A teacher's or lunch-staff
+        // request acts through a row only when that row is of the kind the request
+        // is acting as (MasjidUser::kindFor; `$user->type` is the kind the area's
+        // gate admitted it as, App\Support\StaffArea). So a login that runs lunch
+        // at one organisation and teaches at another binds the lunch area ONLY at
+        // the first and the teacher area ONLY at the second, and the id in the URL
+        // is still answered yes or no, never substituted.
+        //
+        // The gate and this filter ask the SAME row, which is the point: before it,
+        // the gate read the kind and the binder read "any live row", so a lunch
+        // login given a teacher's row at a school was bound by the LUNCH area there.
+        // That is why this is not behind the roles switch. It only ever removes a
+        // grant, and for a login with one role it removes none: every row such a
+        // login holds is of its own kind. No query is added; the rows are loaded.
+        //
+        // An administrator's grants are not filtered: kindFor() never re-reads an
+        // administrator's rows, so there would be nothing to remove.
+        if (in_array($user->type, OrganisationAccess::SCOPED_TYPES, true)) {
+            $home = $user->homeType();
+
+            $grants = $grants
+                ->filter(fn (MasjidUser $grant): bool => $grant->kindFor($home) === $user->type)
+                ->values();
+        }
+
         // FAIL CLOSED — no verified grant at all. Before S3 this user fell
         // through to an UNBOUND context on any route that named no masjid,
         // which is "see every masjid's rows". Unreachable in production: an
@@ -410,10 +435,11 @@ final class TenantResolver
         return new MasjidUser([
             'masjid_id' => $masjidId,
             'user_id' => $user->getKey(),
-            // Advisory only, and identical to what the backfill wrote — the
-            // pivot role mirrors the global bridged role and authorizes nothing
-            // on its own (.claude/rules/tenant-scoping.md).
-            'role' => User::TYPE_ROLE_MAP[$user->type] ?? null,
+            // Identical to what the backfill wrote: the role of the login's
+            // STORED kind (.claude/rules/tenant-scoping.md). The stored kind and
+            // not the acting one, so that ownership can never stand in for a row
+            // of the area a request happens to be in.
+            'role' => User::TYPE_ROLE_MAP[$user->homeType()] ?? null,
             'is_default' => true,
         ]);
     }

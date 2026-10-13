@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\User;
+use App\Support\StaffArea;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -10,7 +11,12 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Gate for the teacher API (routes/teacher.php): the caller must be a staff User
- * whose `users.type` is 'Teacher'.
+ * whose `users.type` is 'Teacher', or, while one login may hold a role at each
+ * organisation (App\Support\StaffArea), a lunch-staff login that an office has
+ * made a teacher at some school. The second kind is then ACTING as a teacher for
+ * this request, and `tenant` binds a school in the URL only where its row is a
+ * teacher's. A login whose own kind is 'Teacher' takes the first test, with no
+ * query, exactly as before.
  *
  * The exact counterpart of UserAdminMiddleware, and deliberately a SEPARATE gate
  * rather than adding 'Teacher' to UserAdminMiddleware::ADMIN_TYPES — a teacher must
@@ -31,7 +37,7 @@ class TeacherMiddleware
     {
         $user = Auth::user();
 
-        if ($user instanceof User && $user->type === 'Teacher') {
+        if ($user instanceof User && StaffArea::admits($user, 'Teacher')) {
             return $next($request);
         }
 

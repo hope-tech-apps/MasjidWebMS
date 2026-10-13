@@ -13,6 +13,8 @@ use App\Models\MasjidUser;
 use App\Models\User;
 use App\Services\TwoFactorService;
 use App\Support\ContactIdentity;
+use App\Support\OrganisationAccess;
+use App\Support\StaffArea;
 use App\Support\TenantResolver;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
@@ -132,6 +134,15 @@ class AuthController extends Controller
 
         $token = $user->createToken('login-token', self::STAFF_TOKEN_ABILITIES)->plainTextToken;
 
+        // A teacher's or lunch-staff login: where it lands is settled HERE, before
+        // the branches below choose by kind, because a login that has lost the role
+        // it was created with lands in the area it still has (scopedMembership()).
+        // For a login with one role this is the same read, in the same place, that
+        // each of those two branches made for itself.
+        $scopedMasjid = in_array($user->homeType(), OrganisationAccess::SCOPED_TYPES, true)
+            ? $this->scopedMembership($user, landing: true)[0]
+            : null;
+
         if ($user->type === 'MasjidAdmin') {
             // `masjid()` is a hasOne over masjids.user_id — OWNERSHIP. An admin
             // added by AdministratorsController owns nothing; their organisation
@@ -171,7 +182,7 @@ class AuthController extends Controller
             // MasjidAdmin `hasOne` above is null for them. Their school is their
             // masjid_user membership, resolved and attached as the `masjid`
             // relation so the SPA reads user.masjid uniformly for both staff types.
-            $masjid = $this->staffMembershipMasjid($user);
+            $masjid = $scopedMasjid;
 
             if (! $masjid) {
                 Auth::logout();
@@ -189,7 +200,7 @@ class AuthController extends Controller
             // membership. Refusing the login when there is none is not politeness
             // — ResolveMasjidTenant fails a memberless principal closed on every
             // request, so a token here would be one that can do nothing at all.
-            $masjid = $this->staffMembershipMasjid($user);
+            $masjid = $scopedMasjid;
 
             if (! $masjid) {
                 Auth::logout();
@@ -279,11 +290,94 @@ class AuthController extends Controller
     }
 
     /**
+     * The organisation of a teacher's or lunch-staff login IN THE AREA IT IS ACTING
+     * IN, and whether it belongs only to the other area.
+     *
+     * One login can run lunch at one organisation and teach at another
+     * (App\Models\MasjidUser::kindFor). `user.masjid` must then name the lunch
+     * organisation when the lunch area asks and the school when the teacher area
+     * asks, because each shell builds its URLs from it.
+     *
+     * THE FIRST READ IS staffMembershipMasjid()'s, STATEMENT FOR STATEMENT, and for
+     * a login with one role it is the only one: its one row (the default, else the
+     * lowest organisation) is of the kind being acted as, and is used. That read is
+     * pinned literally (TeacherTimetableTest, StaffLoginPayloadPinTest), which is
+     * why this does not simply fetch every row and choose.
+     *
+     * Only when that row is of the OTHER kind, which takes a login holding both
+     * kinds of role or one that has lost the role it was created with, is there a
+     * second read: all the live rows in the same order, and the first of this kind.
+     *
+     * When there is none:
+     *   - at sign-in ($landing), with the switch on, the login lands in the area it
+     *     still has: it starts acting as the first row's kind (every row it holds is
+     *     of that kind) and that row's organisation is returned;
+     *   - otherwise the second value is true: "this login belongs only to the other
+     *     area". `user()` answers that as the area's own 401, so the SPA asks the
+     *     other area instead of reading a 200 "not linked" body as a dead session.
+     *
+     * @return array{0: ?\App\Models\Masjid, 1: bool}
+     */
+    private function scopedMembership(User $user, bool $landing = false): array
+    {
+        $first = $user->memberships()
+            ->whereHas('masjid')
+            ->with('masjid')
+            ->orderByDesc('is_default')
+            ->orderBy('masjid_id')
+            ->first();
+
+        if ($first === null) {
+            return [null, false];
+        }
+
+        $home = $user->homeType();
+
+        if ($first->kindFor($home) === $user->type) {
+            return [$first->masjid, false];
+        }
+
+        $own = $user->memberships()
+            ->whereHas('masjid')
+            ->with('masjid')
+            ->orderByDesc('is_default')
+            ->orderBy('masjid_id')
+            ->get()
+            ->first(fn (MasjidUser $row): bool => $row->kindFor($home) === $user->type);
+
+        if ($own !== null) {
+            return [$own->masjid, false];
+        }
+
+        if ($landing && StaffArea::open()) {
+            $user->actAs($first->kindFor($home));
+
+            return [$first->masjid, false];
+        }
+
+        return [null, true];
+    }
+
+    /**
+     * The area gate's own refusal, for a login that passed the gate on its stored
+     * kind but holds no row of that kind any more (its rows are all of the other).
+     * Byte for byte what TeacherMiddleware and LunchStaffMiddleware answer.
+     */
+    private function notThisArea()
+    {
+        return response()->json([
+            'status' => 'failed',
+            'data' => 'Unauthorized.',
+        ], Response::HTTP_UNAUTHORIZED);
+    }
+
+    /**
      * The organisations this login may actually act in — what the S5 switcher
      * lists — attached to the payload as `memberships[]`.
      *
-     * Shape per row: `masjid_id`, `role` (advisory; authorization stays on the
-     * global `users.type` bridge), `is_default`, and a nested `masjid`
+     * Shape per row: `masjid_id`, `role` (for a teacher or lunch-staff login the
+     * role IS what the login is at that organisation, MasjidUser::kindFor; for an
+     * administrator it says nothing of its own), `is_default`, and a nested `masjid`
      * (`id`, `name`, `org_type`). It is the shape the switcher already types —
      * resources/vue-app/core/types/data/Membership.ts.
      *
@@ -339,12 +433,17 @@ class AuthController extends Controller
         // superset the paragraph above refuses to publish. Drop it first.
         $user->unsetRelation('memberships');
 
-        $user->setAttribute('memberships', $this->grantedMemberships($user)->map(fn (MasjidUser $grant) => [
+        // See grantedMemberships() for why the resolver is asked about a clone.
+        $principal = $user->withoutRelations();
+        $candidates = $this->candidateMasjidIds($principal);
+        $granted = $this->grantedMemberships($principal, $candidates);
+
+        $user->setAttribute('memberships', $granted->map(fn (MasjidUser $grant) => [
             // The one field the switcher cannot work without, and the key
             // everything downstream joins on.
             'masjid_id' => (int) $grant->masjid_id,
-            // Advisory. Mirrors User::TYPE_ROLE_MAP and authorizes nothing on
-            // its own (.claude/rules/tenant-scoping.md).
+            // The row's own role. In a teacher's or lunch-staff payload every
+            // row listed is of the area's kind: the resolver granted no other.
             'role' => $grant->role,
             'is_default' => (bool) $grant->is_default,
             // NESTED, because that is what the switcher reads to NAME the
@@ -367,13 +466,45 @@ class AuthController extends Controller
             // by mistake; the grant/revoke endpoints address a membership by
             // (masjid_id, user_id) for the same reason.
         ])->values()->all());
+
+        $this->attachAreas($user, $principal, $candidates->count() > $granted->count());
+    }
+
+    /**
+     * `areas[]`: for a login that holds roles of more than one kind, every place it
+     * works and which area opens there. What the SPA's switcher lists.
+     *
+     * ABSENT for every login with one kind of role, which is nearly every login, so
+     * its payload has the keys it always had. And it costs such a login nothing:
+     * `memberships[]` above was built by asking the resolver about every
+     * organisation the login has a row in, and the resolver grants only rows of
+     * the kind being acted as. A login with a row of the other kind therefore has
+     * MORE rows than memberships, and only then is anything read here. (So does a
+     * one-role login with a row at an archived organisation; it costs that login
+     * one read and it still gets no key.)
+     */
+    private function attachAreas(User $user, User $principal, bool $someRowNotGranted): void
+    {
+        // One model instance serves every request of a test (Sanctum::actingAs), so
+        // a key set by an earlier request must not outlive the role that set it.
+        unset($user->areas);
+
+        if (! $someRowNotGranted) {
+            return;
+        }
+
+        $areas = StaffArea::areasFor($principal);
+
+        if ($areas !== null) {
+            $user->setAttribute('areas', $areas);
+        }
     }
 
     /**
      * @return Collection<int, MasjidUser> the grants the resolver would bind,
      *         each with its masjid loaded
      */
-    private function grantedMemberships(User $user): Collection
+    private function grantedMemberships(User $principal, Collection $candidates): Collection
     {
         // ASK THE RESOLVER ABOUT A PRINCIPAL WITH NO RELATIONS LOADED, and this
         // is not defensive tidiness — it is load-bearing.
@@ -387,10 +518,10 @@ class AuthController extends Controller
         // single-owned-membership branch, and refuse every OTHER organisation
         // they hold. The list would come back empty for exactly the people the
         // switcher exists for. A clone with no relations makes the resolver load
-        // the fact itself, which is what it does on a real request.
-        $principal = $user->withoutRelations();
-
-        return $this->candidateMasjidIds($principal)
+        // the fact itself, which is what it does on a real request. (The clone is
+        // made by attachMemberships(), which also needs it; it carries the kind the
+        // request is acting as, so the resolver filters by the same kind.)
+        return $candidates
             ->map(function (int $masjidId) use ($principal): ?MasjidUser {
                 // Asked with a ROUTE masjid id, which is how ResolveMasjidTenant
                 // asks it — so the verdict here is the same one the switcher's
@@ -459,7 +590,11 @@ class AuthController extends Controller
                         ], Response::HTTP_OK);
                     }
                 } elseif ($user->type === User::TYPE_LUNCH_STAFF) {
-                    $masjid = $this->staffMembershipMasjid($user);
+                    [$masjid, $otherAreaOnly] = $this->scopedMembership($user);
+
+                    if ($otherAreaOnly) {
+                        return $this->notThisArea();
+                    }
 
                     if (! $masjid) {
                         Auth::logout();
@@ -473,7 +608,11 @@ class AuthController extends Controller
                     $masjid->logo = $masjid->logo()->first();
                     $user->setRelation('masjid', $masjid);
                 } elseif ($user->type === 'Teacher') {
-                    $masjid = $this->staffMembershipMasjid($user);
+                    [$masjid, $otherAreaOnly] = $this->scopedMembership($user);
+
+                    if ($otherAreaOnly) {
+                        return $this->notThisArea();
+                    }
 
                     if (! $masjid) {
                         Auth::logout();

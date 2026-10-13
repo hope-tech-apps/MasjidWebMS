@@ -40,4 +40,43 @@ return [
 
     'multi_membership' => env('TENANCY_MULTI_MEMBERSHIP', false),
 
+    /*
+    |--------------------------------------------------------------------------
+    | One login, a different role at each organisation
+    |--------------------------------------------------------------------------
+    |
+    | One person, with one address and one password, can run Friday lunch at one
+    | organisation and teach at another. For the two scoped kinds (Teacher and
+    | LunchStaff) the `masjid_user` row says what the login is AT THAT
+    | organisation (App\Models\MasjidUser::kindFor), whatever `users.type` says.
+    |
+    |   FALSE (the shipped default) - no login enters an area outside its own
+    |     kind, the Teachers and lunch-staff doors refuse an address that has a
+    |     login of the other kind with the sentences they always had, sign-in
+    |     never lands outside the login's own kind, and no payload carries
+    |     `areas`.
+    |
+    |   TRUE - a lunch-staff login may be given the teacher role at a school (and
+    |     a teacher lunch access at one organisation) through those two doors,
+    |     and then reaches both areas with one sign-in.
+    |
+    | Read in ONE place, App\Support\StaffArea::open(). It does NOT switch off the
+    | part that only ever removes access: the tenant resolver binds an organisation
+    | only through a row of the kind the request is acting as, in both states.
+    |
+    | Turning it off again is the safe way back: a login with both roles keeps
+    | its own kind's area and loses the other, and no row is deleted. Do NOT roll
+    | the code back while a cross-kind row exists (`php artisan
+    | staff:cross-kind-roles` lists them): code from before this switch reads
+    | only the kind, so a lunch login's teacher row would open the LUNCH area at
+    | the school. docs/multi-org-admin-rollout.md has the order of steps.
+    |
+    | The cross-kind attach of a person who already belongs somewhere also needs
+    | `multi_membership` above, exactly as attaching a teacher to a second school
+    | does.
+    |
+    */
+
+    'roles_per_organisation' => (bool) env('TENANCY_ROLES_PER_ORGANISATION', false),
+
 ];
