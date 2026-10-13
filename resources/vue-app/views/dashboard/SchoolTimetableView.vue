@@ -93,7 +93,7 @@
                 <p v-if="!clashes.length">No clashes.</p>
                 <p v-if="clashes.some(sameLesson)">If two classes take a lesson together, say so and it is no longer a clash.</p>
                 <ul class="tt-clash-list"><li v-for="(c, i) in clashes" :key="i"><p>{{ clashSentence(c) }}</p><p class="small text-muted">{{ dateLabel(c.effective_from) }} to {{ dateLabel(c.effective_until) }}</p>
-                    <button class="btn btn-outline-primary" v-if="sameLesson(c)" type="button" :disabled="saving" @click="joinLessons(c.meetings[0].id, [c.meetings[1].id])">These classes take this lesson together</button></li></ul>
+                    <button class="btn btn-outline-primary" v-if="sameLesson(c)" type="button" :disabled="saving" :aria-label="'These classes take this lesson together: ' + c.meetings.map((m: any) => m.group_name).join(' and ')" @click="joinLessons(c.meetings[0].id, [c.meetings[1].id])">These classes take this lesson together</button></li></ul>
             </div>
         </div>
         <div v-if="editor" class="modal-backdrop fade show"></div>
@@ -107,7 +107,12 @@
                     <h3>Review these clashes</h3>
                     <ul class="tt-clash-list"><li v-for="(c, i) in warnings" :key="i"><p>{{ clashSentence(c) }}</p><p class="small text-muted">{{ dateLabel(c.effective_from) }} to {{ dateLabel(c.effective_until) }}</p></li></ul>
                     <p v-if="warnedRequest?.body?.joint_with?.length">The classes will take this lesson together. These clashes remain.</p>
-                    <button class="btn btn-outline-primary" type="button" :disabled="saving" @click="save(true)">Save anyway</button><button class="btn btn-outline-primary" v-if="togetherIds.length" type="button" :disabled="saving" @click="save(false, togetherIds)">These classes take this lesson together</button><button class="btn btn-outline-primary" type="button" :disabled="saving" @click="warnings = []">Go back</button>
+                    <fieldset v-if="togetherLessons.length">
+                        <legend>Taken together</legend>
+                        <p>Tick only the classes that take this lesson together with {{ selectedClass?.name }}. A clash with a class you leave unticked stays a clash.</p>
+                        <label v-for="m in togetherLessons" :key="m.id" class="tt-check"><input class="form-check-input" v-model="togetherChoice" type="checkbox" :value="m.id" /> {{ lessonLabel(m, togetherLessons) }}</label>
+                    </fieldset>
+                    <button class="btn btn-outline-primary" type="button" :disabled="saving" @click="save(true)">Save anyway</button><button class="btn btn-outline-primary" v-if="togetherLessons.length" type="button" :disabled="saving || !togetherChoice.length" @click="save(false, togetherChoice)">These classes take this lesson together</button><button class="btn btn-outline-primary" type="button" :disabled="saving" @click="warnings = []">Go back</button>
                 </div>
                 <form v-else @submit.prevent="save(false)">
                     <div v-if="editor === 'set'">
@@ -137,15 +142,18 @@
                         <label for="meeting-room">Location (optional)</label><select class="form-select" id="meeting-room" v-model="draft.room_id"><option :value="null">Class's location{{ usualRoomName ? ': ' + usualRoomName : '' }}</option><option v-for="r in activeRooms" :key="r.id" :value="r.id">{{ r.name }}</option></select>
                         <fieldset v-if="draft.id">
                             <legend>Taken together</legend>
-                            <template v-if="draft.joint?.length">
-                                <p>{{ selectedClass?.name }} takes this lesson together with {{ classNames(draft.joint) }}.</p>
-                                <button class="btn btn-outline-primary" type="button" :disabled="saving" @click="leaveJoint">Take {{ selectedClass?.name }} out of the joint lesson</button>
+                            <template v-if="takenWith.length">
+                                <p>{{ selectedClass?.name }} takes this lesson together with {{ takenWithNames(takenWith) }}.</p>
+                                <button class="btn btn-outline-primary" type="button" :disabled="saving || formChanged" @click="leaveJoint">Take {{ selectedClass?.name }} out of the joint lesson</button>
                             </template>
+                            <p v-if="takenWith.length || joint" class="small text-muted">This applies to the lesson as it is stored, and to later dated changes of it, not from the date below.</p>
+                            <p v-if="formChanged && (takenWith.length || joint?.candidates.length)" role="status">Save or cancel your changes to this lesson first.</p>
                             <button class="btn btn-outline-primary" v-if="!joint" type="button" :disabled="saving" @click="loadJoint">Take this lesson together with another class…</button>
-                            <template v-else>
-                                <p v-if="!joint.candidates.length">No other class has a lesson at this time on {{ weekdays[draft.weekday] }}.</p>
-                                <label v-for="c in joint.candidates" :key="c.id" class="tt-check"><input class="form-check-input" v-model="jointChoice" type="checkbox" :value="c.id" /> {{ candidateLabel(c) }}</label>
-                                <button class="btn btn-outline-primary" v-if="joint.candidates.length" type="button" :disabled="saving || !jointChoice.length" @click="joinLessons(draft.id, jointChoice)">These classes take this lesson together</button>
+                            <p v-if="asking" role="status">Loading the other classes' lessons…</p>
+                            <template v-if="joint">
+                                <p v-if="!joint.candidates.length" role="status" tabindex="-1" data-joint-focus="1">{{ takenWith.length ? 'No further class' : 'No other class' }} has a lesson at this time on {{ weekdays[draft.weekday] }}.</p>
+                                <label v-for="(c, i) in joint.candidates" :key="c.id" class="tt-check"><input class="form-check-input" v-model="jointChoice" type="checkbox" :value="c.id" :data-joint-focus="i === 0 ? '1' : undefined" /> {{ lessonLabel(c, joint.candidates) }}</label>
+                                <button class="btn btn-outline-primary" v-if="joint.candidates.length" type="button" :disabled="saving || formChanged || !jointChoice.length" @click="joinLessons(draft.id, jointChoice)">These classes take this lesson together</button>
                             </template>
                         </fieldset>
                     </div>
@@ -182,19 +190,42 @@ const asOf = ref(''); const loadedDate = ref(''); const outOfYear = ref(false); 
 const weekLoading = ref(false); const loading = ref(false); const saving = ref(false); const error = ref(''); const editor = ref(''); const draft = ref<any>({}); const warnings = ref<any[]>([]); const dialog = ref<HTMLElement | null>(null);
 const warningFingerprint = ref<string | null>(null);
 const warnedRequest = ref<any>(null);
-// A lesson two or more classes take together. `joint` holds what the open lesson could be taken with, once asked for.
-const joint = ref<any>(null); const jointChoice = ref<number[]>([]);
+// A lesson two or more classes take together. `joint` holds what the open lesson is and could be taken with, once asked for.
+const joint = ref<any>(null); const jointChoice = ref<number[]>([]); const asking = ref(false);
 const classNames = (lessons: any[]) => lessons.map((m: any) => m.group_name).join(', ');
+// Before the office asks: the partners in effect on the date shown, from the week. Once asked: every partner on any of the lesson's dates.
+const takenWith = computed<any[]>(() => joint.value?.joint ?? draft.value.joint ?? []);
+// Each class once; a class whose lesson is not in effect on the date shown says from or until when.
+function takenWithNames(lessons: any[]): string {
+    const at = loadedDate.value;
+    return [...new Set(lessons.map((m: any) => m.group_id))].map(id => {
+        const rows = lessons.filter((m: any) => m.group_id === id);
+        if (rows.some((m: any) => !m.effective_from || (m.effective_from <= at && (!m.effective_until || m.effective_until >= at)))) return rows[0].group_name;
+        const later = rows.map((m: any) => m.effective_from).filter((d: string) => d > at).sort()[0];
+        return `${rows[0].group_name} (${later ? 'from ' + dateLabel(later) : 'until ' + dateLabel(rows.map((m: any) => m.effective_until).sort().at(-1))})`;
+    }).join(', ');
+}
+// Joining and taking out act on the stored lesson and close the dialog, so they wait while the form differs from what was opened.
+const openedForm = ref('');
+const formState = (d: any) => JSON.stringify([d.kind, d.kind === 'subject' ? Number(d.class_subject_id) : null, d.kind === 'activity' ? d.activity_name : null, d.room_id === '' ? null : d.room_id, [...(d.teacher_ids ?? [])].map(Number).sort((a, b) => a - b), d.effective_from]);
+const formChanged = computed(() => editor.value === 'meeting' && formState(draft.value) !== openedForm.value);
 // The server refuses anything else: lessons are one lesson only on the same weekday at the same clock times.
 const sameClocks = (a: any, b: any) => a.starts_at === b.starts_at && a.ends_at === b.ends_at;
 const sameLesson = (c: any) => c.meetings?.length === 2 && c.meetings.every((m: any) => m.id > 0) && sameClocks(c.meetings[0], c.meetings[1]);
 // While reviewing a save: the other classes' lessons at the very time of the one being saved (the server names it 0).
-const togetherIds = computed(() => editor.value !== 'meeting' ? [] : [...new Set(warnings.value.flatMap((c: any) => {
-    const mine = c.meetings?.find((m: any) => m.id === 0);
-    return mine ? c.meetings.filter((m: any) => m.id > 0 && sameClocks(m, mine)).map((m: any) => m.id) : [];
-}))]);
-function candidateLabel(c: any): string {
-    const dated = c.effective_until || joint.value.candidates.filter((o: any) => o.group_id === c.group_id).length > 1;
+// A clash at the same time may be a real one (another teacher's class in the same hall), so the office ticks the
+// lessons that are this lesson and only those are named.
+const togetherLessons = computed<any[]>(() => {
+    const found = new Map<number, any>();
+    if (editor.value === 'meeting') for (const c of warnings.value) {
+        const mine = c.meetings?.find((m: any) => m.id === 0);
+        if (mine) for (const m of c.meetings) if (m.id > 0 && sameClocks(m, mine)) found.set(m.id, m);
+    }
+    return [...found.values()];
+});
+const togetherChoice = ref<number[]>([]);
+function lessonLabel(c: any, list: any[]): string {
+    const dated = c.effective_until || list.filter((o: any) => o.group_id === c.group_id).length > 1;
     return `${c.group_name} (${c.label})${dated ? ', from ' + dateLabel(c.effective_from) + (c.effective_until ? ' until ' + dateLabel(c.effective_until) : '') : ''}`;
 }
 const weekdays = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -287,8 +318,8 @@ async function loadWeek() {
     } catch (e) { if (run === weekGeneration) { week.value = { days: [], meetings: [] }; error.value = e?.response?.status === 422 ? boundsMessage() : 'The timetable could not be loaded. Try again.'; } }
     finally { if (run === weekGeneration) weekLoading.value = false; }
 }
-function openEditor(kind: string, data: any) { restoreFocus = typeof document !== 'undefined' ? document.activeElement as HTMLElement : null; error.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; joint.value = null; jointChoice.value = []; editor.value = kind; draft.value = data; nextTick(() => dialog.value?.focus?.()); }
-function closeEditor() { editor.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; joint.value = null; jointChoice.value = []; restoreFocus?.focus?.(); }
+function openEditor(kind: string, data: any) { restoreFocus = typeof document !== 'undefined' ? document.activeElement as HTMLElement : null; error.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; joint.value = null; jointChoice.value = []; togetherChoice.value = []; openedForm.value = ''; editor.value = kind; draft.value = data; nextTick(() => dialog.value?.focus?.()); }
+function closeEditor() { editor.value = ''; warnings.value = []; warningFingerprint.value = null; warnedRequest.value = null; joint.value = null; jointChoice.value = []; togetherChoice.value = []; restoreFocus?.focus?.(); }
 function fromDate() { return [setup.value?.today ?? asOf.value, setup.value?.year?.first_day ?? ''].sort().at(-1); }
 function editSet(set?: any) { openEditor('set', set ? JSON.parse(JSON.stringify(set)) : { name: '', periods: [] }); }
 function editRoom(room?: any) { openEditor('room', room ? { ...room } : { name: '', capacity: '', active: true }); }
@@ -305,21 +336,26 @@ function defaultTeachers() { const g = selectedClass.value; draft.value.teacher_
 function editMeeting(day: number, period: any, meeting?: any) {
     openEditor('meeting', { id: meeting?.id, group_id: Number(classId.value), weekday: day, period_id: period.id, periodKind: period.kind, periodName: period.name, label: meeting?.label, kind: meeting?.kind ?? (setup.value.class_subjects_enabled ? (period.kind === 'teaching' && selectedClass.value?.subjects.length ? 'subject' : 'activity') : 'class'), class_subject_id: meeting?.class_subject_id ?? selectedClass.value?.subjects[0]?.id ?? null, activity_name: meeting?.activity_name ?? '', room_id: meeting?.room_id ?? null, teacher_ids: meeting?.teachers.map((t: any) => t.id) ?? [], joint: meeting?.joint ?? [], effective_from: fromDate() });
     if (!meeting) defaultTeachers();
+    openedForm.value = formState(draft.value);
 }
-// Asked for only when the office wants it: the other classes' lessons on this weekday at this time.
+// Asked for only when the office wants it: the other classes' lessons on this weekday at this time. Reading is not
+// saving, so the form stays as it is; the button that asked leaves the page, and focus goes to what replaced it.
 async function loadJoint() {
-    if (saving.value || !enabled.value) return;
-    const scope = base.value; const id = draft.value.id; saving.value = true; error.value = '';
+    if (asking.value || saving.value || !enabled.value) return;
+    const scope = base.value; const id = draft.value.id; asking.value = true; error.value = '';
     try {
         const r = await ApiService.get(`${scope}/meetings/${id}/joint` as any);
-        if (scope === base.value && editor.value === 'meeting' && draft.value.id === id) { joint.value = { candidates: r.data.data?.candidates ?? [] }; jointChoice.value = []; }
+        if (scope === base.value && editor.value === 'meeting' && draft.value.id === id) {
+            joint.value = { joint: r.data.data?.joint ?? [], candidates: r.data.data?.candidates ?? [] }; jointChoice.value = [];
+            nextTick(() => (dialog.value?.querySelector?.('[data-joint-focus="1"]') as HTMLElement | null)?.focus?.());
+        }
     } catch (e) { if (scope === base.value) error.value = message(e); }
-    finally { saving.value = false; }
+    finally { asking.value = false; }
 }
 // Undated, like a class's location: the lessons as they are stored become one lesson, or stop being one.
-function joinLessons(id: number, others: number[]) { return simpleWrite(`${base.value}/meetings/${id}/joint`, { meeting_ids: others.map(Number) }); }
+function joinLessons(id: number, others: number[]) { if (formChanged.value) return; return simpleWrite(`${base.value}/meetings/${id}/joint`, { meeting_ids: others.map(Number) }); }
 async function leaveJoint() {
-    if (saving.value || !enabled.value) return;
+    if (saving.value || formChanged.value || !enabled.value) return;
     saving.value = true; error.value = '';
     try { await ApiService.delete(`${base.value}/meetings/${draft.value.id}/joint` as any); await loadYear(); } catch (e) { error.value = message(e); } finally { saving.value = false; }
 }
@@ -348,7 +384,7 @@ async function save(confirm: boolean, together: number[] = []) {
         else if (method === 'put') await ApiService.put(url as any,body); else await ApiService.post(url as any,body);
         if (scope !== base.value || run !== generation || !enabled.value) return;
         closeEditor(); await loadYear();
-    } catch(e: any) { if (scope !== base.value || run !== generation || !enabled.value) return; if (e?.response?.status === 409 && Array.isArray(e.response.data?.clashes)) { warnings.value = e.response.data.clashes; if (body?.confirm_clashes) error.value = warnings.value.length ? 'The clashes have changed. Review the updated list before saving.' : 'There are no clashes now. Review the meeting and save again.'; warningFingerprint.value = e.response.data.clash_fingerprint; warnedRequest.value = { body: JSON.parse(JSON.stringify(body)), url, method }; nextTick(() => dialog.value?.focus?.()); } else error.value = message(e); }
+    } catch(e: any) { if (scope !== base.value || run !== generation || !enabled.value) return; if (e?.response?.status === 409 && Array.isArray(e.response.data?.clashes)) { warnings.value = e.response.data.clashes; togetherChoice.value = togetherLessons.value.length === 1 && !body?.joint_with?.length ? [togetherLessons.value[0].id] : []; if (body?.confirm_clashes) error.value = warnings.value.length ? 'The clashes have changed. Review the updated list before saving.' : 'There are no clashes now. Review the meeting and save again.'; warningFingerprint.value = e.response.data.clash_fingerprint; warnedRequest.value = { body: JSON.parse(JSON.stringify(body)), url, method }; nextTick(() => dialog.value?.focus?.()); } else error.value = message(e); }
     finally { saving.value = false; }
 }
 function keydown(e: KeyboardEvent) {
