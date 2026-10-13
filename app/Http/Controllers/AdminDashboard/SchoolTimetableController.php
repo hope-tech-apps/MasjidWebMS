@@ -281,10 +281,9 @@ class SchoolTimetableController extends Controller
         // A dated change that keeps its weekday and period is still the same joint lesson; a lesson that moves is not.
         $kept=$old!==null && (int)$old->weekday===$data['weekday'] && (int)$old->period_id===$data['period_id'];
         $with=$this->jointLessons($candidate,$data['joint_with']??[],$all,'joint_with');
+        $named=$with===[]?[]:[...array_column($with,'id'),...$this->laterVersions([$candidate,...$with],$all)];
         // The clashes below are worked out with these lessons already together, so only what remains is reported.
-        $mates=$kept?(collect($all)->firstWhere('id',$old->id)['joint']??[]):[];
-        foreach($with as $m) $mates=[...$mates,array_intersect_key($m,array_flip(['id','group_id','group_name','effective_from','effective_until'])),...($m['joint']??[])];
-        $mates=array_values(array_filter(array_column($mates,null,'id'),fn($m)=>$m['id']!==$old?->id && $m['group_id']!==$candidate['group_id']));
+        $mates=$this->jointMates($candidate,$year,$kept?$old->joint_key:null,$named,$all);
         if($mates!==[]) $candidate['joint']=$mates;
         $others=[];
         foreach($all as $m) {
@@ -298,10 +297,11 @@ class SchoolTimetableController extends Controller
         $previousTeachers=$inPlace?array_column(collect($all)->firstWhere('id',$old->id)['teachers']??[],'id'):[];
         $teachers=$data['teacher_ids']; unset($data['teacher_ids'],$data['confirm_clashes'],$data['clash_fingerprint'],$data['joint_with']);
         $key=$kept?$old->joint_key:null;
-        if($with!==[]) $key=$this->shareJointKey($year,$key,array_column($with,'id'));
+        if($named!==[]) $key=$this->shareJointKey($year,$key,$named);
         if($replace) $old->delete();
         if($old && !$inPlace && !$replace) { $old->effective_until=\Carbon\CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(); $old->save(); }
-        $row=$inPlace?$old:new TimetableMeeting(); $row->fill($data); $row->joint_key=$key; $row->save();
+        // An ordinary lesson never writes the key, so it still saves in the minutes of a release before the column exists.
+        $row=$inPlace?$old:new TimetableMeeting(); $row->fill($data); if($key!==null || $row->joint_key!==null) $row->joint_key=$key; $row->save();
         TimetableMeetingTeacher::where('meeting_id',$row->id)->delete(); foreach($teachers as $id) TimetableMeetingTeacher::create(['masjid_id'=>$year->masjid_id,'meeting_id'=>$row->id,'user_id'=>$id]);
         $row->setAttribute('group_name',$candidate['group_name']); $row->setAttribute('label',$candidate['label']);
         if ($previousTeachers) \App\Support\TimetableRetention::instance()->refreshAccounts($previousTeachers);
@@ -328,6 +328,23 @@ class SchoolTimetableController extends Controller
         }
         return $rows;
     }
+    /** A lesson changed from a later date is a second stored row of the same class, weekday and period: what the office says of a lesson holds for those rows too. */
+    private function laterVersions(array $lessons,array $all): array
+    {
+        $ids=[];
+        foreach($lessons as $l) foreach($all as $m) if($m['group_id']===$l['group_id'] && $m['weekday']===$l['weekday'] && $m['period_id']===$l['period_id'] && $m['effective_from']>$l['effective_from']) $ids[]=$m['id'];
+        return array_values(array_unique($ids));
+    }
+    /** The other classes' lessons that will carry this lesson's key once it is saved, kept by the reader's own rule: the review then reports exactly the clashes a read reports afterwards. */
+    private function jointMates(array $lesson,SchoolYear $year,?string $own,array $ids,array $all): array
+    {
+        if($own===null && $ids===[]) return [];
+        $keys=TimetableMeeting::where('school_year_id',$year->id)->whereNotNull('joint_key')->pluck('joint_key','id')->all();
+        $carried=array_filter([$own,...array_map(fn($id)=>$keys[$id]??null,$ids)]);
+        $mates=array_values(array_filter($all,fn($m)=>(in_array($m['id'],$ids,true) || in_array($keys[$m['id']]??null,$carried,true)) && TimetableReader::sameLesson($lesson,$m)));
+        usort($mates,fn($a,$b)=>[$a['group_name'],$a['id']]<=>[$b['group_name'],$b['id']]);
+        return array_map(fn($m)=>array_intersect_key($m,array_flip(['id','group_id','group_name','effective_from','effective_until'])),$mates);
+    }
     /** One key for a lesson and the lessons named with it. A joint lesson any of them was already part of becomes this one. */
     private function shareJointKey(SchoolYear $year,?string $own,array $ids): string
     {
@@ -351,7 +368,7 @@ class SchoolTimetableController extends Controller
     {
         return $this->result($this->jointData((int)$masjid_id,$this->year($year_id),(int)$meeting_id));
     }
-    /** Undated, like a class's usual location: the stored lessons are one lesson wherever their dates meet. */
+    /** Undated, like a class's usual location: the stored lessons, and their later dated versions, are one lesson wherever their dates meet. */
     public function joinLessons(Request $r,$masjid_id,$year_id,$meeting_id): JsonResponse
     {
         return $this->write($masjid_id,$year_id,function($year) use($r,$meeting_id) {
@@ -359,16 +376,16 @@ class SchoolTimetableController extends Controller
             $d=$r->validate(['meeting_ids'=>'required|array|min:1','meeting_ids.*'=>'integer|distinct']);
             $all=$this->reader->meetings($year->masjid_id,$year->id,null); $lesson=collect($all)->firstWhere('id',$m->id); abort_if($lesson===null,404);
             $with=$this->jointLessons($lesson,array_map('intval',$d['meeting_ids']),$all,'meeting_ids');
-            $this->shareJointKey($year,$m->joint_key,[$m->id,...array_column($with,'id')]);
+            $this->shareJointKey($year,$m->joint_key,[$m->id,...array_column($with,'id'),...$this->laterVersions([$lesson,...$with],$all)]);
             return $this->result($this->jointData($year->masjid_id,$year,$m->id));
         });
     }
-    /** Takes this class's lesson out. The others stay together; a class left alone reads as an ordinary lesson. */
+    /** Takes this class's lesson out, with its later dated versions, as joining took them in. The others stay together; a class left alone reads as an ordinary lesson. */
     public function leaveJointLesson($masjid_id,$year_id,$meeting_id): JsonResponse
     {
         return $this->write($masjid_id,$year_id,function($year) use($meeting_id) {
             $m=TimetableMeeting::where('school_year_id',$year->id)->findOrFail($meeting_id);
-            $m->joint_key=null; $m->save();
+            if($m->joint_key!==null) TimetableMeeting::where('school_year_id',$year->id)->where('joint_key',$m->joint_key)->where('group_id',$m->group_id)->where('weekday',$m->weekday)->where('period_id',$m->period_id)->whereDate('effective_from','>=',substr($m->effective_from,0,10))->update(['joint_key'=>null]);
             return $this->result($this->jointData($year->masjid_id,$year,$m->id));
         });
     }

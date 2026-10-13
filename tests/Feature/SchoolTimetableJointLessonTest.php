@@ -112,6 +112,9 @@ it('Timetable joint lesson joining across organisations years weekdays times cla
     // The same key on another weekday (only a forged row could carry it) is not the same lesson either.
     DB::table('timetable_meetings')->where('id',$wednesday)->update(['joint_key'=>$key]);
     expect(($this->lesson)($this->seniors,'2026-10-12',3))->not->toHaveKey('joint');
+    // Nor is a second row of the lesson's own class at the same clocks (forged too: one set cannot hold two periods at one time).
+    TimetableMeeting::create(['masjid_id'=>$this->school->id,'school_year_id'=>$this->year->id,'group_id'=>$this->juniors->id,'weekday'=>1,'period_id'=>$other['periods'][0]['id'],'kind'=>'activity','activity_name'=>'Forged','effective_from'=>'2026-10-10','joint_key'=>$key]);
+    expect(array_column(($this->lesson)($this->juniors)['joint'],'group_name'))->toBe(['Practice Thirds']);
     $elsewhere=app(TenantContext::class)->runWithout(function () use ($foreign,$key) {
         $g=Group::factory()->create(['masjid_id'=>$foreign->id,'kind'=>'class','name'=>'Practice Elsewhere']); $y=SchoolYear::create(['masjid_id'=>$foreign->id,'label'=>'Other year','first_day'=>'2026-09-07','last_day'=>'2027-06-25','meeting_weekdays'=>[1]]);
         $s=TimetablePeriodSet::create(['masjid_id'=>$foreign->id,'school_year_id'=>$y->id,'name'=>'Regular']); $p=TimetablePeriod::create(['masjid_id'=>$foreign->id,'period_set_id'=>$s->id,'name'=>'P6','starts_at'=>'14:00','ends_at'=>'14:45','kind'=>'teaching','position'=>1]);
@@ -259,13 +262,16 @@ it('Timetable joint lesson the teacher schedule shows one lesson naming both cla
     $schedule="/api/teacher/masjids/{$this->school->id}/schedule?week=2026-10-12"; $office=$this->base.'/schedules/teacher/'.$this->adam->id.'?as_of=2026-10-12';
     $helper=($this->teacher)('Practice Helper');
     $this->b=$this->putJson($this->base.'/meetings/'.$this->b,($this->body)($this->seniors,$this->p6,1,['teacher_ids'=>[$this->adam->id,$helper->id],'confirm_clashes'=>true,'clash_fingerprint'=>$this->putJson($this->base.'/meetings/'.$this->b,($this->body)($this->seniors,$this->p6,1,['teacher_ids'=>[$this->adam->id,$helper->id]]))->assertConflict()->json('clash_fingerprint')]))->assertOk()->json('data.id');
-    expect(count($this->getJson($office)->assertOk()->json('data.days.0.meetings')))->toBe(2);
+    expect(count($this->getJson($office)->assertOk()->json('data.days.0.meetings')))->toBe(2); expect(count($this->getJson($office)->json('data.meetings')))->toBe(2);
     Auth::forgetGuards(); Sanctum::actingAs($this->adam,['staff']);
     $two=$this->getJson($schedule)->assertOk()->json('data.days.0.meetings'); expect(count($two))->toBe(2); expect($two[0])->not->toHaveKey('joint');
     Auth::forgetGuards(); Sanctum::actingAs($this->admin,['staff']);
     ($this->join)($this->a,[$this->b])->assertOk();
     $officeDay=$this->getJson($office)->assertOk()->json('data.days.0.meetings');
     expect(count($officeDay))->toBe(1); expect($officeDay[0]['href'])->toBeNull(); expect($officeDay[0]['joint'])->toBe([['id'=>$this->b,'group_id'=>$this->seniors->id,'group_name'=>'Practice Seniors','href'=>null]]);
+    // The same answer's list for the selected weekday is that one lesson too, with the other class's extra teacher on it.
+    $selected=$this->getJson($office)->assertOk()->json('data.meetings');
+    expect(count($selected))->toBe(1); expect(array_column($selected[0]['co_teachers'],'name'))->toBe(['Practice Helper']); expect(array_column($selected[0]['joint'],'group_name'))->toBe(['Practice Seniors']);
     Auth::forgetGuards(); Sanctum::actingAs($this->adam,['staff']);
     $one=$this->getJson($schedule)->assertOk()->json('data.days.0.meetings');
     expect(count($one))->toBe(1);
@@ -286,6 +292,105 @@ it('Timetable joint lesson the teacher schedule shows one lesson naming both cla
     $this->travelTo(\Carbon\Carbon::parse('2026-10-19 16:00:00','UTC'));
     $later=$this->getJson("/api/teacher/masjids/{$this->school->id}/schedule")->assertOk()->json('data.today.meetings');
     expect(count($later))->toBe(1); expect($later[0])->not->toHaveKey('joint');
+});
+
+it('Timetable joint lesson joining covers each lesson\'s later dated versions and taking out takes them out too', function () {
+    // Both lessons already have a change waiting: the juniors gain a helper from 2 November, the seniors' lesson is renamed from 7 December.
+    $helper=($this->teacher)('Practice Helper');
+    $change=fn ($id,$body)=>$this->putJson($this->base.'/meetings/'.$id,$body+['confirm_clashes'=>true,'clash_fingerprint'=>$this->putJson($this->base.'/meetings/'.$id,$body)->assertConflict()->json('clash_fingerprint')])->assertOk()->json('data.id');
+    $a2=$change($this->a,($this->body)($this->juniors,$this->p6,1,['teacher_ids'=>[$this->adam->id,$helper->id],'effective_from'=>'2026-11-02']));
+    $b2=$change($this->b,($this->body)($this->seniors,$this->p6,1,['activity_name'=>'Games','effective_from'=>'2026-12-07']));
+    expect([$a2,$b2])->not->toContain($this->a)->not->toContain($this->b);
+    $dates=['2026-10-12','2026-11-09','2026-12-14'];
+    foreach ($dates as $date) expect(count(($this->clashes)($date)))->toBe(1);
+    // The office says so once, on the pair in effect today: it holds on every later date as well.
+    ($this->join)($this->a,[$this->b])->assertOk()->assertJsonPath('data.candidates',[]);
+    foreach ($dates as $date) expect(($this->clashes)($date))->toBe([]);
+    expect(array_column($this->getJson($this->base.'/meetings/'.$this->b.'/joint')->assertOk()->assertJsonPath('data.candidates',[])->json('data.joint'),'id'))->toBe([$this->a,$a2]);
+    expect(array_column(($this->lesson)($this->seniors,'2026-12-14')['joint'],'id'))->toBe([$a2]);
+    // Taking the class out is the same statement undone: its later version does not stay behind as a joint lesson.
+    $this->deleteJson($this->base.'/meetings/'.$this->a.'/joint')->assertOk()->assertJsonPath('data.joint',[]);
+    foreach ($dates as $date) expect(array_column(($this->clashes)($date),'kind'))->toBe(['teacher']);
+    expect(DB::table('timetable_meetings')->whereIn('id',[$this->a,$a2])->whereNotNull('joint_key')->count())->toBe(0);
+    expect(DB::table('timetable_meetings')->whereIn('id',[$this->b,$b2])->whereNotNull('joint_key')->count())->toBe(2);
+    // Named from the other side, the named lesson's later version comes with it just the same.
+    ($this->join)($this->b,[$this->a])->assertOk();
+    foreach ($dates as $date) expect(($this->clashes)($date))->toBe([]);
+    // From a date on: taking the later version out leaves the earlier weeks one lesson.
+    $this->deleteJson($this->base.'/meetings/'.$a2.'/joint')->assertOk();
+    expect(($this->clashes)('2026-10-12'))->toBe([]); expect(count(($this->clashes)('2026-11-09')))->toBe(1); expect(count(($this->clashes)('2026-12-14')))->toBe(1);
+    // Named while saving a lesson: the later versions of the named lesson and of the lesson being saved are covered, by the review and by the save.
+    $fourths=($this->class)('Practice Fourths'); $fifths=($this->class)('Practice Fifths');
+    $d=($this->place)($fourths,$this->p6,3)->assertCreated()->json('data.id');
+    $d2=$this->putJson($this->base.'/meetings/'.$d,($this->body)($fourths,$this->p6,3,['activity_name'=>'Games','effective_from'=>'2026-11-02']))->assertOk()->json('data.id');
+    $e=($this->place)($fifths,$this->p6,3,['teacher_ids'=>[]])->assertCreated()->json('data.id');
+    $e2=$this->putJson($this->base.'/meetings/'.$e,($this->body)($fifths,$this->p6,3,['teacher_ids'=>[],'activity_name'=>'Games','effective_from'=>'2026-11-02']))->assertOk()->json('data.id');
+    $this->putJson($this->base.'/meetings/'.$e,($this->body)($fifths,$this->p6,3))->assertConflict()->assertJsonCount(1,'clashes');
+    $e=$this->putJson($this->base.'/meetings/'.$e,($this->body)($fifths,$this->p6,3,['joint_with'=>[$d]]))->assertOk()->json('data.id');
+    expect(DB::table('timetable_meetings')->whereIn('id',[$d,$d2,$e,$e2])->whereNotNull('joint_key')->count())->toBe(4);
+    expect(DB::table('timetable_meetings')->whereIn('id',[$d,$d2,$e,$e2])->distinct()->pluck('joint_key')->count())->toBe(1);
+    expect(array_column(($this->lesson)($fifths,'2026-10-14',3)['joint'],'id'))->toBe([$d]); expect(array_column(($this->lesson)($fifths,'2026-11-11',3)['joint'],'id'))->toBe([$d2]);
+    expect(array_filter(($this->clashes)('2026-11-11'),fn($c)=>$c['weekday']===3))->toBe([]);
+    // A lesson of the same class in another period is not a later version of it.
+    $library=($this->place)($this->seniors,$this->p5,1,['activity_name'=>'Library','teacher_ids'=>[],'effective_from'=>'2026-12-07'])->assertCreated()->json('data.id');
+    $this->deleteJson($this->base.'/meetings/'.$this->b.'/joint')->assertOk(); ($this->join)($this->b,[$this->a])->assertOk();
+    expect(DB::table('timetable_meetings')->where('id',$library)->value('joint_key'))->toBeNull();
+});
+
+it('Timetable joint lesson a save is reviewed against the lessons it will be joined with and reports what a read reports afterwards', function () {
+    ($this->join)($this->a,[$this->b])->assertOk();
+    // The juniors' lesson ends on 1 November; the seniors' continues as a dated version that keeps the join.
+    $this->deleteJson($this->base.'/meetings/'.$this->a,['effective_from'=>'2026-11-02'])->assertOk();
+    $helper=($this->teacher)('Practice Helper');
+    $b2=$this->putJson($this->base.'/meetings/'.$this->b,($this->body)($this->seniors,$this->p6,1,['teacher_ids'=>[$this->adam->id,$helper->id],'effective_from'=>'2026-11-02']))->assertOk()->json('data.id');
+    // A third class is placed from 26 October with the juniors' lesson: it joins the whole lesson, so there is no clash to confirm.
+    $thirds=($this->class)('Practice Thirds');
+    ($this->place)($thirds,$this->p6,1,['effective_from'=>'2026-10-26'])->assertConflict()->assertJsonCount(3,'clashes');
+    ($this->place)($thirds,$this->p6,1,['effective_from'=>'2026-10-26','joint_with'=>[$this->a]])->assertCreated();
+    foreach (['2026-10-26','2026-11-09'] as $date) expect(($this->clashes)($date))->toBe([]);
+    expect(array_column(($this->lesson)($thirds,'2026-10-26')['joint'],'group_name'))->toBe(['Practice Juniors','Practice Seniors']);
+    expect(array_column(($this->lesson)($thirds,'2026-11-09')['joint'],'id'))->toBe([$b2]);
+    // What the join does not cover is still reviewed: a fourth class with the same teacher at that time, never named.
+    $fourths=($this->class)('Practice Fourths'); ($this->anyway)($fourths,$this->p6,1,['effective_from'=>'2026-11-02']);
+    $fifths=($this->class)('Practice Fifths');
+    $rest=($this->place)($fifths,$this->p6,1,['effective_from'=>'2026-11-02','joint_with'=>[$b2]])->assertConflict()->assertJsonCount(1,'clashes');
+    expect(array_column($rest->json('clashes.0.meetings'),'group_name'))->toBe(['Practice Fourths','Practice Fifths']);
+    expect(array_column($rest->json('clashes.0.meetings.1.joint'),'group_name'))->toBe(['Practice Seniors','Practice Thirds']);
+});
+
+it('Timetable joint lesson a location\'s day shows the one lesson with every class\'s teachers and names', function () {
+    $hall=$this->postJson($this->base.'/rooms',['name'=>'Practice Hall'])->assertCreated()->json('data.id');
+    foreach ([$this->juniors,$this->seniors] as $g) $this->putJson($this->base.'/classes/'.$g->id.'/room',['room_id'=>$hall])->assertOk();
+    $helper=($this->teacher)('Practice Helper'); $body=($this->body)($this->seniors,$this->p6,1,['activity_name'=>'Games','teacher_ids'=>[$this->adam->id,$helper->id]]);
+    $this->b=$this->putJson($this->base.'/meetings/'.$this->b,$body+['confirm_clashes'=>true,'clash_fingerprint'=>$this->putJson($this->base.'/meetings/'.$this->b,$body)->assertConflict()->json('clash_fingerprint')])->assertOk()->json('data.id');
+    $day=fn ()=>$this->getJson($this->base.'/schedules/location/'.$hall.'?as_of=2026-10-12')->assertOk()->json('data.days.0.meetings');
+    expect(count($day()))->toBe(2);
+    ($this->join)($this->a,[$this->b])->assertOk();
+    $cards=$day(); expect(count($cards))->toBe(1);
+    expect($cards[0]['group_name'])->toBe('Practice Juniors'); expect(array_column($cards[0]['joint'],'group_name'))->toBe(['Practice Seniors']);
+    expect(array_column($cards[0]['teachers'],'name'))->toBe(['Practice Coach','Practice Helper']); expect(array_column($cards[0]['co_teachers'],'name'))->toBe(['Practice Coach','Practice Helper']);
+    expect($cards[0]['label'])->toBe('PE / Games'); expect($cards[0]['room_name'])->toBe('Practice Hall');
+    // Each class's own day keeps its own row, teachers and name.
+    $own=$this->getJson($this->base.'/schedules/class/'.$this->juniors->id.'?as_of=2026-10-12')->assertOk()->json('data.days.0.meetings');
+    expect(array_column($own[0]['teachers'],'name'))->toBe(['Practice Coach']); expect($own[0]['label'])->toBe('PE');
+});
+
+it('Timetable joint lesson before its migration has run the timetable still reads and an ordinary lesson still saves', function () {
+    // A release puts the code in place first and migrates a moment later; every school with the timetable on is read in between.
+    $migration=require database_path('migrations/2026_10_14_110000_add_joint_key_to_timetable_meetings.php');
+    $migration->down();
+    try {
+        expect(\Illuminate\Support\Facades\Schema::hasColumn('timetable_meetings','joint_key'))->toBeFalse();
+        $week=$this->getJson($this->base.'/week?group_id='.$this->juniors->id.'&as_of=2026-10-12&include_clashes=1')->assertOk()->json('data');
+        expect(array_column($week['meetings'],'id'))->toBe([$this->a]); expect($week['meetings'][0])->not->toHaveKey('joint'); expect(count($week['clashes']))->toBe(1);
+        expect(count($this->getJson($this->base.'/schedules/school?as_of=2026-10-12&weekday=1')->assertOk()->json('data.meetings')))->toBe(2);
+        $thirds=($this->class)('Practice Thirds');
+        $id=($this->place)($thirds,$this->p5,1,['teacher_ids'=>[]])->assertCreated()->json('data.id');
+        $this->putJson($this->base.'/meetings/'.$id,($this->body)($thirds,$this->p5,1,['teacher_ids'=>[],'activity_name'=>'Library']))->assertOk();
+        $this->putJson($this->base.'/meetings/'.$this->a,($this->body)($this->juniors,$this->p5,1,['effective_from'=>'2026-11-02']))->assertOk();
+        Auth::forgetGuards(); Sanctum::actingAs($this->adam,['staff']);
+        expect(count($this->getJson("/api/teacher/masjids/{$this->school->id}/schedule?week=2026-10-12")->assertOk()->json('data.days.0.meetings')))->toBe(2);
+    } finally { $migration->up(); }
 });
 
 it('Timetable joint lesson adds no query for a school without one and exactly one for a narrower lens that holds one', function () {

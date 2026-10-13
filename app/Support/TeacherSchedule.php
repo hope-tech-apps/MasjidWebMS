@@ -52,7 +52,11 @@ final class TeacherSchedule
                     if ($with !== []) $row['joint'] = array_values(array_map(fn ($c) => ['id'=>$c['id'], 'group_id'=>$c['group_id'], 'group_name'=>$c['group_name'], 'href'=>null], $with));
                     $rows[] = $row;
                 }
-                $rows = self::asOneLesson($rows);
+                // One slot for a lesson this teacher takes with two classes at once: the first class's, naming the others with their own links.
+                $rows = TimetableReader::asOneLesson($rows, 'co_teachers', function (array $slot, array $row): array {
+                    foreach ($slot['joint'] ?? [] as $j => $class) if ($class['id'] === $row['id']) $slot['joint'][$j]['href'] = $row['href'];
+                    return $slot;
+                });
             }
             return ['date'=>$date, 'weekday'=>$weekday, 'in_year'=>$year !== null, 'meeting_day'=>$meets, 'reason'=>$closure?->reason, 'closed'=>$closure !== null, 'meetings'=>$rows];
         };
@@ -70,26 +74,5 @@ final class TeacherSchedule
             'timezone'=>$calendar->timezone(), 'week_start'=>$start->toDateString(), 'week_end'=>$end,
             'today'=>$todayData + ['state'=>$state], 'days'=>$days,
         ];
-    }
-
-    /** A lesson this teacher takes with two classes at once is one slot: the first class's, naming the others with their own links. */
-    private static function asOneLesson(array $rows): array
-    {
-        $kept = [];
-        foreach ($rows as $row) {
-            foreach ($kept as $i => $first) {
-                if (! TimetableReader::together($first, $row)) continue;
-                foreach ($first['joint'] ?? [] as $j => $class) if ($class['id'] === $row['id']) $kept[$i]['joint'][$j]['href'] = $row['href'];
-                foreach ($row['co_teachers'] as $t) if (! in_array($t['id'], array_column($kept[$i]['co_teachers'], 'id'), true)) $kept[$i]['co_teachers'][] = $t;
-                usort($kept[$i]['co_teachers'], fn ($a, $b) => [$a['name'], $a['id']] <=> [$b['name'], $b['id']]);
-                // Each class's row may name the lesson or its place differently; say each once.
-                if ($first['kind'] === 'class' && $row['kind'] !== 'class') { $kept[$i]['kind'] = $row['kind']; $kept[$i]['label'] = $row['label']; }
-                elseif ($row['kind'] !== 'class' && ! in_array($row['label'], explode(' / ', $kept[$i]['label']), true)) $kept[$i]['label'] .= ' / '.$row['label'];
-                if ($row['room_name'] !== null && ! in_array($row['room_name'], explode(', ', (string) $kept[$i]['room_name']), true)) $kept[$i]['room_name'] = $kept[$i]['room_name'] === null ? $row['room_name'] : $kept[$i]['room_name'].', '.$row['room_name'];
-                continue 2;
-            }
-            $kept[] = $row;
-        }
-        return $kept;
     }
 }

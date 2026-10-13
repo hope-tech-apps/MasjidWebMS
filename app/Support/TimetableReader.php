@@ -64,13 +64,12 @@ final class TimetableReader
         // A whole-school read already holds every partner; a narrower lens asks once for the other classes' rows.
         $pool = $keys === [] ? [] : ($lens === 'school' ? array_map($slot, $meetings) : $this->jointRows($school, $years, $date, $keys));
         foreach ($meetings as $i => $m) {
-            $key = $m['joint_key']; unset($meetings[$i]['joint_key']);
+            // Read as absent until the column exists: a release puts the code in place before its migration runs.
+            $key = $m['joint_key'] ?? null; unset($meetings[$i]['joint_key']);
             if ($key === null) continue;
             $partners = [];
             foreach ($pool as $p) {
-                if ($p['joint_key'] !== $key || $p['group_id'] === $m['group_id'] || $p['school_year_id'] !== $m['school_year_id'] || $p['weekday'] !== $m['weekday']
-                    || $p['starts_at'] !== $m['starts_at'] || $p['ends_at'] !== $m['ends_at']) continue;
-                if (max($p['effective_from'], $m['effective_from']) > min($p['effective_until'] ?? '9999-12-31', $m['effective_until'] ?? '9999-12-31')) continue;
+                if ($p['joint_key'] !== $key || ! self::sameLesson($p, $m)) continue;
                 $partners[] = ['id'=>$p['id'], 'group_id'=>$p['group_id'], 'group_name'=>$p['group_name'], 'effective_from'=>$p['effective_from'], 'effective_until'=>$p['effective_until']];
             }
             usort($partners, fn ($a, $b) => [$a['group_name'], $a['id']] <=> [$b['group_name'], $b['id']]);
@@ -89,18 +88,42 @@ final class TimetableReader
                 'starts_at'=>substr($r->starts_at,0,5), 'ends_at'=>substr($r->ends_at,0,5), 'effective_from'=>substr($r->effective_from,0,10), 'effective_until'=>$r->effective_until===null?null:substr($r->effective_until,0,10)])->all();
     }
 
+    /**
+     * The facts two rows that share a key must agree on to be one lesson. The writer asks the same question of a
+     * lesson it is about to save, so a save's review reports exactly the clashes a read will report afterwards.
+     */
+    public static function sameLesson(array $a, array $b): bool
+    {
+        return $a['group_id'] !== $b['group_id'] && $a['school_year_id'] === $b['school_year_id'] && $a['weekday'] === $b['weekday']
+            && $a['starts_at'] === $b['starts_at'] && $a['ends_at'] === $b['ends_at']
+            && max($a['effective_from'], $b['effective_from']) <= min($a['effective_until'] ?? '9999-12-31', $b['effective_until'] ?? '9999-12-31');
+    }
+
     /** The reader has already decided that these two rows are one lesson their classes take together. */
     public static function together(array $a, array $b): bool
     {
         return in_array($b['id'], array_column($a['joint'] ?? [], 'id'), true) || in_array($a['id'], array_column($b['joint'] ?? [], 'id'), true);
     }
 
-    /** Rows shown side by side read as one lesson: the first of each joint lesson stays, and its `joint` names the rest. */
-    public static function asOneLesson(array $rows): array
+    /**
+     * Rows shown side by side read as one lesson: the first of each joint lesson stays and its `joint` names the
+     * rest. What another class's row adds is said once on it: its teachers (under `$people`), a different name for
+     * the lesson, a different place. `$also` carries over whatever only the caller's rows hold.
+     */
+    public static function asOneLesson(array $rows, string $people = 'teachers', ?callable $also = null): array
     {
         $kept = [];
         foreach ($rows as $row) {
-            foreach ($kept as $first) if (self::together($first, $row)) continue 2;
+            foreach ($kept as $i => $first) {
+                if (! self::together($first, $row)) continue;
+                foreach ($row[$people] as $t) if (! in_array($t['id'], array_column($kept[$i][$people], 'id'), true)) $kept[$i][$people][] = $t;
+                usort($kept[$i][$people], fn ($a, $b) => [$a['name'], $a['id']] <=> [$b['name'], $b['id']]);
+                if ($first['kind'] === 'class' && $row['kind'] !== 'class') { $kept[$i]['kind'] = $row['kind']; $kept[$i]['label'] = $row['label']; }
+                elseif ($row['kind'] !== 'class' && ! in_array($row['label'], explode(' / ', $kept[$i]['label']), true)) $kept[$i]['label'] .= ' / '.$row['label'];
+                if ($row['room_name'] !== null && ! in_array($row['room_name'], explode(', ', (string) $kept[$i]['room_name']), true)) $kept[$i]['room_name'] = $kept[$i]['room_name'] === null ? $row['room_name'] : $kept[$i]['room_name'].', '.$row['room_name'];
+                if ($also !== null) $kept[$i] = $also($kept[$i], $row);
+                continue 2;
+            }
             $kept[] = $row;
         }
         return $kept;
