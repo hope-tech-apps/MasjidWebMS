@@ -27,6 +27,7 @@ export type AsideMenuItem = {
     // NEVER use this for a module key: its strict `=== true` hides the item
     // whenever the payload is silent, which is every default-on screen.
     requiresCapability?: CapabilityKey;
+    requiresAnyCapability?: CapabilityKey[];
     // A MODULE (kind `module`): the item is hidden only when the organisation's
     // `modules_off` names it — for its administrators hidden, for a SuperAdmin
     // listed under "Switched off for {org}". A payload with no `modules_off`

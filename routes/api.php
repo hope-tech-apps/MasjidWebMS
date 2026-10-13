@@ -236,6 +236,13 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
             });
 
         Route::prefix('{masjid_id}')
+            ->middleware(['auth:family', 'member.active', 'member.token', 'family.tenant'])
+            ->whereNumber('masjid_id')->group(function () {
+                Route::get('/member-questions', [\App\Http\Controllers\Mobile\Member\MemberQuestionsController::class, 'index'])->middleware(['capability:app_member_questions','crm','throttle:60,1'])->name('mobile.member.me.questions.show');
+                Route::put('/member-questions', [\App\Http\Controllers\Mobile\Member\MemberQuestionsController::class, 'update'])->middleware(['capability:app_member_questions','crm','throttle:60,1'])->name('mobile.member.me.questions.update');
+            });
+
+        Route::prefix('{masjid_id}')
             ->middleware(['auth:family', 'member.active', 'member.token', 'family.tenant', 'crm'])
             ->whereNumber('masjid_id')
             ->group(function () {

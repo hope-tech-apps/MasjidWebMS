@@ -48,7 +48,7 @@ const dashboardRoutes: RouteRecordRaw[] = [
             {
                 path: 'app-tabs',
                 name: 'masjid.appTabs',
-                meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresCapability: 'app_bottom_tabs', pageTitle: 'App tabs' },
+                meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresAnyCapability: ['app_bottom_tabs','app_volunteer_entry'], pageTitle: 'App tabs' },
                 component: () => import('@/views/dashboard/AppTabsView.vue')
             },
             ...announcementsManagementRoutes,

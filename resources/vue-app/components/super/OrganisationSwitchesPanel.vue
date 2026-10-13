@@ -96,6 +96,8 @@
                 </ul>
             </div>
 
+            <MemberQuestionOptions v-if="payload?.groups.some(group => group.entries.some(entry => entry.key === 'app_member_questions' && entry.enabled))" :org-id="masjid.id" />
+
             <!-- Rows left out by rowRenders(): switches for screens this org type has no place for. -->
             <p v-if="hiddenLabels.length" class="small text-muted mb-0">
                 Switches for screens a {{ orgType }} does not have are not shown: {{ hiddenLabels.join(', ') }}.
@@ -152,6 +154,7 @@
 </template>
 
 <script setup lang="ts">
+import MemberQuestionOptions from '@/components/super/MemberQuestionOptions.vue';
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import { MASJID_DASHBOARD_ASIDE_MENU } from '@/core/constants/dashboardAsideMenuItems';
 import { detailsScreenTitle, menuItemTitle } from '@/core/access/orgAccess';
@@ -311,7 +314,7 @@ function columnEnabled(entry: CapabilityEntry): boolean {
 }
 
 const notSwitchable = computed<{ to: string; title: string; lever: string }[]>(() => itemsForType.value
-    .filter(item => !item.requiresModule && !item.requiresCapability)
+    .filter(item => !item.requiresModule && !item.requiresCapability && !item.requiresAnyCapability)
     .map(item => ({ to: item.to, title: menuItemTitle(item, term), lever: leverFor(item) })));
 
 function leverFor(item: AsideMenuItem): string {

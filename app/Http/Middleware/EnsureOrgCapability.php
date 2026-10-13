@@ -45,6 +45,13 @@ class EnsureOrgCapability
 
     public function handle(Request $request, Closure $next, string ...$capabilities): Response
     {
+        foreach (['app_member_questions','app_volunteer_entry'] as $key) {
+            if (!in_array($key,$capabilities,true)) continue;
+            $id=(int)($this->tenant->get() ?? $request->route('masjid_id'));
+            $org=\App\Support\ClassSubjectMode::loadedOrganisation($id) ?? Masjid::find($id);
+            abort_unless($org !== null && !$org->trashed() && $org->hasCapability($key),404);
+            return $next($request);
+        }
         if (in_array('app_bottom_tabs', $capabilities, true)) {
             $id = $this->tenant->get() ?? $request->route('masjid_id');
             abort_unless(\App\Support\ClassSubjectMode::bottomTabsEnabled($id), 404);

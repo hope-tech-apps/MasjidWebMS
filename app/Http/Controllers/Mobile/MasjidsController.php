@@ -101,9 +101,8 @@ class MasjidsController extends Controller
 
     public function show($masjid_id)
     {
-        $masjid = Cache::remember(
-            MobileCache::masjidKey((int) $masjid_id, MobileCache::SHOW),
-            MobileCache::TTL_MEDIUM,
+        $masjid = \App\Support\ShowCache::remember(
+            (int)$masjid_id,
             function () use ($masjid_id) {
                 $masjid = Masjid::with(
                     'logo',
@@ -144,8 +143,11 @@ class MasjidsController extends Controller
         );
 
         $data = $masjid->toArray();
-        if (\App\Support\AppBottomTabs::enabled($masjid)) {
-            $tabs = \App\Support\AppBottomTabs::mobile((int) $masjid_id);
+        if (\App\Support\MemberQuestions::enabled($masjid)) $data['onboarding'] = ['questions'=>true] + \App\Support\MemberQuestions::options((int)$masjid->id);
+        $volunteer = \App\Support\AppVolunteer::payload($masjid);
+        if ($volunteer !== null) $data['volunteer'] = $volunteer;
+        if (\App\Support\AppBottomTabs::present($masjid)) {
+            $tabs = \App\Support\AppBottomTabs::mobile((int) $masjid_id, \App\Support\AppVolunteer::enabled($masjid), $volunteer);
             if ($tabs !== null) $data['bottom_tabs'] = $tabs;
         }
 

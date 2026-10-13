@@ -15,6 +15,8 @@ async function screen(chosen: any[] = [], on = true, refusal = false) {
     (globalThis as any).window = { addEventListener: (name: string, handler: any) => listeners.set(name,handler), removeEventListener: (name: string) => listeners.delete(name) };
     let confirm = false;
     const s = await mountSfc('views/dashboard/AppTabsView.vue', {}, {
+        '@/components/contacts/AppVolunteerField.vue': { default: {} },
+        '@/core/tenancy/unsavedChanges': await loadTs('core/tenancy/unsavedChanges.ts', {}),
         '@/core/types/config/BackendApiRoutes': {},
         vue, 'vue-router': { onBeforeRouteLeave: (fn: any) => guards.push(fn) },
         sweetalert2: { default: { fire: async () => ({ isConfirmed: confirm }) } },
@@ -112,7 +114,7 @@ test('App tabs menu and route match settings roles, dark for every role, and OFF
     for (const type of ['Teacher','LunchStaff']) assert.equal(access.menuItemState(item,type,{capabilities:{app_bottom_tabs:true}},'masjid'), 'hidden');
     for (const type of ['SuperAdmin','MasjidAdmin']) assert.equal(access.menuItemState(item,type,{capabilities:{app_bottom_tabs:true}},'community'), 'visible');
     const routes = readFileSync('resources/vue-app/router/routes/dashboardLayoutRoutes.ts', 'utf8');
-    assert.match(routes, /path: 'app-tabs'[\s\S]*?allowedUsers: \['SuperAdmin', 'MasjidAdmin'\][\s\S]*?requiresCapability: 'app_bottom_tabs'/);
+    assert.match(routes, /path: 'app-tabs'[\s\S]*?allowedUsers: \['SuperAdmin', 'MasjidAdmin'\][\s\S]*?requiresAnyCapability: \['app_bottom_tabs','app_volunteer_entry'\]/);
 });
 
 test('App tabs responsive rules contain the phone preview and use logical spacing', () => {
@@ -136,4 +138,37 @@ test('App tabs JSON encoding survives the real ApiService global form default', 
     await service.default.put('/api/admin/masjids/1/app-bottom-tabs', { feature_ids: [] }, 'url', { 'Content-Type': 'application/json' });
     assert.equal(wire.headers.get('Content-Type'), 'application/json');
     assert.equal(wire.data, '{"feature_ids":[]}');
+});
+
+test('real organisation switch asks registered mounted draft before any reset and cancel preserves the tenant', async () => {
+    const registration = await loadTs('core/tenancy/unsavedChanges.ts', {});
+    const auth = vue.reactive({ dashboardMasjidId: 1, user: { memberships: [{ masjid_id: 1, org_name: 'One', role: 'admin' }, { masjid_id: 2, org_name: 'Two', role: 'admin' }] }, saveDashboardMasjidId(id: number) { this.dashboardMasjidId = id; } });
+    const org = vue.reactive({ masjid: { id: 1, capabilities: { app_bottom_tabs: true } }, async fetchMasjid(id: number) { this.masjid = { id, capabilities: { app_bottom_tabs: true } }; } });
+    let confirm = false; let prompts = 0; let resets = 0; let epoch = 0;
+    const originalWindow = (globalThis as any).window;
+    (globalThis as any).window = { addEventListener() {}, removeEventListener() {} };
+    const screen = await mountSfc('views/dashboard/AppTabsView.vue', {}, {
+        vue, 'vue-router': { onBeforeRouteLeave() {} }, sweetalert2: { default: { fire: async () => { prompts++; return { isConfirmed: confirm }; } } },
+        '@/components/contacts/AppVolunteerField.vue': { default: {} },
+        '@/core/tenancy/unsavedChanges': registration,
+        '@/stores/authStore': { useAuthStore: () => auth }, '@/stores/masjidStore': { useMasjidStore: () => org },
+        '@/core/services/ApiService': { default: { get: async () => ({ data: { data: { features, chosen: [] } } }) } },
+    });
+    const storeModule = await loadTs('stores/tenantSwitchStore.ts', {
+        vue, pinia: { defineStore: (_: string, setup: any) => setup }, '@/router/router': { default: { push: async () => {} } },
+        '@/stores/authStore': { useAuthStore: () => auth }, '@/stores/masjidStore': { useMasjidStore: () => org },
+        '@/stores/plugins/tenantStoreReset': { resetTenantScopedStores: () => { resets++; org.masjid = null as any; return []; } },
+        '@/core/tenancy/tenantRequests': { bumpTenantEpoch: () => epoch++, forgetServerTenant() {}, serverTenantId: vue.ref(1) },
+        '@/core/types/data/Membership': { grantedMemberships: (x: any) => x, membershipLabel: () => 'Two' },
+        '@/core/tenancy/unsavedChanges': registration,
+    });
+    try {
+        await flush(); click(screen.all(n => n.textContent === 'Add to tabs' && n.tag === 'button')[0]); await flush();
+        const switcher = storeModule.useTenantSwitchStore();
+        assert.equal(await switcher.switchTo(2), false);
+        assert.equal(prompts, 1); assert.equal(auth.dashboardMasjidId, 1); assert.equal(resets, 0); assert.equal(epoch, 0);
+        assert.match(screen.text(), /Unsaved changes/);
+        confirm = true; assert.equal(await switcher.switchTo(2), true);
+        assert.equal(prompts, 2); assert.equal(auth.dashboardMasjidId, 2); assert.equal(resets, 1); assert.equal(epoch, 1);
+    } finally { screen.unmount(); (globalThis as any).window = originalWindow; }
 });

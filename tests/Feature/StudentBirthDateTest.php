@@ -174,6 +174,8 @@ class StudentBirthDateTest extends TestCase
             'app/Http/Controllers/AdminDashboard/GroupBirthDateController.php',
             'app/Http/Controllers/AdminDashboard/GroupMembershipsController.php',
             'app/Http/Controllers/Teacher/TeacherController.php',
+            // Current-member adult refusal only; no age or date enters a payload.
+            'app/Support/MemberQuestions.php',
         ], $this->filesCalling('StudentAge::'), 'who may ask for an age');
 
         // Nobody reads the attribute as a property: that would decrypt outside

@@ -51,6 +51,23 @@ class MobileAppFeature extends Model implements HasMedia
         );
     }
 
+    protected static function booted(): void
+    {
+        static::saving(function (self $feature) {
+            if (in_array(self::normaliseKey($feature->key), ['home','volunteer'], true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['key'=>'Home and Volunteer are reserved app keys.']);
+            }
+        });
+        static::saved(function (self $feature) {
+            if (! $feature->wasChanged(['key', 'name'])) return;
+            \Illuminate\Support\Facades\DB::afterCommit(function () use ($feature) {
+                foreach (\Illuminate\Support\Facades\DB::table('masjid_mobile_app_features')->where('feature_id', $feature->id)->pluck('masjid_id') as $id) {
+                    \App\Support\MobileCache::flushMasjid((int) $id, \App\Support\MobileCache::SHOW);
+                }
+            });
+        });
+    }
+
     public function icon()
     {
         // model_type is pinned so a `featuresIcons` row that some other model

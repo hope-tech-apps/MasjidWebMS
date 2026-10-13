@@ -96,7 +96,12 @@ class MobileCache
     /** Build a per-masjid cache key. */
     public static function masjidKey(int $masjidId, string $resource): string
     {
-        return "mobile.masjid.{$masjidId}.{$resource}";
+        $base = "mobile.masjid.{$masjidId}.{$resource}";
+        if ($resource !== self::SHOW) return $base;
+        if (Cache::getStore() instanceof \Illuminate\Cache\DatabaseStore) return $base.'.fenced.v1';
+        // Retire a fill's address rather than allowing it to undo an invalidation.
+        $generation = Cache::get($base.'.generation');
+        return $generation === null ? $base : $base.'.'.$generation;
     }
 
     /** Build a global (non-masjid-scoped) cache key. */
@@ -107,7 +112,15 @@ class MobileCache
 
     public static function flushMasjid(int $masjidId, string $resource): void
     {
-        Cache::forget(self::masjidKey($masjidId, $resource));
+        $key = self::masjidKey($masjidId, $resource);
+        if ($resource === self::SHOW && Cache::getStore() instanceof \Illuminate\Cache\DatabaseStore) {
+            Cache::forever($key,['show_revision'=>(string) \Illuminate\Support\Str::uuid()]);
+            return;
+        }
+        if ($resource === self::SHOW) {
+            Cache::forever("mobile.masjid.{$masjidId}.{$resource}.generation", (string) \Illuminate\Support\Str::uuid());
+        }
+        Cache::forget($key);
     }
 
     public static function flushGlobal(string $resource, $suffix = null): void

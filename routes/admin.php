@@ -235,6 +235,15 @@ Route::prefix('admin')->group(function () {
                 Route::post('/', 'updateDetails');
             });
 
+            Route::prefix('{masjid_id}/app-volunteer')->middleware('capability:app_volunteer_entry')
+                ->controller(\App\Http\Controllers\AdminDashboard\AppVolunteerController::class)->group(function () {
+                    Route::get('/', 'index'); Route::put('/', 'update');
+                });
+            Route::prefix('{masjid_id}/member-question-options')->middleware('capability:app_member_questions')
+                ->controller(\App\Http\Controllers\AdminDashboard\MemberQuestionsController::class)->group(function () {
+                    Route::get('/', 'options'); Route::put('/', 'updateOptions');
+                });
+
             Route::prefix('{masjid_id}/app-bottom-tabs')->middleware('capability:app_bottom_tabs')
                 ->controller(\App\Http\Controllers\AdminDashboard\AppBottomTabsController::class)->group(function () {
                     Route::get('/', 'index');
@@ -951,6 +960,7 @@ Route::prefix('admin')->group(function () {
                 // endpoints, per-route. It runs AFTER auth:sanctum + admin + tenant,
                 // so a MasjidAdmin (bridged to the masjid-admin role, which holds the
                 // full CRM permission set) keeps the exact access they have today.
+                Route::get('{masjid_id}/contacts/from-app-filters', [\App\Http\Controllers\AdminDashboard\MemberQuestionsController::class, 'filters'])->middleware(['permission:view contacts','capability:app_member_questions']);
                 Route::prefix('{masjid_id}/contacts')->controller(ContactsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     Route::post('/', 'store')->middleware('permission:manage contacts');
@@ -994,6 +1004,8 @@ Route::prefix('admin')->group(function () {
                 // durable suppression list so it survives a merge or a
                 // re-import. `manage contacts` — writing consent is editing the
                 // contact record. No permission is minted.
+                Route::get('{masjid_id}/contacts/{contact_id}/from-app', [\App\Http\Controllers\AdminDashboard\MemberQuestionsController::class, 'show'])->middleware(['permission:view contacts','capability:app_member_questions']);
+
                 Route::prefix('{masjid_id}/contacts/{contact_id}/sms-consent')
                     ->controller(\App\Http\Controllers\AdminDashboard\ContactSmsConsentController::class)
                     ->group(function () {

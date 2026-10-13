@@ -70,6 +70,10 @@ router.beforeEach((to, from, next) => {
                         // navigation through to avoid a race that would break the route.
                         if (to.meta.requiresCrm && masjidStore.masjid && !masjidStore.masjid.crm_enabled) {
                             next('/auth/401');
+                        } else if (to.meta.requiresAnyCapability?.includes('app_volunteer_entry')
+                            && masjidStore.masjid?.capabilities
+                            && !to.meta.requiresAnyCapability.some(key => hasGrant(masjidStore.masjid,key))) {
+                            next('/auth/404');
                         } else if (['app_bottom_tabs', 'school_timetable', 'family_duty_rota'].includes(to.meta.requiresCapability as string)
                             && masjidStore.masjid?.capabilities
                             && masjidStore.masjid.capabilities[to.meta.requiresCapability as string] !== true) {

@@ -135,6 +135,7 @@ class MemberAccountDeletionCoverageTest extends TestCase
             // without having one there, so this line changes no outcome.
             'contact_portal_invites' => ['contact_id'],
             'contact_service_interests' => ['contact_id'],
+            'member_question_answers' => ['contact_id'],
             'mobile_app_users' => ['contact_id'],
         ], MemberAccountDeletion::LOGIN_RECORDS);
 

@@ -60,11 +60,20 @@ class ContactsController extends Controller
         $trashed = (string) $request->query('trashed', '');
         $tagId = (int) $request->query('tag_id', 0);
 
+        $appFilters = $request->only(['occupation_id','help_id','interest_id']);
+        if ($appFilters !== []) {
+            $org=\App\Support\ClassSubjectMode::loadedOrganisation((int)$masjid_id) ?? \App\Models\Masjid::find($masjid_id);
+            if (!\App\Support\MemberQuestions::enabled($org)) $appFilters=[];
+        }
+
         $contacts = Contact::query()
             ->with(['tags' => fn ($query) => $query->select('contact_tags.id', 'contact_tags.name')->orderBy('contact_tags.name')])
             ->when($trashed === 'with', fn ($query) => $query->withTrashed())
             ->when($trashed === 'only', fn ($query) => $query->onlyTrashed())
             ->when($tagId > 0, fn ($query) => $query->whereHas('tags', fn ($tags) => $tags->whereKey($tagId)))
+            ->when(!empty($appFilters['occupation_id']), fn($q)=>$q->whereIn('contacts.id', \Illuminate\Support\Facades\DB::table('member_question_answers')->where('masjid_id',$masjid_id)->where('occupation_id',(int)$appFilters['occupation_id'])->select('contact_id')))
+            ->when(!empty($appFilters['help_id']), fn($q)=>$q->whereIn('contacts.id', \Illuminate\Support\Facades\DB::table('member_question_answers as answer')->join('member_question_helps as help','help.answer_id','=','answer.id')->where('answer.masjid_id',$masjid_id)->where('help.masjid_id',$masjid_id)->where('help.option_id',(int)$appFilters['help_id'])->select('answer.contact_id')))
+            ->when(!empty($appFilters['interest_id']), fn($q)=>$q->whereIn('contacts.id', \Illuminate\Support\Facades\DB::table('contact_service_interests as interest')->join('services','services.id','=','interest.service_id')->where('interest.masjid_id',$masjid_id)->where('services.masjid_id',$masjid_id)->where('interest.service_id',(int)$appFilters['interest_id'])->select('interest.contact_id')))
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('first_name', 'like', "%{$search}%")
@@ -385,6 +394,7 @@ class ContactsController extends Controller
             // none: without it the roster's Age cell would go blank on a merge.
             $this->carryAgeGiven($source, $target, $actor);
 
+            \App\Support\MemberQuestions::merge($source, $target);
             $source->forceDelete();   // the placeholder is fully absorbed
         });
 

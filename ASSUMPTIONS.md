@@ -464,3 +464,10 @@ Verified base behavior: teacher permits non-meeting and outside-year dates and u
 
 ## App bottom tabs — 2026-10-13
 Verified catalogue has no Home row; exact home key/Home name reserved for a future insertion. Verified native launch feature endpoint from route/controller/docs is /mobile/masjids/{id}/features; v1 activated_features and mobile detail additionally carry identical preferences. Actual new iPhone/Android decoder behavior is unverified, because native builds belong to another session. General settings authorizes MasjidAdmin/SuperAdmin without a person-level Spatie permission, so reused that fence. Unknown client feature identities skipped; server absent/null restores defaults. No inherited child preferences under the explicit owner brief.
+
+## App release 1.0.1 part 2 — 2026-10-13
+- Adult app member means the signed-in Contact answering for themselves; reject known under-18 ages and class-member/student records. A contact with no age on file is not treated as a child. No child or student write surface is added.
+- Native apps own first-open welcome, skippable question navigation and side-menu handling of the new Volunteer carrier. This server carries data only; client decoding remains unverified here.
+- Array-cache SQL pins measure application queries. Production database-cache infrastructure adds cache operations and has not been benchmarked. Local browser launch is attempted separately; wrapping CSS/mounted tests cannot prove actual phone geometry.
+
+Final cache note: SQLite database-cache infrastructure is now explicitly measured9/1 OFF and ON-empty,10/2 chosen with conditional publication. Actual MySQL execution remains unverified. Ward relationships also identify child records; unknown ages without those record markers retain the stated adult-member assumption.

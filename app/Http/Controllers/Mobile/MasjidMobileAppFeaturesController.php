@@ -65,19 +65,12 @@ class MasjidMobileAppFeaturesController extends Controller
                     })
                     ->values();
 
-                // OFF keeps the legacy cache value and SQL exactly. Only opted-in caches
-                // carry a private marker; choices and availability are never cached.
-                return \App\Support\AppBottomTabs::enabled($org)
-                    ? ['features' => $features, 'tabs_enabled' => true]
-                    : $features;
+                return $features;
             }
         );
 
-        $payload = ['status' => 'success', 'data' => is_array($features) && isset($features['tabs_enabled']) ? $features['features'] : $features];
-        if (is_array($features) && ($features['tabs_enabled'] ?? false) === true) {
-            $tabs = \App\Support\AppBottomTabs::mobile((int) $masjid_id);
-            if ($tabs !== null) $payload['bottom_tabs'] = $tabs;
-        }
-        return response()->json($payload, Response::HTTP_OK);
+        // Transitional cache entries from 109ce744 carried a private wrapper.
+        if (is_array($features) && isset($features['tabs_enabled'], $features['features'])) $features = $features['features'];
+        return response()->json(['status' => 'success', 'data' => $features], Response::HTTP_OK);
     }
 }

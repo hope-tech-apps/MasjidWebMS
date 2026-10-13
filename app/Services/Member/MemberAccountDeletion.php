@@ -187,6 +187,7 @@ class MemberAccountDeletion
         // classified honestly rather than defensively.
         'contact_portal_invites' => ['contact_id'],
         'contact_service_interests' => ['contact_id'],
+        'member_question_answers' => ['contact_id'],
         'mobile_app_users' => ['contact_id'],
     ];
 
@@ -358,6 +359,10 @@ class MemberAccountDeletion
             $interests = ContactServiceInterest::withoutMasjidScope()
                 ->where('contact_id', $contact->id)
                 ->delete();
+
+            // Answers follow contact erasure by FK. On a kept contact, the migration's
+            // credential-clear trigger removes them within this same transaction,
+            // without adding SQL to the unchanged OFF deletion path.
 
             // Baskets are LOGIN plumbing. On the erased path the FK cascade clears them,
             // but a KEPT contact is never force-deleted, so the cascade never fires and

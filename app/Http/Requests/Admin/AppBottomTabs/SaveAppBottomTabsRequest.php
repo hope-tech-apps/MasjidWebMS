@@ -9,6 +9,8 @@ class SaveAppBottomTabsRequest extends BaseFormRequest
 {
     public function rules(): array
     {
-        return ['feature_ids' => ['present', 'array', 'max:4', 'list'], 'feature_ids.*' => ['required', 'integer', 'min:1', 'distinct']];
+        return ['feature_ids' => ['present', 'array', 'max:4', 'list'], 'feature_ids.*' => ['required', 'distinct', function ($attribute, $value, $fail) {
+            if ($value !== 'volunteer' && (!filter_var($value, FILTER_VALIDATE_INT) || (int)$value < 1)) $fail('Choose a feature from the list.');
+        }]];
     }
 }

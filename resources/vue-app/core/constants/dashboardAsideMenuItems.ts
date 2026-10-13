@@ -20,7 +20,7 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="6" y="2" width="12" height="20" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M9 18h6" stroke="currentColor" stroke-width="1.5"/></svg>`,
         to: '/masjid/app-tabs',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
-        requiresCapability: 'app_bottom_tabs'
+        requiresAnyCapability: ['app_bottom_tabs','app_volunteer_entry']
     },
     {
         title: "Announcements",

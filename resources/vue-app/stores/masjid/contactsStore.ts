@@ -43,14 +43,15 @@ export const useContactsStore = defineStore('contactsStore', () => {
         page: number = 1,
         search: string = '',
         trashed: '' | 'with' | 'only' = '',
-        tagId: number | null = null
+        tagId: number | null = null,
+        appFilters: Record<string,number|null> = {}
     ): Promise<void> {
         if (masjidStore.masjid?.id) {
             if (contactsPaginated.value) {
                 contactsPaginated.value.data = [];
             }
 
-            const url = contactsListUrl(masjidStore.masjid.id, page, search, trashed, tagId);
+            const url = contactsListUrl(masjidStore.masjid.id, page, search, trashed, tagId, appFilters);
 
             await ApiService.get(url)
                 .then((res: AxiosResponse) => {

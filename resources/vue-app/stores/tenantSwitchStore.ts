@@ -1,3 +1,4 @@
+import { confirmUnsavedChanges } from '@/core/tenancy/unsavedChanges';
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import router from "@/router/router";
@@ -257,6 +258,10 @@ export const useTenantSwitchStore = defineStore('tenantSwitchStore', () => {
         const previousId = selectedMasjidId.value;
         if (previousId === masjidId && boundMasjidId.value === masjidId) return true;
 
+        switching.value = true;
+        try {
+            if (!await confirmUnsavedChanges()) return false;
+        } finally { switching.value = false; }
         switching.value = true;
         switchError.value = '';
 

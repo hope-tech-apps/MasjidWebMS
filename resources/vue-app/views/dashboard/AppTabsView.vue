@@ -1,8 +1,10 @@
 <template>
     <div class="app-tabs-page mw-100">
-        <div v-if="enabled" class="card">
+        <div v-if="enabled || volunteerEnabled" class="card">
             <div class="card-body">
                 <h1 class="h3">App tabs</h1>
+                <AppVolunteerField v-if="volunteerEnabled && orgId" :org-id="orgId" @updated="refreshFeatures" />
+                <div v-if="enabled">
                 <p>Home is always first. Choose up to four more. Everything else stays in the app's side menu.</p>
                 <p class="text-muted">The change reaches phones when people next open the app, on app versions that support it.</p>
                 <p v-if="loading" role="status">Loading app features…</p>
@@ -46,6 +48,7 @@
                     <p v-if="saveError" class="alert alert-danger" role="alert">Not saved. {{ saveError }}</p>
                     <button type="button" class="btn btn-success" :disabled="saving || (!dirty && !hasUnavailable)" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button>
                 </div>
+                </div>
             </div>
         </div>
         <p v-else class="text-muted" role="status">App tabs are not available for this organisation.</p>
@@ -53,7 +56,9 @@
 </template>
 
 <script setup lang="ts">
+import AppVolunteerField from '@/components/contacts/AppVolunteerField.vue';
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { registerUnsavedChanges, confirmUnsavedChanges } from '@/core/tenancy/unsavedChanges';
 import { onBeforeRouteLeave } from 'vue-router';
 import Swal from 'sweetalert2';
 import ApiService from '@/core/services/ApiService';
@@ -61,12 +66,13 @@ import type { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 
-type Feature = { id: number; key: string; name: string };
-type Choice = { id?: number; feature_id: number | null; key: string; name: string; available: boolean };
+type Feature = { id: number | 'volunteer'; key: string; name: string };
+type Choice = { id?: number; feature_id: number | 'volunteer' | null; key: string; name: string; available: boolean };
 type Editor = { features: Feature[]; chosen: Choice[] };
 const auth = useAuthStore();
 const org = useMasjidStore();
 const orgId = computed(() => auth.dashboardMasjidId ?? org.masjid?.id);
+const volunteerEnabled = computed(() => org.masjid?.capabilities?.app_volunteer_entry === true);
 const enabled = computed(() => org.masjid?.capabilities?.app_bottom_tabs === true);
 const features = ref<Feature[]>([]);
 const chosen = ref<Choice[]>([]);
@@ -105,6 +111,19 @@ async function load() {
         if (current === epoch) loadError.value = errorText(error, 'App features could not be loaded.');
     } finally { if (current === epoch) loading.value = false; }
 }
+async function refreshFeatures() {
+    if (!enabled.value) return;
+    const current=epoch;
+    try {
+        const response=await ApiService.get(url());
+        if (current!==epoch) return;
+        features.value=response.data.data.features;
+        chosen.value=chosen.value.map(tab=>{
+            const live=features.value.find(feature=>feature.id===tab.feature_id);
+            return {...tab,available:!!live,name:live?.name??tab.name,key:live?.key??tab.key};
+        });
+    } catch { loadError.value='App features could not be refreshed. Reload before choosing Volunteer.'; }
+}
 function changed() { saved.value = false; saveError.value = ''; }
 function add(feature: Feature) {
     if (saving.value || chosen.value.length >= 4 || chosen.value.some(tab => tab.feature_id === feature.id)) return;
@@ -135,17 +154,19 @@ watch([orgId, enabled], () => {
     ++epoch; features.value = []; chosen.value = []; baseline.value = '[]'; loading.value = false; saving.value = false;
     if (enabled.value) void load();
 }, { immediate: true });
-onBeforeRouteLeave(async () => {
+async function confirmLeave() {
     if (!dirty.value) return true;
     const answer = await Swal.fire({ title: 'Leave without saving?', text: 'Your app tab changes have not been saved.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Leave', cancelButtonText: 'Keep editing' });
     return answer.isConfirmed;
-});
+}
+onBeforeRouteLeave(confirmUnsavedChanges);
+const unregister = registerUnsavedChanges(confirmLeave);
 function beforeUnload(event: BeforeUnloadEvent) {
     if (!dirty.value) return;
     event.preventDefault(); event.returnValue = '';
 }
 onMounted(() => window.addEventListener('beforeunload', beforeUnload));
-onBeforeUnmount(() => { ++epoch; window.removeEventListener('beforeunload', beforeUnload); });
+onBeforeUnmount(() => { unregister(); ++epoch; window.removeEventListener('beforeunload', beforeUnload); });
 </script>
 
 <style scoped>

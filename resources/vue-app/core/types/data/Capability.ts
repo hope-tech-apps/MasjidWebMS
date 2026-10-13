@@ -24,7 +24,7 @@ import { OrgType } from "@/core/types/data/Vertical";
 //
 // A SuperAdmin is never gated by a grant or a module on the server; the menu
 // shows them what the organisation has and lists the rest as switched off.
-export type CapabilityKey = 'app_bottom_tabs' | 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' | 'school_calendar' | 'school_calendar_terms' | 'school_timetable' | 'family_duty_rota' | 'student_allergies' | 'form_editing'
+export type CapabilityKey = 'app_member_questions' | 'app_volunteer_entry' | 'app_bottom_tabs' | 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' | 'school_calendar' | 'school_calendar_terms' | 'school_timetable' | 'family_duty_rota' | 'student_allergies' | 'form_editing'
     // The weekly-school settings (App\Support\SchoolSettings), SuperAdmin-only like every grant.
     | 'report_card_core_subjects' | 'short_lesson_plan' | 'simple_marking'
     // The Friday points report (T-003.3): families and teachers are emailed. A grant, off for everyone.
@@ -173,6 +173,8 @@ export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
     assistant: 'Manara Assistant',
     school_calendar: 'School calendar',
     school_calendar_terms: 'Meeting days and dated terms',
+    app_member_questions: 'App member questions',
+    app_volunteer_entry: 'App Volunteer entry',
     app_bottom_tabs: 'App tabs',
     school_timetable: 'School timetable',
     family_duty_rota: 'Family duty rota',

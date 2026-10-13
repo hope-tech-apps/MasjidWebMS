@@ -96,6 +96,8 @@
                     </div>
                 </div>
 
+                <MemberQuestionFilters v-if="masjidStore.masjid?.capabilities?.app_member_questions === true" :org-id="masjidStore.masjid.id" @change="applyAppFilters" />
+
                 <div v-if="selectedIds.length" class="alert alert-light border d-flex flex-wrap align-items-center gap-2 py-2 mb-3">
                     <strong class="me-1">{{ selectedIds.length }} selected</strong>
                     <select v-model="bulkTagId" class="form-select form-select-sm w-auto" aria-label="Tag to add or remove">
@@ -307,6 +309,7 @@
                             <button type="button" class="btn-close" @click="showViewModal = false"></button>
                         </div>
                         <div class="modal-body">
+                            <MemberQuestionsBlock v-if="masjidStore.masjid?.capabilities?.app_member_questions === true" :org-id="masjidStore.masjid.id" :contact-id="selectedContact.id" />
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <h6 class="text-muted mb-1">Name</h6>
@@ -1257,6 +1260,8 @@
 </template>
 
 <script setup lang="ts">
+import MemberQuestionFilters from '@/components/contacts/MemberQuestionFilters.vue';
+import MemberQuestionsBlock from '@/components/contacts/MemberQuestionsBlock.vue';
 import { ref, onBeforeMount, onBeforeUnmount, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import PageDataContainer from '@/components/PageDataContainer.vue';
@@ -1315,6 +1320,8 @@ const selectedContact = ref<Contact | null>(null);
 const showDeleted = ref(false);
 /** The tag the list is narrowed to, or null for everyone. */
 const tagFilter = ref<number | null>(null);
+const appFilters = ref<Record<string,number|null>>({});
+async function applyAppFilters(filters:Record<string,number|null>) { appFilters.value=filters;selectedIds.value=[];await loadData(1,searchQuery.value); }
 /** Members ticked for a bulk tag action — kept across pages, cleared by a new filter or search. */
 const selectedIds = ref<number[]>([]);
 const bulkTagId = ref<number | null>(null);
@@ -1444,7 +1451,7 @@ watch(tagFilter, async () => {
 const loadData = async (page: number = 1, search: string = '') => {
     loading.value = true;
     try {
-        await contactsStore.fetchContacts(page, search, showDeleted.value ? 'with' : '', tagFilter.value);
+        await contactsStore.fetchContacts(page, search, showDeleted.value ? 'with' : '', tagFilter.value, appFilters.value);
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to load members.' });
     } finally {

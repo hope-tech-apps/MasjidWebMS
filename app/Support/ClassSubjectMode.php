@@ -77,6 +77,12 @@ final class ClassSubjectMode
         return $org?->deleted_at === null && SchoolSettings::classSubjectWork($org);
     }
 
+    public static function loadedOrganisation(int $id): ?Masjid
+    {
+        $rows = self::http() ? request()->attributes->get(self::ROWS, []) : [];
+        return $rows[$id] ?? null;
+    }
+
     /** Consult only the complete organisation row main already loaded for this request. */
     public static function sharingEnabled(int|string|null $masjidId): bool
     {

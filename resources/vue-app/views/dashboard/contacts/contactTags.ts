@@ -90,10 +90,12 @@ export function contactsListUrl(
     search: string = '',
     trashed: '' | 'with' | 'only' = '',
     tagId: number | null = null,
+    appFilters: Record<string,number|null> = {},
 ): string {
     let url = `/api/admin/masjids/${masjidId}/contacts?page=${page}`;
     if (search) url += `&search=${encodeURIComponent(search)}`;
     if (trashed) url += `&trashed=${trashed}`;
     if (tagId) url += `&tag_id=${tagId}`;
+    for (const key of ['occupation_id','help_id','interest_id']) if (appFilters[key]) url += `&${key}=${encodeURIComponent(appFilters[key]!)}`;
     return url;
 }

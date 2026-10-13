@@ -96,6 +96,8 @@ return [
     | The value is the reason, printed by `--dry-run`.
     */
     'drop_rows' => [
+        'member_question_helps' => 'Member-selected help choices are private login data.',
+        'member_question_answers' => 'Optional adult networking answers, including encrypted free text.',
         'duty_rota_mails' => 'Clear private family duty email history and pending delivery records.',
         'duty_rota_assignments' => 'Clear family duty assignments and their release history.',
         'duty_rota_families' => 'Clear copied names, emails, phones, identity digests and private claim credentials.',
@@ -204,6 +206,7 @@ return [
     | be a child's real date of birth sitting on staging, so it is nulled.
     */
     'encrypted_null' => [
+        'member_question_answers' => ['occupation_text','help_text'],
         'users' => ['two_factor_secret'],
         // `age_given` (2026-10-05) is the twelfth: the age a family gave for a
         // student and the day they gave it, encrypted like the date beside it.
@@ -655,6 +658,8 @@ return [
     | Populated below by `php artisan test --filter=StagingScrubCoverage`.
     */
     'reviewed_keep' => [
+        'member_question_options.label' => 'Organisation option labels, not member-entered answers.',
+        'app_volunteer_settings.title' => 'Public link title entered by the organisation, not a member answer.',
 
         // --- Organisation identity. Public directory data; staging is unusable
         // if you cannot tell one tenant from another.

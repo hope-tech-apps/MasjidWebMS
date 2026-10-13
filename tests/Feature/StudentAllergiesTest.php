@@ -306,7 +306,8 @@ class StudentAllergiesTest extends TestCase
             \Illuminate\Support\Facades\Auth::forgetGuards(); app(TenantContext::class)->forgetTenant();
             $token=['family'=>$familyToken,'child'=>$childToken,'member'=>$memberToken][$realm];
             $response=$this->withHeader('Authorization','Bearer '.$token)->get('/'.$uri,['Accept'=>'application/json']);
-            $this->assertSame(200,$response->getStatusCode(),$uri);
+            // The new optional member route is dark; still inspect its refusal for health data.
+            $this->assertSame(str_ends_with($uri,'/member-questions') ? 404 : 200,$response->getStatusCode(),$uri);
             $body=($response->baseResponse instanceof \Symfony\Component\HttpFoundation\StreamedResponse || $response->baseResponse instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse) ? $response->streamedContent() : (string)$response->getContent();
             $this->assertNotSame('', $body, $uri);
             if (str_ends_with($uri,'/pdf')) {

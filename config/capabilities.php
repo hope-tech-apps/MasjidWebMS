@@ -103,6 +103,21 @@ return [
     // Grants
     // ------------------------------------------------------------------
 
+    'app_member_questions' => [
+        'kind' => 'grant', 'group' => 'content', 'catalogue_when_off' => false,
+        'label' => 'App member questions',
+        'description' => 'Optional adult member networking questions, visible only to the office.',
+        'defaults' => ['masjid'=>false, 'school'=>false, 'community'=>false],
+        'listed_when_off' => false,
+    ],
+    'app_volunteer_entry' => [
+        'kind' => 'grant', 'group' => 'content', 'catalogue_when_off' => false,
+        'label' => 'App Volunteer entry',
+        'description' => 'A Volunteer link in the app, configured on App tabs.',
+        'defaults' => ['masjid'=>false, 'school'=>false, 'community'=>false],
+        'listed_when_off' => false,
+    ],
+
     'app_bottom_tabs' => [
         'kind' => 'grant',
         'group' => 'content',

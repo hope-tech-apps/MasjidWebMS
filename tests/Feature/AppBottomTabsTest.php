@@ -82,7 +82,7 @@ class AppBottomTabsTest extends TestCase
         Cache::flush();
         foreach ([$off, $offWarm] as $base) {
             $on = $this->payloads();
-            foreach (['features', 'show', 'settings'] as $name) {
+            foreach (['show', 'settings'] as $name) {
                 $body = json_decode($on[$name]['body'], true);
                 $tabs = $name === 'features' ? $body['bottom_tabs'] : $body['data']['bottom_tabs'];
                 $this->assertSame([['id' => 3, 'key' => 'adhkar', 'name' => 'Adhkar'], ['id' => 1, 'key' => "qur\u{2019}an", 'name' => "Qur\u{2019}an"]], $tabs);
@@ -93,8 +93,93 @@ class AppBottomTabsTest extends TestCase
                 $this->assertCount(1, $added);
                 $this->assertSame($base[$name]['sql'], array_values(array_filter($newSql, fn ($q) => ! str_contains($q, 'app_bottom_tabs'))));
             }
-            foreach (['menu', 'orgs'] as $name) $this->assertSame($base[$name], $on[$name]);
+            foreach (['features', 'menu', 'orgs'] as $name) $this->assertSame($base[$name], $on[$name]);
         }
+    }
+
+    #[Test]
+    public function enabled_empty_tabs_add_no_sql_and_features_never_carries_tabs(): void
+    {
+        $off = $this->payloads(); $warm = $this->payloads();
+        $this->on(); Cache::flush();
+        $this->assertSame($off, $this->payloads());
+        $this->assertSame($warm, $this->payloads());
+        $this->office(); $this->putJson($this->url(), ['feature_ids'=>[1]])->assertOk();
+        $this->assertSame($warm['features'], $this->payloads()['features']);
+    }
+
+    #[Test]
+    public function delete_then_insert_failure_restores_choices_and_presence(): void
+    {
+        $this->on(); $this->office(); $this->putJson($this->url(), ['feature_ids'=>[2,1]])->assertOk();
+        $dispatcher = AppBottomTab::getEventDispatcher();
+        AppBottomTab::setEventDispatcher(clone $dispatcher);
+        AppBottomTab::creating(function () { throw new \RuntimeException('Injected after delete'); });
+        try {
+            \App\Support\AppBottomTabs::save($this->org->id, [3]);
+            $this->fail('Injected mutation failure was swallowed.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Injected after delete', $e->getMessage());
+        } finally { AppBottomTab::setEventDispatcher($dispatcher); }
+        $this->assertSame([2,1], AppBottomTab::orderBy('position')->pluck('feature_id')->all());
+        $this->assertTrue((bool) ($this->org->fresh()->capability_overrides['_app_bottom_tabs_present'] ?? false));
+    }
+
+    #[Test]
+    public function a_fill_started_before_save_cannot_republish_under_the_current_show_key(): void
+    {
+        $oldKey = MobileCache::masjidKey($this->org->id, MobileCache::SHOW);
+        $old = $this->org->fresh();
+        $this->on(); $this->office(); $this->putJson($this->url(), ['feature_ids'=>[1]])->assertOk();
+        Cache::put($oldKey, $old, MobileCache::TTL_MEDIUM); // paused fill resumes after commit
+        $this->assertNotSame($oldKey, MobileCache::masjidKey($this->org->id, MobileCache::SHOW));
+        $this->getJson('/api/mobile/masjids/'.$this->org->id)->assertOk()->assertJsonPath('data.bottom_tabs.0.id', 1);
+        MobileAppFeature::findOrFail(1)->update(['key'=>'renamed', 'name'=>'Renamed']);
+        $this->getJson('/api/mobile/masjids/'.$this->org->id)->assertOk()->assertJsonPath('data.bottom_tabs.0.name', 'Renamed');
+    }
+
+    #[Test]
+    public function renaming_a_recently_created_catalogue_instance_still_invalidates_the_detail_cache(): void
+    {
+        $feature=MobileAppFeature::create(['key'=>'practice','name'=>'Practice']);$this->org->features()->attach($feature->id,['is_available'=>true]);
+        $this->on();$this->office();$this->putJson($this->url(),['feature_ids'=>[$feature->id]])->assertOk();$this->payloads();
+        $before=MobileCache::masjidKey($this->org->id,MobileCache::SHOW);$feature->update(['key'=>'renamed-practice','name'=>'Renamed practice']);
+        $this->assertNotSame($before,MobileCache::masjidKey($this->org->id,MobileCache::SHOW));
+    }
+
+    #[Test]
+    public function old_opted_in_feature_cache_is_unwrapped_to_the_main_body(): void
+    {
+        $cold=$this->payloads();
+        $key=MobileCache::masjidKey($this->org->id,MobileCache::FEATURES);
+        $features=Cache::get($key);
+        Cache::put($key,['features'=>$features,'tabs_enabled'=>true],600);
+        $this->assertSame($cold['features']['body'],$this->getJson('/api/mobile/masjids/'.$this->org->id.'/features')->assertOk()->getContent());
+    }
+
+    #[Test]
+    public function database_cache_off_and_on_empty_have_identical_query_lists_and_no_extra_lookup(): void
+    {
+        Cache::setDefaultDriver('database');Cache::flush();
+        $read=function(){auth()->forgetGuards();app(TenantContext::class)->forgetTenant();DB::enableQueryLog();DB::flushQueryLog();$r=$this->getJson('/api/mobile/masjids/'.$this->org->id)->assertOk();$sql=array_column(DB::getQueryLog(),'query');DB::disableQueryLog();return ['body'=>$r->getContent(),'sql'=>$sql];};
+        $off=$read();$warm=$read();$this->assertCount(9,$off['sql']);$this->assertCount(1,$warm['sql']);
+        $this->on();Cache::flush();$this->assertSame($off,$read());$this->assertSame($warm,$read());
+        $this->office();$this->putJson($this->url(),['feature_ids'=>[1]])->assertOk();
+        Cache::flush();$on=$read();$this->assertCount(1,array_filter($on['sql'],fn($q)=>str_contains($q,'app_bottom_tabs')));
+        $this->assertSame($off['sql'],array_values(array_filter($on['sql'],fn($q)=>!str_contains($q,'app_bottom_tabs'))));
+        $this->assertCount(2,$read()['sql']);
+        file_put_contents(base_path('artifacts/app101-database-cache-sql.json'),json_encode(['off'=>$off['sql'],'warm'=>$warm['sql'],'chosen'=>$on['sql']],JSON_PRETTY_PRINT));
+    }
+
+    #[Test]
+    public function database_cache_fill_racing_save_cannot_overwrite_the_invalidation_revision(): void
+    {
+        Cache::setDefaultDriver('database');Cache::flush();$old=$this->org->fresh();
+        \App\Support\ShowCache::remember($this->org->id,function()use($old){
+            $this->on();$this->office();$this->putJson($this->url(),['feature_ids'=>[1]])->assertOk();return $old;
+        });
+        $this->getJson('/api/mobile/masjids/'.$this->org->id)->assertOk()->assertJsonPath('data.bottom_tabs.0.id',1);
+        $this->getJson('/api/mobile/masjids/'.$this->org->id)->assertOk()->assertJsonPath('data.bottom_tabs.0.id',1);
     }
 
     #[Test]
@@ -115,7 +200,7 @@ class AppBottomTabsTest extends TestCase
         $this->org->features()->updateExistingPivot(6, ['is_available' => 0]);
         $foreign = MobileAppFeature::create(['key' => 'foreign', 'name' => 'Foreign']);
         $other = $this->makeMasjid('other'); $other->features()->attach($foreign->id, ['is_available' => 1]);
-        $home = MobileAppFeature::create(['key' => 'home', 'name' => 'Home']); $this->org->features()->attach($home->id, ['is_available' => 1]);
+        $homeId = DB::table('mobile_app_features')->insertGetId(['key'=>'home','name'=>'Home']); $home = MobileAppFeature::findOrFail($homeId); $this->org->features()->attach($home->id, ['is_available' => 1]);
         foreach ([[1,2,3,4,5], [1,1], [6], [$foreign->id], [$home->id], [999999], ['bad']] as $ids) {
             $this->putJson($this->url(), ['feature_ids' => $ids])->assertUnprocessable();
             $this->assertSame([4,2,1], AppBottomTab::orderBy('position')->pluck('feature_id')->all());
@@ -141,7 +226,7 @@ class AppBottomTabsTest extends TestCase
         $this->assertSame([true,false,false], array_column($r->json('data.chosen'), 'available'));
         $this->assertSame('Hadith', $r->json('data.chosen.2.name'));
         $this->assertCount(3, AppBottomTab::all());
-        foreach (['features', 'show', 'settings'] as $name) {
+        foreach (['show', 'settings'] as $name) {
             $body = json_decode($this->payloads()[$name]['body'], true);
             $this->assertSame([['id'=>3,'key'=>'adhkar','name'=>'Adhkar']], $name === 'features' ? $body['bottom_tabs'] : $body['data']['bottom_tabs']);
         }
@@ -158,14 +243,21 @@ class AppBottomTabsTest extends TestCase
         $child->forceFill(['parent_id'=>$parent->id])->save();
         $child->features()->attach(2, ['is_available'=>1]);
         $this->org = $child;
-        $this->assertStringNotContainsString('bottom_tabs', $this->payloads()['features']['body']);
+        $this->assertStringNotContainsString('bottom_tabs', $this->payloads()['show']['body']);
         $this->on(); auth()->forgetGuards(); Sanctum::actingAs(User::factory()->create(['phone' => '+15555550101', 'type'=>'SuperAdmin']));
         $this->putJson($this->url(), ['feature_ids'=>[2]])->assertOk();
-        $this->assertSame([['id'=>2,'key'=>'hadith','name'=>'Hadith']], json_decode($this->payloads()['features']['body'],true)['bottom_tabs']);
+        $this->assertSame([['id'=>2,'key'=>'hadith','name'=>'Hadith']], json_decode($this->payloads()['show']['body'],true)['data']['bottom_tabs']);
         $this->org = $parent;
-        $this->assertSame(1, json_decode($this->payloads()['features']['body'],true)['bottom_tabs'][0]['id']);
+        $this->assertSame(1, json_decode($this->payloads()['show']['body'],true)['data']['bottom_tabs'][0]['id']);
     }
 
+    #[Test]
+    public function editor_reuses_the_request_organisation_when_volunteer_is_off(): void
+    {
+        $this->on();$this->office();$this->getJson($this->url())->assertOk();
+        DB::enableQueryLog();DB::flushQueryLog();$this->getJson($this->url())->assertOk();$sql=array_column(DB::getQueryLog(),'query');DB::disableQueryLog();
+        $this->assertCount(1,array_filter($sql,fn($q)=>str_contains($q,'from "masjids"')));
+    }
     #[Test]
     public function admin_role_and_tenant_fences_match_general_settings(): void
     {
