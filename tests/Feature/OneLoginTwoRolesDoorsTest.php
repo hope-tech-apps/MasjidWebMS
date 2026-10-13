@@ -15,8 +15,10 @@ use App\Services\Schools\AttendanceRegister;
 use App\Support\CapabilityWriter;
 use App\Support\OrganisationAccess;
 use App\Support\TenantContext;
+use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Mail;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -254,10 +256,13 @@ class OneLoginTwoRolesDoorsTest extends TestCase
     }
 
     #[Test]
-    public function with_the_membership_gate_shut_the_cross_kind_attach_is_switched_off_at_the_teachers_door(): void
+    public function with_the_membership_gate_shut_the_teachers_door_answers_a_lunch_login_as_it_always_did(): void
     {
         // The same gate that stops a teacher being added to a second school: this is
-        // a new cross-organisation grant too.
+        // a new cross-organisation grant too, so with the gate shut it is not made.
+        // And it is refused in the words this door always had for a lunch login:
+        // "switched off" would tell a school that the address is one the door
+        // attaches, which every other login that cannot be added is not told.
         config(['tenancy.multi_membership' => false]);
         $before = $this->kitchen->fresh()->getAttributes();
 
@@ -265,9 +270,21 @@ class OneLoginTwoRolesDoorsTest extends TestCase
 
         $this->addTeacher($this->school, $this->kitchen->email)
             ->assertStatus(422)
-            ->assertJsonPath('data.email.0', 'Adding an existing login to a second school is switched off.');
+            ->assertExactJson(['status' => 'failed', 'message' => self::CANNOT_ADD, 'data' => ['email' => [self::CANNOT_ADD]]]);
 
         $this->assertNothingWasWrittenFor($this->kitchen, $before, rows: 1);
+        Mail::assertNothingSent();
+
+        // A teacher from another school keeps the sentence that gate always gave a
+        // teacher: nothing about the existing two-school path moved.
+        $elsewhereTeacher = $this->makeLogin('Teacher', 'Teacher Of Elsewhere');
+        $this->giveRole($elsewhereTeacher, $this->elsewhere, 'teacher', true);
+        app(TenantContext::class)->forgetTenant();
+        $this->actingAsPerson($this->schoolAdmin);
+
+        $this->addTeacher($this->school, $elsewhereTeacher->email)
+            ->assertStatus(422)
+            ->assertJsonPath('data.email.0', 'Adding an existing login to a second school is switched off.');
     }
 
     #[Test]
@@ -444,40 +461,68 @@ class OneLoginTwoRolesDoorsTest extends TestCase
     }
 
     #[Test]
-    public function with_the_membership_gate_shut_the_cross_kind_attach_is_switched_off_at_the_lunch_door(): void
+    public function with_the_membership_gate_shut_the_lunch_door_says_taken_as_it_does_for_every_address_with_a_login(): void
     {
+        // With the gate shut a person who belongs somewhere is not attached. Before
+        // one login could hold two roles this door said "taken" for EVERY address
+        // with a login. A sentence of its own here ("...is switched off") told any
+        // office with Friday lunch that the address was a teacher's somewhere,
+        // without attaching anything and without the person being emailed.
         config(['tenancy.multi_membership' => false]);
-        $before = $this->tutor->fresh()->getAttributes();
 
         $this->actingAsPerson($this->masjidAdmin);
 
-        $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->tutor->email])
-            ->assertStatus(422)
-            ->assertExactJson(['status' => 'failed', 'data' => ['email' => ['Adding an existing login to a second organisation is switched off.']]]);
+        $anAdministrators = $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->schoolAdmin->email])
+            ->assertStatus(422);
+        $this->assertSame(self::TAKEN, $anAdministrators->json());
 
-        $this->assertNothingWasWrittenFor($this->tutor, $before, rows: 1);
+        // A teacher of a school, and a person created as lunch staff who now only
+        // teaches (her lunch access here was removed): the same bytes.
+        MasjidUser::where('masjid_id', $this->masjid->id)->where('user_id', $this->shamina->id)->delete();
+
+        foreach ([$this->tutor, $this->shamina] as $belongsSomewhere) {
+            $before = $belongsSomewhere->fresh()->getAttributes();
+
+            $refused = $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $belongsSomewhere->email])
+                ->assertStatus(422);
+
+            $this->assertSame($anAdministrators->getContent(), $refused->getContent(), "{$belongsSomewhere->name}: not one byte says what kind of login the address has");
+            $this->assertNothingWasWrittenFor($belongsSomewhere, $before, rows: 1);
+        }
+
+        Mail::assertNothingSent();
+
+        // A login that belongs NOWHERE crosses no organisation, so it needs no gate
+        // (the meaning the gate has at the Teachers door).
+        $nowhere = $this->makeLogin('Teacher', 'Teacher Of Nowhere');
+        $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $nowhere->email])->assertCreated();
     }
 
-    /** @return array<string, array{0: string, 1: bool}> */
+    /** @return array<string, array{0: string, 1: bool, 2: bool}> the kind, whether archived, whether it runs lunch at another organisation */
     public static function loginsTheLunchDoorNeverAttaches(): array
     {
         return [
-            'lunch staff' => [User::TYPE_LUNCH_STAFF, false],
-            'archived lunch staff' => [User::TYPE_LUNCH_STAFF, true],
-            'an administrator' => ['MasjidAdmin', false],
-            'an archived administrator' => ['MasjidAdmin', true],
-            'a SuperAdmin' => ['SuperAdmin', false],
-            'a member' => ['User', false],
+            // A lunch login that still runs lunch somewhere: one login, lunch at ONE organisation.
+            'lunch staff of another organisation' => [User::TYPE_LUNCH_STAFF, false, true],
+            'archived lunch staff' => [User::TYPE_LUNCH_STAFF, true, false],
+            'an administrator' => ['MasjidAdmin', false, false],
+            'an archived administrator' => ['MasjidAdmin', true, false],
+            'a SuperAdmin' => ['SuperAdmin', false, false],
+            'a member' => ['User', false, false],
             // A retired teacher is not brought back as lunch staff.
-            'an archived teacher' => ['Teacher', true],
+            'an archived teacher' => ['Teacher', true, false],
         ];
     }
 
     #[Test]
     #[DataProvider('loginsTheLunchDoorNeverAttaches')]
-    public function the_lunch_door_tells_every_other_login_the_address_is_taken_in_validations_own_words(string $type, bool $archived): void
+    public function the_lunch_door_tells_every_other_login_the_address_is_taken_in_validations_own_words(string $type, bool $archived, bool $runsLunchElsewhere): void
     {
         $other = $this->makeLogin($type, 'Somebody Else');
+        if ($runsLunchElsewhere) {
+            $this->giveRole($other, $this->elsewhere, 'lunch-staff', true);
+            app(TenantContext::class)->forgetTenant();
+        }
         if ($archived) {
             $other->delete();
         }
@@ -489,27 +534,146 @@ class OneLoginTwoRolesDoorsTest extends TestCase
             ->assertStatus(422)
             ->assertExactJson(self::TAKEN);
 
-        $this->assertNothingWasWrittenFor($other, $before, rows: 0);
+        $this->assertNothingWasWrittenFor($other, $before, rows: $runsLunchElsewhere ? 1 : 0);
+    }
+
+    #[Test]
+    #[DataProvider('bothPeople')]
+    public function lunch_access_taken_from_a_person_who_also_teaches_can_be_given_back_at_the_lunch_door(string $who): void
+    {
+        // Removing lunch access from a person who also teaches does not retire their
+        // login: it is their teacher's login too. For a login CREATED as lunch staff
+        // (the real case) that used to be one-way: the lunch door answered "taken"
+        // for every lunch-staff login and Team & Access refuses every address that
+        // has one, so the masjid could not put back what it had removed, by a
+        // rotation or by a wrong click. Only a hand-written row could.
+        $token = $this->{$who}->createToken('login-token', ['staff'])->plainTextToken;
+        $staff = $this->adminBase($this->masjid).'/jummah-lunch/staff';
+
+        $this->actingAsPerson($this->masjidAdmin);
+        $this->deleteJson("{$staff}/".$this->{$who}->id)->assertOk();
+        $this->assertContains($this->withBearer($token)->getJson($this->lunchBase($this->masjid).'/jummah-lunch/menus')->getStatusCode(), [401, 403]);
+
+        $before = $this->{$who}->fresh()->getAttributes();
+        Mail::fake();
+
+        $this->actingAsPerson($this->masjidAdmin);
+        $this->postJson($staff, ['name' => 'Typed Name', 'email' => $this->{$who}->email, 'phone' => '+15559990000'])
+            ->assertCreated()
+            ->assertExactJson([
+                'status' => 'success',
+                'message' => 'Lunch access added for '.$this->{$who}->email.'. They have been emailed how to sign in.',
+                'data' => ['id' => $this->{$who}->id, 'name' => 'Typed Name', 'email' => $this->{$who}->email, 'phone' => '+15559990000', 'invited' => true],
+            ]);
+
+        // One row back, a lunch row, here; the school's row is still the default the
+        // removal made it. `users` is not written: not the kind the login was created
+        // as, not the name or phone the office typed, not the password, not a session.
+        $this->assertSame(
+            [[$this->masjid->id, 'lunch-staff', false], [$this->school->id, 'teacher', true]],
+            MasjidUser::where('user_id', $this->{$who}->id)->orderBy('masjid_id')->get()->map(fn (MasjidUser $r) => [(int) $r->masjid_id, $r->role, (bool) $r->is_default])->all()
+        );
+        $this->assertSame($before, $this->{$who}->fresh()->getAttributes(), 'the users row is untouched by the attach');
+        $this->assertSame(1, $this->{$who}->tokens()->count());
+
+        // Told they were added, with no password link: they have a password.
+        Mail::assertNotSent(AccountAccessMail::class);
+        $this->assertSame(0, DB::table('account_invite_tokens')->where('email', $this->{$who}->email)->count());
+        Mail::assertSent(StaffAddedToOrganisation::class, fn (StaffAddedToOrganisation $mail) => $mail->hasTo($this->{$who}->email)
+            && $mail->orgName === 'Burlington Masjid'
+            && $mail->roleLabel === 'member of the Friday lunch team'
+            && $mail->otherRole === true);
+
+        // The session she already had opens the board again, and both areas are hers.
+        $this->withBearer($token)->getJson($this->lunchBase($this->masjid).'/jummah-lunch/menus')->assertOk();
+        $this->withBearer($token)->getJson($this->teacherBase($this->school).'/groups')->assertOk();
+        $this->withBearer($token)->getJson($this->lunchBase($this->school).'/jummah-lunch/menus')->assertForbidden();
+        $this->assertCount(2, $this->withBearer($token)->getJson('/api/lunch/user')->assertOk()->json('data.areas'));
+
+        // Still one role at an organisation, and lunch at one organisation: the
+        // school she teaches at cannot also make her its lunch staff, and a second
+        // masjid is told what every taken address is told.
+        $this->actingAsPerson($this->schoolAdmin);
+        $this->postJson($this->adminBase($this->school).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->{$who}->email])
+            ->assertStatus(422)
+            ->assertExactJson(self::TAKEN);
+
+        $elsewhereAdmin = $this->makeOwnerOf($this->elsewhere);
+        app(TenantContext::class)->forgetTenant();
+        $this->actingAsPerson($elsewhereAdmin);
+        $this->postJson($this->adminBase($this->elsewhere).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->{$who}->email])
+            ->assertStatus(422)
+            ->assertExactJson(self::TAKEN);
+
+        $this->assertSame(2, MasjidUser::where('user_id', $this->{$who}->id)->count());
+    }
+
+    #[Test]
+    public function a_person_who_only_teaches_is_told_she_is_a_teacher_here_when_her_own_school_tries_to_make_her_its_lunch_staff(): void
+    {
+        // Created as lunch staff, lunch access removed, still the school's teacher.
+        // The school has Friday lunch; one login holds ONE role at an organisation.
+        MasjidUser::where('masjid_id', $this->masjid->id)->where('user_id', $this->shamina->id)->delete();
+        $before = $this->shamina->fresh()->getAttributes();
+
+        $this->actingAsPerson($this->schoolAdmin);
+
+        $this->postJson($this->adminBase($this->school).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->shamina->email])
+            ->assertStatus(422)
+            ->assertExactJson(['status' => 'failed', 'data' => ['email' => [
+                $this->shamina->email.' is already a teacher at this organisation. One login can hold one role at an organisation.',
+            ]]]);
+
+        $this->assertNothingWasWrittenFor($this->shamina, $before, rows: 1);
+        $this->assertSame('teacher', MasjidUser::where('user_id', $this->shamina->id)->value('role'));
+        Mail::assertNothingSent();
+    }
+
+    #[Test]
+    public function with_the_switch_off_a_lunch_login_that_only_teaches_is_still_told_taken(): void
+    {
+        // The give-back above is part of the feature. Switched off, the door is the
+        // create it always was and validation refuses every address with a login.
+        MasjidUser::where('masjid_id', $this->masjid->id)->where('user_id', $this->shamina->id)->delete();
+        config(['tenancy.roles_per_organisation' => false]);
+        $before = $this->shamina->fresh()->getAttributes();
+
+        $this->actingAsPerson($this->masjidAdmin);
+
+        $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->shamina->email])
+            ->assertStatus(422)
+            ->assertExactJson(self::TAKEN);
+
+        $this->assertNothingWasWrittenFor($this->shamina, $before, rows: 1);
     }
 
     #[Test]
     public function a_teacher_who_already_runs_lunch_somewhere_is_told_the_same_and_the_two_bodies_cannot_be_told_apart(): void
     {
         // The mirror already runs lunch at the masjid. Validation looks past a live
-        // teacher, so THIS refusal is the controller's; a login runs lunch at one
-        // organisation. It must be byte for byte what validation says of any taken
-        // address, or the difference would say "this one is a teacher somewhere".
+        // teacher's or lunch-staff login, so THIS refusal is the controller's; a
+        // login runs lunch at one organisation. It must be byte for byte what
+        // validation says of any taken address (an administrator's, here), or the
+        // difference would say "this one is a teacher somewhere".
         $before = $this->mirror->fresh()->getAttributes();
 
         $this->actingAsPerson($this->masjidAdmin);
         $fromTheController = $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->mirror->email])
             ->assertStatus(422);
-        $fromValidation = $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->kitchen->email])
+        $fromValidation = $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $this->schoolAdmin->email])
             ->assertStatus(422);
 
         $this->assertSame(self::TAKEN, $fromValidation->json());
         $this->assertSame($fromValidation->json(), $fromTheController->json());
         $this->assertSame($fromValidation->getContent(), $fromTheController->getContent());
+
+        // The masjid's own lunch person, and a person created as lunch staff who
+        // runs lunch here: the controller's too now, and the same bytes again.
+        foreach ([$this->kitchen, $this->shamina] as $runsLunchHere) {
+            $again = $this->postJson($this->adminBase($this->masjid).'/jummah-lunch/staff', ['name' => 'Typed Name', 'email' => $runsLunchHere->email])
+                ->assertStatus(422);
+            $this->assertSame($fromValidation->getContent(), $again->getContent(), $runsLunchHere->name);
+        }
 
         // And at a second organisation that has lunch: still one lunch organisation.
         $this->actingAsPerson($this->schoolAdmin);
@@ -576,6 +740,18 @@ class OneLoginTwoRolesDoorsTest extends TestCase
             // The name as it is on file and no phone: nothing to refuse, nothing written.
             $this->putJson("{$base}/{$shared->id}", ['name' => $name])->assertOk()->assertJsonPath('data.name', $name);
             $this->assertSame([$name, $phone], [$shared->fresh()->name, $shared->fresh()->phone]);
+
+            // What the Edit form really sends when the office presses Save without
+            // changing anything: the name AND the phone this screen's own list gave
+            // it. That used to be refused under the phone field, as if the office had
+            // typed a new one.
+            $listed = collect($this->getJson($base)->assertOk()->json('data'))->firstWhere('id', $shared->id);
+            $this->assertSame($phone, $listed['phone'], 'the list shows this office the phone on file');
+            $this->putJson("{$base}/{$shared->id}", ['name' => $listed['name'], 'phone' => $listed['phone']])
+                ->assertOk()
+                ->assertJsonPath('data.phone', $phone);
+            $this->assertSame([$name, $phone], [$shared->fresh()->name, $shared->fresh()->phone]);
+            $this->assertSame($shared->fresh()->updated_at->toISOString(), $shared->updated_at->toISOString(), 'and nothing was written');
 
             // A set-password link, once used, would reset the password and end every
             // session, at the school too.
@@ -815,6 +991,193 @@ class OneLoginTwoRolesDoorsTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('data.email.0', 'That email already has a login. Use a different address, or ask Manara to move the existing login.');
         $this->assertSame(1, MasjidUser::where('user_id', $this->tutor->id)->count());
+    }
+
+    /** @return array<string, array{0: string}> the kind the login was created as; either way its ONE row is the masjid's lunch row */
+    public static function loginsWhoseOnlyRowIsTheMasjidsLunchRow(): array
+    {
+        return [
+            // The Teachers door attaches this one while the roles switch is on.
+            'created as lunch staff' => [User::TYPE_LUNCH_STAFF],
+            // And this one always could be attached: to the Teachers door it is an
+            // existing teacher from somewhere else (its school removed it after
+            // the masjid gave it lunch).
+            'created as a teacher' => ['Teacher'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('loginsWhoseOnlyRowIsTheMasjidsLunchRow')]
+    public function a_retype_decided_while_a_school_attaches_the_same_person_cannot_end_with_an_administrator_of_that_school(string $createdAs): void
+    {
+        // The one place a teacher's or lunch-staff login can become an administrator
+        // is Change access, and it is refused for a login that belongs to another
+        // organisation: an administrator binds through ANY live row, so a retyped
+        // login would administer every organisation it holds a row at.
+        //
+        // That refusal used to be decided from a read made before the transaction and
+        // without a lock, and the attach doors hold the user row's lock while they
+        // write their row. So a school adding this person at the same moment was
+        // invisible to the check, the retype waited for the school's commit and then
+        // went ahead: `users.type = MasjidAdmin`, with a `teacher` row at the school.
+        //
+        // One process cannot interleave two requests. The other door's COMMIT is
+        // stood in for by writing its row at the moment this request opens its
+        // transaction, which is after the early check and before the lock: exactly
+        // what the lock, once it is granted, lets the re-read see.
+        $person = $this->makeLogin($createdAs, 'One Row At The Masjid');
+        $this->giveRole($person, $this->masjid, 'lunch-staff', true);
+        app(TenantContext::class)->forgetTenant();
+
+        $token = $person->createToken('login-token', ['staff'])->plainTextToken;
+        $before = $person->fresh()->getAttributes();
+
+        $this->actingAsPerson($this->masjidAdmin);
+
+        $attached = false;
+        Event::listen(TransactionBeginning::class, function () use (&$attached, $person): void {
+            if ($attached) {
+                return;
+            }
+            $attached = true;
+
+            DB::table('masjid_user')->insert([
+                'masjid_id' => $this->school->id, 'user_id' => $person->id, 'role' => 'teacher',
+                'is_default' => false, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        });
+
+        try {
+            $this->patchJson($this->adminBase($this->masjid).'/team/'.$person->id, ['access' => 'admin'])
+                ->assertStatus(409)
+                ->assertJsonPath('data.user_id.0', 'This login also belongs to another organisation, and its access applies to both. Change it with Manara.');
+        } finally {
+            Event::forget(TransactionBeginning::class);
+        }
+
+        $this->assertTrue($attached, 'the request opened a transaction, so the other door\'s row was written inside the window');
+
+        // Nothing about the login moved: not its kind, not its bridged role, not the
+        // role of its row here, not its session.
+        $this->assertSame($before, $person->fresh()->getAttributes());
+        $this->assertSame($createdAs, $person->fresh()->homeType());
+        $this->assertSame([User::TYPE_ROLE_MAP[$createdAs]], $person->fresh()->getRoleNames()->all());
+        $this->assertSame(
+            [[$this->masjid->id, 'lunch-staff'], [$this->school->id, 'teacher']],
+            MasjidUser::where('user_id', $person->id)->orderBy('masjid_id')->get()->map(fn (MasjidUser $r) => [(int) $r->masjid_id, $r->role])->all()
+        );
+        $this->assertSame(1, $person->tokens()->count());
+
+        // And what the race used to buy is refused: no admin surface at the school
+        // that made this person a teacher, nor at the masjid.
+        foreach ([$this->school, $this->masjid] as $organisation) {
+            $this->assertGateRefused($this->withBearer($token)->getJson($this->adminBase($organisation)), "the admin area at {$organisation->name}");
+        }
+    }
+
+    #[Test]
+    public function change_access_still_moves_a_login_that_belongs_only_here_and_ends_its_sessions(): void
+    {
+        // The lock changes when the decision is made, not what it is.
+        $this->kitchen->createToken('phone');
+
+        $this->actingAsPerson($this->masjidAdmin);
+
+        $this->patchJson($this->adminBase($this->masjid).'/team/'.$this->kitchen->id, ['access' => 'admin'])
+            ->assertOk()
+            ->assertJsonPath('data.access', 'admin');
+
+        $this->assertSame('MasjidAdmin', $this->kitchen->fresh()->homeType());
+        $this->assertSame('masjid-admin', MasjidUser::where('masjid_id', $this->masjid->id)->where('user_id', $this->kitchen->id)->value('role'));
+        $this->assertSame(0, $this->kitchen->tokens()->count());
+
+        // And back again.
+        $this->patchJson($this->adminBase($this->masjid).'/team/'.$this->kitchen->id, ['access' => 'jummah_lunch'])
+            ->assertOk()
+            ->assertJsonPath('data.access', 'jummah_lunch');
+        $this->assertSame(User::TYPE_LUNCH_STAFF, $this->kitchen->fresh()->homeType());
+        $this->assertSame('lunch-staff', MasjidUser::where('masjid_id', $this->masjid->id)->where('user_id', $this->kitchen->id)->value('role'));
+    }
+
+    #[Test]
+    public function a_removal_decided_while_a_school_attaches_the_same_person_does_not_retire_the_schools_new_teacher(): void
+    {
+        // Team's removal retires a login that belongs nowhere else. It read "nowhere
+        // else" inside a transaction that never locked the user row, so on MySQL its
+        // snapshot was taken before a school's attach committed, the archive then
+        // waited for that commit, and the school was left with an archived teacher
+        // nobody could sign in as or add again.
+        //
+        // SQLite has no snapshot to show that with, so two things are pinned: the
+        // outcome when the school's row is there by the time the transaction reads
+        // (kept signed in, not retired, the school made the default), and the ORDER
+        // that makes the read see it on MySQL: the transaction's first statement is
+        // the user row, read for update.
+        $token = $this->kitchen->createToken('login-token', ['staff'])->plainTextToken;
+
+        $this->actingAsPerson($this->masjidAdmin);
+
+        $attached = false;
+        Event::listen(TransactionBeginning::class, function () use (&$attached): void {
+            if ($attached) {
+                return;
+            }
+            $attached = true;
+
+            DB::table('masjid_user')->insert([
+                'masjid_id' => $this->school->id, 'user_id' => $this->kitchen->id, 'role' => 'teacher',
+                'is_default' => false, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+        });
+
+        try {
+            $this->deleteJson($this->adminBase($this->masjid).'/team/'.$this->kitchen->id)->assertOk();
+            $inTheTransaction = array_column(DB::getQueryLog(), 'query');
+        } finally {
+            DB::disableQueryLog();
+            Event::forget(TransactionBeginning::class);
+        }
+
+        $this->assertTrue($attached);
+        $this->assertSame('select * from "users" where "users"."id" = ? limit 1', $inTheTransaction[0], 'the lock on the user row comes before any read the decision rests on');
+
+        $this->assertNull($this->kitchen->fresh()?->deleted_at, 'she is the school\'s teacher now: not retired');
+        $this->assertSame(1, $this->kitchen->tokens()->count(), 'and not signed out of the school');
+        $this->assertSame(
+            [[$this->school->id, 'teacher', true]],
+            MasjidUser::where('user_id', $this->kitchen->id)->get()->map(fn (MasjidUser $r) => [(int) $r->masjid_id, $r->role, (bool) $r->is_default])->all()
+        );
+        $this->assertContains($this->withBearer($token)->getJson($this->lunchBase($this->masjid).'/jummah-lunch/menus')->getStatusCode(), [401, 403]);
+    }
+
+    #[Test]
+    public function both_of_team_and_accesss_decisions_take_the_user_rows_lock_as_the_first_statement_of_their_transaction(): void
+    {
+        // On SQLite `lockForUpdate()` compiles to nothing, so the tests above cannot
+        // tell a locking read from a plain one. The attach doors serialise on this
+        // lock (TeachersController, LunchStaffController); a Team decision that did
+        // not take it would race them again, silently. Read from the source, as the
+        // doors' own tripwires are (DualMembershipIsolationTest).
+        $source = (string) file_get_contents(app_path('Http/Controllers/AdminDashboard/TeamController.php'));
+
+        foreach (['public function update(' => 'public function invite(', 'public function destroy(' => 'private function boundMasjid('] as $from => $to) {
+            $method = substr($source, (int) strpos($source, $from), (int) strpos($source, $to) - (int) strpos($source, $from));
+            $transaction = substr($method, (int) strpos($method, 'DB::transaction('));
+
+            $this->assertNotSame('', $transaction, "{$from} decides inside a transaction");
+
+            $firstStatement = strtok((string) preg_replace('~^\s*(//|\*|/\*).*$~m', '', substr($transaction, (int) strpos($transaction, '{') + 1)), ';');
+
+            $this->assertStringContainsString('lockedLogin(', (string) $firstStatement, "{$from} the first statement of the transaction is the lock");
+        }
+
+        $this->assertMatchesRegularExpression(
+            '/function lockedLogin\(User \$user\): User\s*\{\s*\$locked = User::withTrashed\(\)->whereKey\(\$user->id\)->lockForUpdate\(\)->first\(\);/',
+            $source
+        );
     }
 
     // ============================================ the other readers of a person's kind

@@ -2,11 +2,11 @@
  * The lunch-staff door answers in sentences; the office has to be able to read them.
  *
  * With one login able to hold a role at each organisation, the door that gives
- * someone lunch access can now refuse for reasons that are the whole explanation:
- * the address is a teacher's at this organisation, or adding an existing login is
- * switched off. Those refusals come as validation does, a sentence per field and
- * NO top-level `message`, and the form used to show axios's "Request failed with
- * status code 422" for them. The real board is mounted here and the door's real
+ * someone lunch access can now refuse for a reason that is the whole explanation:
+ * the address is a teacher's at this organisation. That refusal comes as
+ * validation does, a sentence per field and NO top-level `message`, and the form
+ * used to show axios's "Request failed with status code 422" for it, as it did for
+ * "has already been taken". The real board is mounted here and the door's real
  * bodies are played to it (they are pinned on the PHP side, in
  * tests/Feature/OneLoginTwoRolesDoorsTest.php).
  * Run: npm run test:spa
@@ -56,7 +56,6 @@ const refusedAddress = (sentence: string) => httpError(422, { status: 'failed', 
 test('an address the door will not add: its sentence is under the email field, announced, and tied to the field', async () => {
     for (const sentence of [
         'person@example.test is already a teacher at this organisation. One login can hold one role at an organisation.',
-        'Adding an existing login to a second organisation is switched off.',
         'The email has already been taken.',
     ]) {
         const s = await office({ createStaff: async () => { throw refusedAddress(sentence); } });

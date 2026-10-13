@@ -879,8 +879,8 @@ function openEditStaff(p: any) {
 // serverReason() found nothing to read and the office was shown axios's "Request
 // failed with status code 422" for an address that already had a login. That
 // mattered less while the only such sentence was "has already been taken"; the
-// door now also says that the address is a teacher's here, or that adding an
-// existing login is switched off, and each of those is the whole explanation.
+// door now also says that the address is a teacher's here, and that sentence is
+// the whole explanation.
 function staffFieldSentences(e: any): Record<string, string> {
     const bag = e?.response?.status === 422 ? e?.response?.data?.data : null;
     const found: Record<string, string> = {};

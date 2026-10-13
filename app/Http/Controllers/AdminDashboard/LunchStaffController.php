@@ -54,14 +54,18 @@ use Symfony\Component\HttpFoundation\Response;
  * ## One login, a role at each organisation
  *
  * While App\Support\StaffArea::open() is true, store() is CREATE-OR-ATTACH for
- * exactly one kind of existing login: a live TEACHER. A person who teaches at a
- * school may be given Friday lunch access here with the login and the password
- * they already have. The attach writes a `lunch-staff` row at THIS organisation
- * and nothing else: `users` is not written (the login's type stays Teacher; the
- * ROW is what makes it lunch staff here, MasjidUser::kindFor), no password link is
- * sent, and the person is told with the "added" notice. Every other address that
- * has a login is refused as it always was. With the switch off, store() is the
- * create it always was, statement for statement.
+ * one kind of existing login: a live TEACHER'S or LUNCH-STAFF login that runs
+ * lunch NOWHERE. A person who teaches at a school may be given Friday lunch access
+ * here with the login and the password they already have, whichever of the two
+ * their login was created as. (The second is how lunch access taken away from a
+ * person who also teaches is given back: their login outlived the removal, because
+ * it is also their teacher's login, and no other door can put the row back.) The
+ * attach writes a `lunch-staff` row at THIS organisation and nothing else: `users`
+ * is not written (the login's type stays what it was; the ROW is what makes it
+ * lunch staff here, MasjidUser::kindFor), no password link is sent, and the person
+ * is told with the "added" notice. Every other address that has a login is refused
+ * as it always was. With the switch off, store() is the create it always was,
+ * statement for statement.
  *
  * Who counts as "lunch staff of this masjid" is therefore decided by the row here
  * and not by `users.type`: a teacher given lunch access here is listed, edited and
@@ -153,7 +157,8 @@ class LunchStaffController extends Controller
 
     /**
      * store() while one login may hold a role at each organisation: create the
-     * login, or give a live teacher's existing login lunch access here.
+     * login, or give lunch access here to the existing login of a person who
+     * teaches somewhere and runs lunch nowhere.
      *
      * The procedure is TeachersController::createOrAttach's, for the same reasons
      * (they are written out there): the address is looked up outside the
@@ -229,13 +234,17 @@ class LunchStaffController extends Controller
      * `['refusal' => string]`.
      *
      *   no such login           create it as lunch staff, with its row here; invite
-     *   live Teacher            attach: a `lunch-staff` row here and nothing else,
-     *                           unless one of the three lines below applies
-     *     has a row here        422: one login holds one role at an organisation
+     *   live Teacher or         attach: a `lunch-staff` row here and nothing else,
+     *   live LunchStaff         unless one of the three lines below applies
      *     has lunch somewhere   422 "taken": a login runs lunch at ONE organisation
-     *                           (the lunch shell reads one, from `user.masjid`)
-     *     gate shut, belongs    422: the same switch that stops a teacher being
-     *     somewhere             added to a second school (tenancy.multi_membership)
+     *                           (the lunch shell reads one, from `user.masjid`).
+     *                           Every lunch login that still has its lunch row is
+     *                           answered here, as validation answered it before
+     *     has a row here        422: one login holds one role at an organisation
+     *     gate shut, belongs    422 "taken": the same switch that stops a teacher
+     *     somewhere             being added to a second school
+     *                           (tenancy.multi_membership), in the words every
+     *                           other address with a login is answered in
      *   anything else           422 "taken", which validation already answered for
      *                           every such address; this is the same answer for a
      *                           login that changed between validation and the lock
@@ -281,14 +290,19 @@ class LunchStaffController extends Controller
                 return ['user' => $user, 'mail' => 'invite'];
             }
 
-            // Validation looked past a live Teacher and nobody else. Read again
-            // under the lock, because the row may not be what it was a moment ago.
-            if ($existing->trashed() || $existing->type !== 'Teacher') {
+            // Validation looked past a live login of the two scoped kinds and
+            // nobody else. Read again under the lock, because the row may not be
+            // what it was a moment ago. An administrator's, a member's and a
+            // SuperAdmin's login, and anybody archived, is never attached.
+            if ($existing->trashed() || ! in_array($existing->type, OrganisationAccess::SCOPED_TYPES, true)) {
                 return ['refusal' => self::taken()];
             }
 
             $rows = MasjidUser::where('user_id', $existing->id)->get();
 
+            // Runs lunch somewhere already (here included): taken. This is every
+            // lunch login an office has not removed, and a teacher given lunch at
+            // another organisation. What is left is a person who only teaches.
             if ($rows->contains(fn (MasjidUser $row): bool => $row->kindFor($existing->type) === User::TYPE_LUNCH_STAFF)) {
                 return ['refusal' => self::taken()];
             }
@@ -301,8 +315,14 @@ class LunchStaffController extends Controller
 
             // The switch for NEW cross-organisation grants, with the meaning it has
             // at the Teachers door: a login that belongs nowhere needs no gate.
+            //
+            // Answered "taken", not "switched off". Before one login could hold two
+            // roles this door said "taken" for EVERY address with a login; a
+            // sentence of its own here would tell any office with Friday lunch that
+            // the address is a teacher's somewhere, without attaching anything and
+            // without the person being told.
             if (! (bool) config('tenancy.multi_membership', false) && $rows->isNotEmpty()) {
-                return ['refusal' => 'Adding an existing login to a second organisation is switched off.'];
+                return ['refusal' => self::taken()];
             }
 
             // ATTACH. `users` is not written: not name, phone, password, tokens, type.
@@ -375,8 +395,11 @@ class LunchStaffController extends Controller
      * A person who also belongs to another organisation is SHARED: the `users` row
      * is one record every organisation holds, so renaming or re-phoning them here
      * would rewrite a school's record of its teacher. For a shared person nothing
-     * is written; the name must be the one on file and no phone may be typed, as on
-     * the Teachers screen.
+     * is written; the name must be the one on file, and the phone either left out
+     * or the one on file. (The Edit form is filled from this screen's own list and
+     * always sends the phone back, so "no phone at all" refused an office that had
+     * pressed Save without changing anything. Accepting the stored value reveals
+     * nothing: index() already showed it to this office.)
      */
     public function update(UpdateLunchStaffRequest $request, $masjid_id, $user_id)
     {
@@ -386,13 +409,15 @@ class LunchStaffController extends Controller
             $typedName = trim((string) $request->validated('name'));
             $typedPhone = trim((string) ($request->validated('phone') ?? ''));
 
-            if ($typedName !== trim((string) $user->name) || $typedPhone !== '') {
+            $phoneChanged = $typedPhone !== '' && $typedPhone !== trim((string) $user->phone);
+
+            if ($typedName !== trim((string) $user->name) || $phoneChanged) {
                 $message = 'This person\'s name and phone are shared with another Manara organisation; ask them or Manara support to change them.';
 
                 return response()->json([
                     'status' => 'failed',
                     'message' => $message,
-                    'data' => [($typedPhone !== '' ? 'phone' : 'name') => [$message]],
+                    'data' => [($phoneChanged ? 'phone' : 'name') => [$message]],
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 

@@ -607,9 +607,16 @@ class TeachersController extends Controller
             // MasjidAdminsController::grantMembership. Attaching a teacher who
             // holds no membership at all (a live login with nowhere to go)
             // creates no cross-organisation grant, so it does not need the gate.
+            //
+            // A lunch-staff login stopped here is answered as this door always
+            // answered a lunch-staff login. "Switched off" would say the address is
+            // one this door attaches, which with the gate shut it never does; with
+            // the gate shut nothing is new, so nothing new is said.
             if (! (bool) config('tenancy.multi_membership', false)
                 && MasjidUser::where('user_id', $existing->id)->exists()) {
-                return ['refusal' => 'Adding an existing login to a second school is switched off.'];
+                return ['refusal' => $existing->type === 'Teacher'
+                    ? 'Adding an existing login to a second school is switched off.'
+                    : self::CANNOT_ADD];
             }
 
             // ATTACH. `users` is not written: not name, phone, password, tokens.

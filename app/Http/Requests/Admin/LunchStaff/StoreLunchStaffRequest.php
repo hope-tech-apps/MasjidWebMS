@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\LunchStaff;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\OrganisationAccess;
 use App\Support\StaffArea;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Unique;
@@ -31,11 +32,14 @@ class StoreLunchStaffRequest extends BaseFormRequest
      * login, and a duplicate would make the invite ambiguous.
      *
      * While one login may hold a role at each organisation (StaffArea::open()) there
-     * is exactly one address with a login that this door does not turn away here: a
-     * LIVE TEACHER'S, because a teacher may be given lunch access with the login
-     * they already have (LunchStaffController::store decides whether, under a lock).
-     * The rule is narrowed to look past that one row and nothing else, so every
-     * other address with a login (lunch staff, an administrator, a member, anybody
+     * is one kind of address with a login that this door does not turn away here:
+     * a LIVE login of the two scoped kinds, a teacher's or a lunch-staff one,
+     * because a person who teaches somewhere may be given lunch access with the
+     * login they already have. Whether THIS one may is decided by the controller,
+     * under a lock and from the login's rows (LunchStaffController::createOrAttach):
+     * a login that already runs lunch anywhere is answered there, in this rule's
+     * own words. The rule looks past those rows and nothing else, so every other
+     * address with a login (an administrator, a member, a SuperAdmin, anybody
      * archived) is still refused by this rule, in the same body and alongside any
      * other field's error, exactly as before. With the switch off it is the rule it
      * always was.
@@ -49,7 +53,7 @@ class StoreLunchStaffRequest extends BaseFormRequest
         }
 
         return $rule->where(fn ($query) => $query->where(
-            fn ($login) => $login->where('type', '!=', 'Teacher')->orWhereNotNull('deleted_at')
+            fn ($login) => $login->whereNotIn('type', OrganisationAccess::SCOPED_TYPES)->orWhereNotNull('deleted_at')
         ));
     }
 }

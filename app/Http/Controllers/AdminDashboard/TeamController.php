@@ -78,6 +78,8 @@ class TeamController extends Controller
 
     private const ORDER = [self::ACCESS_ADMIN => 0, self::ACCESS_LUNCH => 1, self::ACCESS_TEACHER => 2];
 
+    private const BELONGS_ELSEWHERE = 'This login also belongs to another organisation, and its access applies to both. Change it with Manara.';
+
     public function __construct(private TenantContext $tenant)
     {
     }
@@ -219,11 +221,11 @@ class TeamController extends Controller
         // re-typing a login here while it still belongs to an archived
         // organisation would make it a full administrator there (or lock out its
         // owner) the day that organisation is restored.
-        $elsewhere = MasjidUser::where('user_id', $user->id)->where('masjid_id', '!=', $masjid->id)->exists()
-            || Masjid::withoutGlobalScopes()->where('user_id', $user->id)->where('id', '!=', $masjid->id)->exists();
-
-        if ($elsewhere) {
-            return $this->refuse('This login also belongs to another organisation, and its access applies to both. Change it with Manara.', Response::HTTP_CONFLICT);
+        //
+        // Asked here for the ordinary refusal, which then takes no lock, and asked
+        // AGAIN under the lock below, which is the answer the write goes by.
+        if ($this->belongsToAnotherOrganisation($masjid, $user)) {
+            return $this->refuse(self::BELONGS_ELSEWHERE, Response::HTTP_CONFLICT);
         }
 
         if (! in_array($level, $this->creatableFor($masjid), true)) {
@@ -234,14 +236,50 @@ class TeamController extends Controller
         }
 
         if ($user->type !== self::TYPE_FOR_ACCESS[$level]) {
-            DB::transaction(function () use ($user, $masjid, $level) {
-                $user->forceFill(['type' => self::TYPE_FOR_ACCESS[$level]])->save();
+            $refusal = DB::transaction(function () use ($user, $masjid, $level) {
+                // THE LOCK FIRST, then every check the write rests on, again.
+                //
+                // The checks above were plain reads, and two other doors can give
+                // this same person a row at ANOTHER organisation at any moment: the
+                // Teachers door attaches a live lunch-staff login (and any existing
+                // teacher's), the lunch-staff door a live teacher's. Each holds the
+                // user row's lock while it writes. Without the lock here, a school
+                // adding this person while this request was between its check and
+                // its write went unseen: the re-type waited for the school's commit
+                // and then made the login an administrator, and an administrator
+                // binds through ANY live row, so of that school too.
+                //
+                // With it the three serialise. Whichever comes second reads what the
+                // first committed: this one answers 409, or the attach finds an
+                // administrator and refuses. (The first statement of the transaction,
+                // for the reason TeachersController::createOrAttach gives: a plain
+                // read before the lock would fix the snapshot too early.)
+                $locked = $this->lockedLogin($user);
 
-                MasjidUser::where('masjid_id', $masjid->id)->where('user_id', $user->id)
-                    ->update(['role' => self::ROLE_FOR_ACCESS[$level]]);
+                if ($this->kindHere($masjid, $locked) === 'Teacher') {
+                    return ['Teachers are managed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY];
+                }
 
-                $user->tokens()->delete();
+                if ($this->belongsToAnotherOrganisation($masjid, $locked)) {
+                    return [self::BELONGS_ELSEWHERE, Response::HTTP_CONFLICT];
+                }
+
+                // Another administrator's same request may have got here first.
+                if ($locked->type !== self::TYPE_FOR_ACCESS[$level]) {
+                    $locked->forceFill(['type' => self::TYPE_FOR_ACCESS[$level]])->save();
+
+                    MasjidUser::where('masjid_id', $masjid->id)->where('user_id', $locked->id)
+                        ->update(['role' => self::ROLE_FOR_ACCESS[$level]]);
+
+                    $locked->tokens()->delete();
+                }
+
+                return null;
             });
+
+            if ($refusal !== null) {
+                return $this->refuse(...$refusal);
+            }
         }
 
         $label = $level === self::ACCESS_ADMIN ? 'an Administrator' : 'Friday lunch only';
@@ -323,6 +361,13 @@ class TeamController extends Controller
         }
 
         DB::transaction(function () use ($user, $masjid, $kindHere) {
+            // The lock first, as in update() and for the same reason: "belongs
+            // somewhere else" below decides whether this person is signed out and
+            // whether the login is retired, and a door at another organisation may
+            // be attaching them right now under this lock. Read before it, a school's
+            // new teacher was signed out and archived by a masjid's removal.
+            $user = $this->lockedLogin($user);
+
             // A person who runs lunch here and still belongs to another LIVE
             // organisation (a school they teach at) keeps their sessions: a token
             // names no organisation, so deleting it would sign them out of the
@@ -381,6 +426,39 @@ class TeamController extends Controller
         abort_unless($belongs, Response::HTTP_NOT_FOUND);
 
         return User::where('id', $userId)->whereIn('type', self::STAFF_TYPES)->firstOrFail();
+    }
+
+    /**
+     * The login's row, read FOR UPDATE: the first statement of a transaction that
+     * decides from what this login is and where it belongs.
+     *
+     * Every door that gives or takes a membership takes this same lock before it
+     * decides (TeachersController::createOrAttach, LunchStaffController::
+     * createOrAttach and ::destroy), so a decision made after it is made on what
+     * the others committed. A 404 when the login was retired in the meantime: it is
+     * nobody's staff login any more, exactly as member() answers.
+     */
+    private function lockedLogin(User $user): User
+    {
+        $locked = User::withTrashed()->whereKey($user->id)->lockForUpdate()->first();
+
+        abort_if(
+            $locked === null || $locked->trashed() || ! in_array($locked->type, self::STAFF_TYPES, true),
+            Response::HTTP_NOT_FOUND
+        );
+
+        return $locked;
+    }
+
+    /**
+     * Whether this login holds a membership or an organisation other than this
+     * one, ARCHIVED ones included (see update()). `users.type` is one value for
+     * every organisation, so a login that does is not re-typed here.
+     */
+    private function belongsToAnotherOrganisation(Masjid $masjid, User $user): bool
+    {
+        return MasjidUser::where('user_id', $user->id)->where('masjid_id', '!=', $masjid->id)->exists()
+            || Masjid::withoutGlobalScopes()->where('user_id', $user->id)->where('id', '!=', $masjid->id)->exists();
     }
 
     /**

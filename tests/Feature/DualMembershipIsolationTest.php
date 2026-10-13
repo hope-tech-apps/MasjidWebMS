@@ -362,11 +362,13 @@ class DualMembershipIsolationTest extends TestCase
 
             if (str_contains($door, 'AdminDashboard/LunchStaffController')) {
                 // The THIRD deliberate door, named on purpose. With the roles switch
-                // on it gives a live TEACHER'S login lunch access at this
-                // organisation. It would pass the sweep below without being named,
-                // by accident: its request still spells `Rule::unique('users',
-                // 'email')` (narrowed, while the switch is on, to look past a live
-                // teacher), which is all enforcesAUniqueEmail() looks for. That
+                // on it gives lunch access at this organisation to the live login of
+                // a person who TEACHES somewhere and runs lunch nowhere (a teacher's
+                // login, or a lunch-staff login whose lunch access was removed). It
+                // would pass the sweep below without being named, by accident: its
+                // request still spells `Rule::unique('users', 'email')` (narrowed,
+                // while the switch is on, to look past a live login of those two
+                // kinds), which is all enforcesAUniqueEmail() looks for. That
                 // silence is what this test exists to prevent, so the door stands
                 // here with the two gates it must consult: the roles switch, and the
                 // same membership gate as the two doors above. Its refusals of every
@@ -377,7 +379,7 @@ class DualMembershipIsolationTest extends TestCase
 
                 $this->assertStringContainsString('StaffArea::open()', $source, "{$door} attaches an existing teacher's login and must consult the roles switch.");
                 $this->assertStringContainsString('tenancy.multi_membership', $source, "{$door} attaches an existing login and must consult the gate.");
-                $this->assertStringContainsString("\$existing->type !== 'Teacher'", $source, "{$door} attaches an existing login and must refuse every type but Teacher.");
+                $this->assertStringContainsString('! in_array($existing->type, OrganisationAccess::SCOPED_TYPES, true)', $source, "{$door} attaches an existing login and must refuse every type but a teacher's and a lunch-staff login.");
                 $this->assertTrue($this->enforcesAUniqueEmail($door), "{$door} must still validate the email as unique for every login it does not attach.");
 
                 continue;
