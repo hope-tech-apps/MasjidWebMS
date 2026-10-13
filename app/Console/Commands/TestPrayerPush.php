@@ -59,8 +59,7 @@ class TestPrayerPush extends Command
                 : SendDuePrayerNotifications::ANDROID_CHANNEL_ADHAN
         );
 
-        $this->info("Sent to device {$deviceId} (subscription {$subscriptionId})");
-        $this->line('OneSignal response: ' . json_encode($response));
+        $this->info('Push request processed. Use push:outcomes to check delivery.');
 
         return self::SUCCESS;
     }

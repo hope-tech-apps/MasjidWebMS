@@ -60,6 +60,6 @@ class SendPrayerSyncJob implements ShouldQueue
 
     public function failed(Throwable $e): void
     {
-        Log::warning("SendPrayerSyncJob failed for masjid {$this->masjidId}: " . $e->getMessage());
+        Log::warning("SendPrayerSyncJob failed for masjid {$this->masjidId}");
     }
 }

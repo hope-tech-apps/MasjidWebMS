@@ -85,6 +85,7 @@ class MobileDevicePayloadTest extends TestCase
         // Which member is signed in on this handset. The whole point of the finding.
         'contact_id' => '424242',
         // That member's push identity: enough to target them in OneSignal.
+        'push_app_id' => 'app-WITHHELD-SENTINEL',
         'onesignal_subscription_id' => 'a1b2c3d4-SENTINEL-PUSH-ID',
         // When this person last opened the app. Read by nothing on either platform.
         'last_active_at' => '2019-07-04T11:22:33.000000Z',

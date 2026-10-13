@@ -19,6 +19,7 @@ class MobileAppUser extends Model
         'contact_id',
         'device_id',
         'onesignal_subscription_id',
+        'push_app_id',
         'user_agent',
         'app_platform',
         'app_version',

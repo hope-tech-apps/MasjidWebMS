@@ -166,6 +166,9 @@ return [
         'contact_portal_invites' => 'Live 7-day PARENT portal invites: a keyed digest of the link token, plus the family address it was mailed to and the issuing IP. The digest is worthless without production APP_KEY, but the address is a real parent\'s and the row names which child\'s file a link opened. One-way FK to contacts.',
 
         // Send logs and provider ledgers.
+        'push_send_groups' => 'Provider message ids and account outcomes; staging must never check a production send.',
+        'push_sends' => 'Push outcome ledger for real devices; emptied with the notification log.',
+        'push_apps' => 'Production push account registry and encrypted credentials; staging registers its own test accounts.',
         'notifications' => 'The push send-log (title, message, onesignal_message_id). Dropped so a staging admin cannot re-fire a real OneSignal message id and so the in-app inbox starts empty.',
         'email_suppressions' => 'SAFE ON STAGING ONLY, and for the same reason as sms_suppressions below: every row is the email address of somebody who asked an organisation to stop writing to them, and in production the record deliberately outlives the contact. It is expendable here solely because staging cannot send email — MAIL_MAILER=log. If staging ever gains a real mailer, MOVE THIS TABLE TO KEEP: replaying a production broadcast against a wiped opt-out list is precisely the mistake the table exists to prevent.',
         'sms_suppressions' => 'SAFE ON STAGING ONLY. In production the opt-out deliberately outlives the contact row (.claude/rules/broadcasts.md) and must never be truncated. It is expendable here solely because staging cannot send SMS: no A2P sender, SMS_DRIVER=none, masjid_sms_senders forced to `unregistered` below. If staging ever gains a real provider, MOVE THIS TABLE TO KEEP.',
@@ -186,15 +189,15 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | encrypted_null — the twelve `encrypted` cast columns
+    | encrypted_null — `encrypted` cast columns
     |--------------------------------------------------------------------------
     |
     | These hold ciphertext produced with production's APP_KEY. SQL cannot
     | re-encrypt, and writing plaintext into them makes every subsequent read
     | throw DecryptException. NULL is the only safe value.
     |
-    | Three of the twelve sit on tables that `drop_rows` empties. They are listed
-    | anyway so this file is a complete answer to "where did each of the twelve
+    | Some sit on tables that `drop_rows` empties. They are listed
+    | anyway so this file is a complete answer to "where did each encrypted value
     | go?"; the command reports them as covered-by-drop rather than running a
     | pointless UPDATE against an emptied table.
     |
@@ -206,6 +209,7 @@ return [
     | be a child's real date of birth sitting on staging, so it is nulled.
     */
     'encrypted_null' => [
+        'push_apps' => ['rest_api_key'],
         'member_question_answers' => ['occupation_text','help_text'],
         'users' => ['two_factor_secret'],
         // `age_given` (2026-10-05) is the twelfth: the age a family gave for a
@@ -279,6 +283,8 @@ return [
         ],
 
         'mobile_app_users' => [
+            'push_app_id', // routing telemetry nulled alongside the real handset address
+
             'onesignal_subscription_id', // the push address of a real handset. Nulling this is what stops staging paging real phones; there is no separate device-token table.
         ],
 

@@ -10,6 +10,25 @@ use Symfony\Component\HttpFoundation\Response;
 
 class NotificationsController extends Controller
 {
+    /** Recent outcomes on the existing Notifications screen, under its existing admin/tenant fences. */
+    public function index($masjid_id)
+    {
+        $masjid = Masjid::findOrFail($masjid_id);
+        $notes = $masjid->notifications()->orderByDesc('id')->limit(30)->get();
+        $outcomes = \Illuminate\Support\Facades\Schema::hasTable('push_sends')
+            ? \App\Models\PushSend::where('masjid_id', $masjid->id)->whereIn('notification_id', $notes->pluck('id'))->get()->keyBy('notification_id')
+            : collect();
+        return response()->json(['status' => 'success', 'data' => $notes->map(function ($note) use ($outcomes) {
+            $outcome = $outcomes[$note->id] ?? null;
+            return [
+                'id' => $note->id, 'title' => $note->title, 'created_at' => $note->created_at,
+                'push_outcome' => $outcome?->toArray(),
+                'push_outcome_text' => $outcome?->wording() ?? ($note->created_at->lt(now()->subMinutes(3))
+                    ? 'Delivery could not be checked.' : 'Checking delivery…'),
+            ];
+        })]);
+    }
+
     public function save(SendNotificationRequest $request, $masjid_id)
     {
         try {
@@ -41,7 +60,10 @@ class NotificationsController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $notification
+                'data' => array_merge($notification->toArray(), [
+                    'push_outcome_text' => 'Sent to '.count($targetedSubscriptionIds)
+                        .(count($targetedSubscriptionIds) === 1 ? ' phone. ' : ' phones. ').'Checking delivery…',
+                ])
             ], Response::HTTP_ACCEPTED);
         } catch (\Exception $e) {
             return response()->json([

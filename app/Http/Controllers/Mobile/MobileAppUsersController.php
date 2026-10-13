@@ -32,7 +32,7 @@ class MobileAppUsersController extends Controller
             // X-Manara-App header, and ONLY the fields that carry a value — a
             // pre-R1 build sends none of them and must not blank what a later
             // build recorded. See App\Support\AppClientHeader::resolve.
-            $client = AppClientHeader::resolve($request);
+            $client = AppClientHeader::resolve($request) + $this->pushAppRegistration($request);
 
             if ($user === null) {
                 try {
@@ -82,7 +82,7 @@ class MobileAppUsersController extends Controller
             // never touched: this verb is how an app re-points a handset at
             // another organisation, and a build too old to send its identity
             // must not erase the identity a newer one recorded.
-            foreach (AppClientHeader::resolve($request) as $field => $value) {
+            foreach (AppClientHeader::resolve($request) + $this->pushAppRegistration($request) as $field => $value) {
                 $user->{$field} = $value;
             }
 
@@ -127,6 +127,7 @@ class MobileAppUsersController extends Controller
         $request->validate([
             'device_id' => 'required|string',
             'onesignal_subscription_id' => 'nullable|string',
+            'push_app_id' => ['sometimes', 'nullable', 'string', 'max:128', 'regex:/\A[A-Za-z0-9_-]+\z/'],
         ]);
 
         $update = ['last_active_at' => now()];
@@ -136,7 +137,7 @@ class MobileAppUsersController extends Controller
         // never-null rule matters most, because it runs on every launch. Merged
         // as a subset: a field the request does not carry is not in the UPDATE
         // statement at all.
-        $update += AppClientHeader::resolve($request);
+        $update += AppClientHeader::resolve($request) + $this->pushAppRegistration($request);
 
         // The OneSignal subscription id is the only reliable push target
         // (external_id aliases don't resolve), so capture it whenever the app
@@ -171,6 +172,13 @@ class MobileAppUsersController extends Controller
                 'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private function pushAppRegistration(Request $request): array
+    {
+        // An older build must not erase the app a newer build recorded. Tolerate code-before-migration deploys.
+        return $request->filled('push_app_id') && \Illuminate\Support\Facades\Schema::hasColumn('mobile_app_users', 'push_app_id')
+            ? ['push_app_id' => $request->input('push_app_id')] : [];
     }
 
     /**

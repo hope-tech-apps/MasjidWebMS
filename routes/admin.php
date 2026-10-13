@@ -550,6 +550,7 @@ Route::prefix('admin')->group(function () {
             // Masjid notifications (sending a push). Scheduled prayer pushes do not
             // come through here: they follow Prayer times, not this module.
             Route::prefix('{masjid_id}/notifications')->middleware('capability:push_notifications')->controller(NotificationsController::class)->group((function () {
+                Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
 

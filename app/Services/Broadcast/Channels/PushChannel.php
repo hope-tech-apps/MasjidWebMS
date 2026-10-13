@@ -27,8 +27,8 @@ use App\Services\Broadcast\ChannelResult;
  * It means the message was accepted by the delivery pipeline — the notification
  * row exists and the job is queued. It does NOT claim a phone lit up: OneSignal
  * answers asynchronously, and its verdict lands on
- * `notifications.onesignal_message_id` (or, after exhausted retries, the job's
- * failed() handler removes the row). The delivery note says so rather than
+ * the per-account push outcome ledger (the notification and failure record
+ * survive exhausted retries). The delivery note says so rather than
  * implying a stronger guarantee than the channel can make.
  *
  * ## No devices is a SKIP

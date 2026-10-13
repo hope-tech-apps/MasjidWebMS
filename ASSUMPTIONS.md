@@ -471,3 +471,6 @@ Verified catalogue has no Home row; exact home key/Home name reserved for a futu
 - Array-cache SQL pins measure application queries. Production database-cache infrastructure adds cache operations and has not been benchmarked. Local browser launch is attempted separately; wrapping CSS/mounted tests cannot prove actual phone geometry.
 
 Final cache note: SQLite database-cache infrastructure is now explicitly measured9/1 OFF and ON-empty,10/2 chosen with conditional publication. Actual MySQL execution remains unverified. Ward relationships also identify child records; unknown ages without those record markers retain the stated adult-member assumption.
+
+## Push accounts — 2026-10-13
+Readback timings 3 minutes and +15 minutes are chosen operational delays, not measured provider completion guarantees. Native builders will report the exact SDK initialization app ID; clients are not modified in this server worktree. Shell command access is platform operator access. Existing shared-config staging guard is retained intentionally. Production deployment, real delivery, MySQL concurrent locks and native registration are not verified locally.

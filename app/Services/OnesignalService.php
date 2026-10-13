@@ -91,20 +91,10 @@ class OnesignalService
     }
 
     /**
-     * Resolve which OneSignal (app_id, REST key) to send THROUGH for a masjid.
-     *
-     * Tenant-scoping rule:
-     *   - If the masjid has its OWN provisioned OneSignal app (both app id and
-     *     REST key on file — masjid_app_publishing), use THAT. This is hard,
-     *     app-level isolation: that REST key can only reach subscribers under
-     *     that app. It is also a correctness requirement, because OneSignal
-     *     subscription IDs are scoped to a single app.
-     *   - Otherwise fall back to the SHARED/global app (current behavior),
-     *     preserved exactly so nothing breaks for the live fleet.
-     *
-     * The masjid is always a server-derived model (the bound tenant / route
-     * masjid), never client input — a masjid can never route through another's
-     * app.
+     * Legacy fallback for a registration that has never reported its push app.
+     * Resolve the organisation's existing complete configuration, then shared.
+     * PushDeliveryService overrides this choice for app-aware phones, using only
+     * registered platform credentials and the caller's already-selected audience.
      *
      * @return array{0:string,1:string,2:bool} [appId, restKey, isDedicated]
      */
@@ -189,12 +179,7 @@ class OnesignalService
             $payload['filters'] = $this->masjidTagFilter($masjid);
         }
 
-        $response = Http::withHeaders([
-            'Authorization' => 'Basic ' . $appKey,
-            'Content-Type' => 'application/json'
-        ])->post($this->api_url, $payload);
-
-        return $response->json();
+        return app(PushDeliveryService::class)->send($masjid, $payload, [$appId, $appKey], 'notification', $notification->id);
     }
 
     /**
@@ -243,12 +228,7 @@ class OnesignalService
                 $payload['ios_attachments'] = ['id1' => $imageUrl];
             }
 
-            $response = Http::withHeaders([
-                'Authorization' => 'Basic ' . $appKey,
-                'Content-Type' => 'application/json'
-            ])->post($this->api_url, $payload);
-
-            return $response->json();
+            return app(PushDeliveryService::class)->send($masjid, $payload, [$appId, $appKey], 'notification', $notification->id);
 
         } catch (\Exception $e) {
             throw $e;
@@ -289,10 +269,7 @@ class OnesignalService
         [$appId, $appKey] = $this->resolveConfig($masjid);
 
         try {
-            $response = Http::withHeaders([
-                'Authorization' => 'Basic ' . $appKey,
-                'Content-Type' => 'application/json',
-            ])->timeout(15)->post($this->api_url, [
+            $payload = [
                 'app_id' => $appId,
                 // Subscription IDs, NOT external_id aliases — aliases don't
                 // resolve in OneSignal's notification API (invalid_aliases).
@@ -302,12 +279,11 @@ class OnesignalService
                 // in the background on iOS (aps.content-available = 1).
                 'content_available' => true,
                 'data' => array_merge(['type' => 'prayer_sync'], $data),
-            ]);
-
-            return $response->json();
+            ];
+            return app(PushDeliveryService::class)->send($masjid, $payload, [$appId, $appKey], 'prayer_sync', timeout: 15);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning(
-                'OneSignal sendDataSync failed: ' . $e->getMessage()
+                'OneSignal sendDataSync failed'
             );
 
             return null;
@@ -400,48 +376,66 @@ class OnesignalService
                 }
             }
 
-            $response = Http::withHeaders([
-                'Authorization' => 'Basic ' . $appKey,
-                'Content-Type' => 'application/json',
-            ])->timeout(15)->post($this->api_url, $payload);
-
-            return $response->json();
+            return app(PushDeliveryService::class)->send($masjid, $payload, [$appId, $appKey], 'prayer_alert', timeout: 15);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning(
-                'OneSignal sendPrayerAlert failed: ' . $e->getMessage()
+                'OneSignal sendPrayerAlert failed'
             );
 
             return null;
         }
     }
 
-    /**
-     * Get details of a specific notification by its message ID.
-     *
-     * @param string $messageId The ID of the notification.
-     * @return array
-     */
-    public function getNotificationDetails($messageId)
+    /** Resolve legacy credentials at read time, but only if the account still matches the recorded app. */
+    public function credentialsForOutcome(?Masjid $masjid, string $appId, bool $legacy): ?string
     {
-        // Not a send, so it does not use the "not sent" shape — but it must
-        // still not build a request against a blank api_url, which throws.
-        // An empty array is the same "nothing to report" a lookup miss gives.
+        if (!$this->isConfigured()) {
+            return null;
+        }
+        if (\Illuminate\Support\Facades\Schema::hasTable('push_apps')) {
+            $app = \App\Models\PushApp::where('provider_app_id', $appId)->first();
+            if ($app) {
+                return $app->active ? $app->rest_api_key : null;
+            }
+        }
+        if ($legacy) {
+            [$currentApp, $key] = $this->resolveConfig($masjid);
+            return $currentApp === $appId ? $key : null;
+        }
+        return null;
+    }
+
+    /** Build the View Message path before the query, retaining unrelated configured query parameters. */
+    public function notificationDetailsUrl(string $messageId, string $appId): string
+    {
+        $parts = parse_url($this->api_url);
+        $query = [];
+        parse_str($parts['query'] ?? '', $query);
+        $query['app_id'] = $appId;
+        return $parts['scheme'].'://'.$parts['host'].(isset($parts['port']) ? ':'.$parts['port'] : '')
+            .rtrim($parts['path'] ?? '', '/').'/'.rawurlencode($messageId).'?'.http_build_query($query);
+    }
+
+    /** View a message through its recorded account. Failure returns no verdict, never success. */
+    public function getNotificationDetails($messageId, ?string $appId = null, #[\SensitiveParameter] ?string $appKey = null): array
+    {
         if (!$this->isConfigured()) {
             Log::warning('onesignal: not configured, notification lookup skipped');
-
             return [];
         }
-
-        // Construct the URL for the View Message API
-        $url = "{$this->api_url}/{$messageId}?app_id={$this->app_id}";
-
-        // Make the GET request to the OneSignal API
-        $response = Http::withHeaders([
-            'Authorization' => 'Basic ' . $this->app_key,
-            'Content-Type' => 'application/json',
-        ])->get($url);
-
-        // Return the response as an array
-        return $response->json();
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Basic '.($appKey ?? $this->app_key),
+                'Content-Type' => 'application/json',
+            ])->timeout(15)->get($this->notificationDetailsUrl($messageId, $appId ?? $this->app_id));
+            $body = $response->json();
+            if ($response->successful() && is_array($body) && !isset($body['errors'])) {
+                return $body;
+            }
+        } catch (\Throwable $e) {
+            // Exceptions can quote response bodies or request headers. Keep neither.
+        }
+        Log::warning('Push provider delivery could not be checked');
+        return [];
     }
 }

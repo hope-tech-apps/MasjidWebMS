@@ -291,7 +291,29 @@ class BroadcastsController extends Controller
      */
     private function present(Broadcast $broadcast): array
     {
-        return array_merge($broadcast->toArray(), [
+        $payload = $broadcast->toArray();
+        if (isset($payload['deliveries']) && \Illuminate\Support\Facades\Schema::hasTable('push_sends')) {
+            $ids = collect($payload['deliveries'])->where('channel', 'push')->pluck('reference_id')->filter();
+            $outcomes = \App\Models\PushSend::where('masjid_id', $broadcast->masjid_id)
+                ->whereIn('notification_id', $ids)->get()->keyBy('notification_id');
+            foreach ($payload['deliveries'] as &$delivery) {
+                if ($delivery['channel'] !== 'push') {
+                    continue;
+                }
+                $outcome = $outcomes[$delivery['reference_id']] ?? null;
+                if ($outcome) {
+                    $delivery['push_outcome'] = $outcome->toArray();
+                    $delivery['push_outcome_text'] = $outcome->wording();
+                } elseif ($delivery['status'] === 'sent') {
+                    // Historical records never had readback; queued new sends will gain a ledger when the worker runs.
+                    $delivery['push_outcome_text'] = 'Sent to '.$delivery['target_count']
+                        .($delivery['target_count'] === 1 ? ' phone. ' : ' phones. ')
+                        .($broadcast->created_at->lt(now()->subMinutes(3)) ? 'Delivery could not be checked.' : 'Checking delivery…');
+                }
+            }
+            unset($delivery);
+        }
+        return array_merge($payload, [
             'image_url' => $broadcast->imageUrl(),
             'cancellable' => $broadcast->isCancellable(),
             'cancelled_at' => $broadcast->cancelled_at?->toISOString(),
