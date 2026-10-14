@@ -66,3 +66,17 @@ test('deferred Save uses multipart fields, retains explicit empty file links and
     assert.equal(form.get('_method'), 'PUT'); assert.equal(form.has('attachments'), false);
     assert.equal((form.get('photos[]') as File).name, 'lesson-photo-1.jpg');
 });
+
+test('every field the reader may suggest shows the suggestion badge on the plan form', () => {
+    const php = readFileSync(new URL('../../../app/Services/LessonPlanPhotoReader.php', import.meta.url), 'utf8');
+    const list = php.match(/const SUGGESTED = \[([\s\S]*?)\];/)![1];
+    const keys = [...list.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    const vue = readFileSync(new URL('../views/teacher/TeacherClass.vue', import.meta.url), 'utf8');
+    const loopKeys = ['learning_outcomes', 'differentiation_support', 'differentiation_extension', 'differentiation_learning_styles',
+        'differentiation_ell_aal', 'differentiation_sen', 'cross_integration_subject', 'cross_integration_islamic', 'cross_integration_stem', 'teaching_methods'];
+    assert.ok(vue.includes('photoSuggestions[f.key]'));
+    for (const key of keys) {
+        if (loopKeys.includes(key)) continue;
+        assert.ok(vue.includes(`photoSuggestions.${key}`), `${key} has no suggestion badge`);
+    }
+});

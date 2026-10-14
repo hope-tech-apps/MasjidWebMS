@@ -1600,7 +1600,9 @@
                                 <p v-if="planFileError" class="text-danger small mb-0">{{ planFileError }}</p>
                             </div>
 
-                            <label class="form-label small text-muted mb-1 mt-2">Formative check</label>
+                            <label class="form-label small text-muted mb-1 mt-2">Formative check
+                                <span v-if="photoSuggestions.assessment_formative" class="badge bg-warning-subtle text-warning-emphasis ms-1">Suggested: check before saving</span>
+                            </label>
                             <input v-model="planForm.assessment_formative" type="text"
                                    class="form-control form-control-sm"
                                    placeholder="How will you know they got it?">
