@@ -41,9 +41,9 @@ Confirmed choices are remembered when the office presses Preview, even if a rost
 
 `RosterImportService` is unchanged, including email normalisation, exact email identity matching, existing refusals, consent/login exclusions, no class creation and all-or-nothing writes. Generated template parity and two-guardian workbook tests cover preview and commit.
 
-## Known inherited limitation
+## Blank surnames
 
-The existing service accepts missing name values at preview but writes NULL for blank student or guardian last names, while `contacts` requires non-null names. Such a commit can still return 500. This build preserves that behavior under the explicit service-preservation scope; it does not invent a name or change an existing refusal. Supply name columns with values before importing. The reproduced failure was a blank guardian last name in the generated workbook; both blank-name branches and the schema were read directly.
+A blank student or guardian surname is stored blank (`contacts.last_name` is NOT NULL). Before f957c9ab it was written as NULL and a commit that had previewed clean answered 500; `RosterImportTest::a_blank_surname_that_previews_clean_also_commits` pins the fix.
 
 No real export from any vendor has been verified. All new examples are generated, made-up test files. The real-export walk and office guide are separate follow-up work.
 
