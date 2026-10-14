@@ -36,7 +36,16 @@ class App101OffContractTest extends TestCase
         $this->assertCount(2,$added);
         $this->assertStringContainsString('sqlite_master',$added[0]);
         $this->assertSame('delete from "member_question_answers" where "masjid_id" = ? and "contact_id" = ?',$added[1]);
-        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'member_question_answers')));
+        // The absence-email logs are office delivery history kept like group messages: two reads, nothing written.
+        $absence=array_values(array_filter($sql,fn($q)=>str_contains($q,'attendance_absence_mail')));
+        // Each is guarded by a table check for the moment code is live before its migration has run.
+        $this->assertSame([
+            'select exists (select 1 from "main".sqlite_master where name = \'attendance_absence_mails\' and type = \'table\') as "exists"',
+            'select exists(select * from "attendance_absence_mails" where ("guardian_contact_id" = ?)) as "exists"',
+            'select exists (select 1 from "main".sqlite_master where name = \'attendance_absence_mail_children\' and type = \'table\') as "exists"',
+            'select exists(select * from "attendance_absence_mail_children" where ("guardian_contact_id" = ? or "student_contact_id" = ?)) as "exists"',
+        ],$absence);
+        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'member_question_answers') && !str_contains($q,'attendance_absence_mail')));
         $this->assertSame(json_decode(file_get_contents(base_path('tests/fixtures/app101-off-109ce744.json')),true),$out);
     }
 }
