@@ -686,7 +686,7 @@ class MemberAccountDeletion
 
             // These optional logs do not exist in the code-before-migration deployment window.
             // Only a genuinely missing table skips: a failed schema check must stop erasure.
-            if (in_array($table, ['attendance_absence_mails', 'attendance_absence_mail_children'], true)
+            if (in_array($table, ['attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
                 && ! \Illuminate\Support\Facades\Schema::hasTable($table)) continue;
 
             $held = DB::table($table)
