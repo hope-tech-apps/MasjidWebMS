@@ -482,9 +482,10 @@ class TeacherMultiSchoolTest extends TestCase
         ];
 
         foreach ($routes as $route) {
+            $this->periodSweepMode(str_starts_with($route['suffix'], '/period-attendance/'));
             $key = "{$route['method']} {$route['suffix']}";
             $spec = $specs[$key] ?? [];
-            $hasGroup = in_array('group_id', $route['placeholders'], true);
+            $hasGroup = in_array('group_id', $route['placeholders'], true) || in_array('meeting_id', $route['placeholders'], true);
             $hasForeignUrlSlot = array_diff($route['placeholders'], ['masjid_id', 'group_id']) !== [];
             $bodyCarriesIds = isset($spec['body']) && $spec['body']($a) !== $spec['body']($b);
 
@@ -528,7 +529,8 @@ class TeacherMultiSchoolTest extends TestCase
                     $failures[] = "{$where}: the third school was not refused by the tenant gate (message: ".json_encode($this->messageOf($body)).')';
                 }
 
-                if ($kind === 'leader' && $this->messageOf($body) !== 'You do not lead this class.') {
+                $leaderMessage = str_starts_with($route['suffix'], '/period-attendance/classes/') ? 'You do not teach a period or lead this class.' : (str_starts_with($route['suffix'], '/period-attendance/') ? 'You do not teach this period or lead this class.' : 'You do not lead this class.');
+                if ($kind === 'leader' && $this->messageOf($body) !== $leaderMessage) {
                     $failures[] = "{$where}: the not-led class was not refused by teacher.leads (message: ".json_encode($this->messageOf($body)).')';
                 }
 
@@ -559,6 +561,7 @@ class TeacherMultiSchoolTest extends TestCase
 
         foreach ([$a, $b] as $world) {
             foreach ($ordered as $route) {
+                $this->periodSweepMode(str_starts_with($route['suffix'], '/period-attendance/'));
                 $key = "{$route['method']} {$route['suffix']}";
                 $spec = $specs[$key] ?? [];
 
@@ -662,6 +665,17 @@ class TeacherMultiSchoolTest extends TestCase
         $this->assertSame([], $failures, count($failures)." sweep failure(s) over {$attacks} refused requests and {$controls} controls:\n".implode("\n", $failures));
     }
 
+    /** Period routes get positive ON controls; ordinary day-register controls retain their OFF path. */
+    private function periodSweepMode(bool $enabled): void
+    {
+        foreach ([$this->schoolA,$this->schoolB] as $school) {
+            $row=$school->fresh(); $values=$row->capability_overrides ?? [];
+            if ($enabled) { $values['period_attendance']=true; $values[\App\Support\PeriodAttendanceMode::WINDOWS]=[['from'=>'2026-09-01','to'=>null]]; }
+            else unset($values['period_attendance'],$values[\App\Support\PeriodAttendanceMode::WINDOWS]);
+            $row->forceFill(['capability_overrides'=>$values])->save();
+        }
+    }
+
     /**
      * What each write route needs to be a VALID request, so that a refusal is the
      * tenant/leader check and not validation. `body` is built from the world that
@@ -681,6 +695,7 @@ class TeacherMultiSchoolTest extends TestCase
         $bodyRefusal = [403, 404, 422];
 
         return [
+            'PUT /period-attendance/{meeting_id}' => ['body' => fn (TeacherRealmWorld $w) => ['session_date' => $w->periodDate, 'marks' => [['membership_id' => $w->student->id, 'status' => 'present']]], 'refuse' => [422]],
             'GET /schedule' => ['query' => ['week' => '2026-10-12']],
             'POST /guides/ask' => ['body' => fn () => ['question' => 'How do I open Help?']],
             'POST /behavior-skills' => [
@@ -934,6 +949,7 @@ class TeacherMultiSchoolTest extends TestCase
         }, $url);
 
         $query = $spec['query'] ?? [];
+        if (str_starts_with($route['suffix'], '/period-attendance/')) $query['date'] = $otherWorld->periodDate;
 
         return '/'.$url.($query === [] ? '' : '?'.http_build_query($query));
     }

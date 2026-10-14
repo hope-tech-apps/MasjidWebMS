@@ -70,9 +70,10 @@ final class TeacherSchedule
             $d = $day($date);
             if ($date === $today || ($d['meeting_day'] && ($d['meetings'] !== [] || $d['closed']))) $days[] = $d;
         }
-        return [
+        $page = [
             'timezone'=>$calendar->timezone(), 'week_start'=>$start->toDateString(), 'week_end'=>$end,
             'today'=>$todayData + ['state'=>$state], 'days'=>$days,
         ];
+        return app(\App\Services\Schools\PeriodAttendance::class)->scheduleLinks($page, $school);
     }
 }

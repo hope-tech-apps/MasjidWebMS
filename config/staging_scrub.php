@@ -598,6 +598,11 @@ return [
         'arabic_letter_progress' => [
             'note' => 'free_text',
         ],
+        'period_attendance_records' => [
+            'period_name' => 'label:Period',
+            'subject_name' => 'label:Lesson',
+            'note' => 'free_text',
+        ],
         'attendance_records' => [
             'note' => 'free_text', // absence reasons quote family circumstances
         ],
@@ -705,6 +710,7 @@ return [
         'term_grades.published_at' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
         'term_grades.created_at' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
         'term_grades.updated_at' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'period_attendance_records.class_name' => 'Class title snapshot, no person name.',
         'member_question_settings.prompt' => 'Organisation question wording, not member-entered answers.',
         'member_question_options.label' => 'Organisation option labels, not member-entered answers.',
         'app_volunteer_settings.title' => 'Public link title entered by the organisation, not a member answer.',

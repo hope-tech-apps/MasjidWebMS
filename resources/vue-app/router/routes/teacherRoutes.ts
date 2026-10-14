@@ -51,6 +51,18 @@ const teacherRoutes: RouteRecordRaw[] = [
                 meta: { pageTitle: 'Class' },
             },
             {
+                path: 'period-registers/classes/:classId(\\d+)',
+                name: 'teacherClassPeriodAttendance',
+                component: () => import('@/views/teacher/TeacherPeriodRegister.vue'),
+                meta: { pageTitle: 'Class Attendance' },
+            },
+            {
+                path: 'period-registers/:meetingId(\\d+)',
+                name: 'teacherPeriodRegister',
+                component: () => import('@/views/teacher/TeacherPeriodRegister.vue'),
+                meta: { pageTitle: 'Period register' },
+            },
+            {
                 // Read-only named meetings at the selected school.
                 path: 'schedule',
                 name: 'teacherSchedule',

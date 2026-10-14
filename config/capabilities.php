@@ -291,6 +291,16 @@ return [
         'catalogue_when_off' => false,
     ],
 
+    'period_attendance' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Attendance by period',
+        'description' => 'Take each timetabled lesson register and calculate the day mark. Requires the school timetable.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'attendance_absence_emails' => [
         'kind' => 'grant',
         'group' => 'school',

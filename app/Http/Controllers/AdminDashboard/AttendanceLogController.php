@@ -166,6 +166,18 @@ class AttendanceLogController extends Controller
      */
     public function forMember(Request $request, $masjid_id, $membership_id): JsonResponse
     {
+        if (! $request->attributes->get('period_attendance_member_reader') && \App\Support\PeriodAttendanceMode::held((int)$masjid_id)) {
+            $request->attributes->set('period_attendance_member_reader', true);
+            try { $response = $this->forMember($request, $masjid_id, $membership_id); }
+            finally { $request->attributes->remove('period_attendance_member_reader'); }
+            $payload = $response->getData(true);
+            $lines = app(\App\Services\Schools\AttendanceReader::class)->periodLines((int)$masjid_id, [(int)$membership_id])->groupBy('date');
+            foreach ($payload['data']['entries'] as &$entry) {
+                $entry['periods'] = ($lines->get($entry['date']) ?? collect())->map(fn($p)=>array_diff_key($p,array_flip(['date','membership_id'])))->values()->all();
+            }
+            unset($entry); return $response->setData($payload);
+        }
+
         if (\App\Support\SchoolCalendarRequestMode::enabled((int) $masjid_id)) {
             return $this->forMemberConfigured($request, $masjid_id, $membership_id);
         }
@@ -727,6 +739,8 @@ class AttendanceLogController extends Controller
      */
     private function marksIn($query, string $from, string $to)
     {
+        $query = app(\App\Services\Schools\AttendanceReader::class)->routeQuery($query);
+
         return $query->where('session_date', '>=', $from)
             ->where('session_date', '<', $this->shift($to, 1));
     }

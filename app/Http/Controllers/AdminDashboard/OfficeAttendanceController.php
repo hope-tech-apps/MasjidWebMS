@@ -23,6 +23,10 @@ class OfficeAttendanceController extends Controller
         $date = $request->query('date', SchoolCalendarReaders::for((int) $group->masjid_id)->today());
         $response = $this->register->read(app(AttendanceController::class), new Request(['date' => $date]), $masjid_id, $group_id);
         $payload = $response->getData(true);
+        if ($payload['data']['period_mode'] ?? false) return $response;
+        if (\App\Support\PeriodAttendanceMode::held((int)$masjid_id)) {
+            $payload['data']['retained_periods'] = app(\App\Services\Schools\PeriodAttendance::class)->retained((int)$masjid_id, (int)$group_id, $date);
+        }
         $day = $this->register->officeDay((int) $group->masjid_id, $date, $payload['data']['taken']);
         $payload['data'] = $day + $payload['data'];
         if ($day['refusal'] !== null) {

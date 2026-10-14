@@ -79,6 +79,8 @@ final class TeacherRealmWorld
     public GroupMessageSchedule $schedule;
     /** This class's own prize (T-003.4). */
     public Prize $prize;
+    public \App\Models\TimetableMeeting $meeting;
+    public string $periodDate;
 
     /** Subject notes and marks: a note about the student, an own piece with no marks, and a second piece to mark. */
     public \App\Models\SubjectNote $subjectNote;
@@ -111,6 +113,10 @@ final class TeacherRealmWorld
         $set = \App\Models\TimetablePeriodSet::create(['masjid_id'=>$masjid, 'school_year_id'=>$year->id, 'name'=>"MARK-{$tag}-SET"]);
         $period = \App\Models\TimetablePeriod::create(['masjid_id'=>$masjid, 'period_set_id'=>$set->id, 'name'=>'Duty', 'starts_at'=>'11:00', 'ends_at'=>'11:40', 'kind'=>'block', 'position'=>1]);
         $meeting = \App\Models\TimetableMeeting::create(['masjid_id'=>$masjid, 'school_year_id'=>$year->id, 'group_id'=>$group, 'weekday'=>$year->meetingWeekday(), 'period_id'=>$period->id, 'kind'=>'activity', 'activity_name'=>"MARK-{$tag}-DUTY", 'effective_from'=>$year->first_day->toDateString()]);
+        $w->meeting = $meeting;
+        $today = min(now()->toDateString(), $year->last_day->toDateString());
+        $date = \App\Support\SchoolCalendar::day($today);
+        $w->periodDate = $date->subDays(($date->dayOfWeek - $year->meetingWeekday() + 7) % 7)->toDateString();
         if ($led) \App\Models\TimetableMeetingTeacher::create(['masjid_id'=>$masjid, 'meeting_id'=>$meeting->id, 'user_id'=>$teacher->id]);
 
         // The contact has no email: GroupAudience resolves a caller's person by
@@ -255,6 +261,7 @@ final class TeacherRealmWorld
     {
         return match ($placeholder) {
             'group_id' => (string) $this->class->id,
+            'meeting_id' => (string) $this->meeting->id,
             'membership_id' => (string) $this->student->id,
             // `note_id` is an Arabic daily note, except under /subjects/ where it is a subject note.
             'note_id' => str_contains($uri, '/subjects/') ? (string) $this->subjectNote->id : (string) $this->note->id,

@@ -147,6 +147,10 @@ Route::prefix('teacher')
                 // calendar answers `years: []`.
                 Route::get('/school-calendar', [\App\Http\Controllers\Teacher\SchoolCalendarController::class, 'index']);
 
+                Route::get('/period-attendance/classes/{group_id}', [\App\Http\Controllers\Teacher\PeriodAttendanceController::class, 'classroom'])->whereNumber('group_id');
+                Route::get('/period-attendance/{meeting_id}', [\App\Http\Controllers\Teacher\PeriodAttendanceController::class, 'index'])->whereNumber('meeting_id');
+                Route::put('/period-attendance/{meeting_id}', [\App\Http\Controllers\Teacher\PeriodAttendanceController::class, 'save'])->whereNumber('meeting_id');
+
                 Route::get('/schedule', [\App\Http\Controllers\Teacher\TimetableController::class, 'index'])
                     ->middleware('capability:school_timetable');
 

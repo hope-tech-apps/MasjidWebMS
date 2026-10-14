@@ -241,6 +241,7 @@ export const UR: Record<string, string> = {
     attendance_mark_late: "دیر سے آئے",
     attendance_mark_absent: "غیر حاضر",
     attendance_mark_excused: "معذرت کے ساتھ غیر حاضر",
+    attendance_periods: "سبق کے اوقات",
     attendance_year: "یہ تعلیمی سال",
     attendance_empty: "ابھی تک حاضری درج نہیں کی گئی۔",
     attendance_error: "حاضری لوڈ نہیں ہو سکی۔ دوبارہ کوشش کریں۔",

@@ -11,6 +11,10 @@ final class TimetableReenable
 {
     public static function reconcile(Masjid $locked, array $changes): ?int
     {
+        if (($changes['school_timetable'] ?? null) === false && PeriodAttendanceMode::enabled($locked)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>'Switch off period attendance before switching off the school timetable.']);
+        }
+
         if (($changes['school_timetable'] ?? null) !== true || $locked->hasCapability('school_timetable')
             || ! $locked->getAttribute('has_timetable_records')) return null;
         $intended = clone $locked;

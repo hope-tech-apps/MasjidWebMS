@@ -99,6 +99,12 @@ class AttendanceController extends TeacherController
         ], Response::HTTP_OK);
     }
 
+    /** Names-only roster boundary shared with period registers. */
+    public function studentForRegister(GroupMembership $membership): array
+    {
+        return $this->student($membership);
+    }
+
     /** Shared action entry into the preserved reader, without re-entering decorators. */
     public function readFrozen(Request $request, $masjid_id, $group_id): JsonResponse
     {
@@ -220,6 +226,10 @@ class AttendanceController extends TeacherController
      */
     public function forMember(Request $request, $masjid_id, $group_id, $membership_id): JsonResponse
     {
+        if (\App\Support\PeriodAttendanceMode::held((int)$masjid_id)) {
+            return app(\App\Services\Schools\AttendanceReader::class)->teacherSummary((int)$masjid_id, (int)$group_id, (int)$membership_id, fn($member)=>$this->student($member));
+        }
+
         $group = Group::findOrFail($group_id);
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
 

@@ -241,6 +241,7 @@ export const PS: Record<string, string> = {
     attendance_mark_late: "ناوخته",
     attendance_mark_absent: "غایب",
     attendance_mark_excused: "په عذر غایب",
+    attendance_periods: "درسي ساعتونه",
     attendance_year: "دا ښوونیز کال",
     attendance_empty: "تر اوسه حاضري نه ده ثبت شوې.",
     attendance_error: "حاضري نه شوه پرانیستل کېدای. بیا هڅه وکړئ.",

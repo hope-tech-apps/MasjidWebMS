@@ -144,6 +144,7 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/logout',
             // Curriculum editing is subject-fenced and behind the default-off school grant.
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/report-card-criteria',
+            'PUT /api/teacher/masjids/{masjid_id}/period-attendance/{meeting_id}',
             // Subject work: notes, own pieces and one bulk marks save, behind both school grants.
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/notes',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/subjects/{subject_id}/notes/{note_id}',

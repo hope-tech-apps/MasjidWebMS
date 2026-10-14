@@ -297,6 +297,7 @@ class ContactsController extends Controller
         $birthDate = null;
 
         \Illuminate\Support\Facades\DB::transaction(function () use ($source, $target, $actor, $request, &$familyLogin, &$roster, &$birthDate) {
+            app(\App\Services\Schools\PeriodAttendance::class)->mergeContacts($source, $target);
             \App\Support\StudentAllergies::merge($source, $target, $actor?->id);
 
             // Before anything is destroyed: the survivor takes the more

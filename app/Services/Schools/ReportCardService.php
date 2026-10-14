@@ -377,7 +377,7 @@ class ReportCardService
             return $card;
         }
 
-        $counts = $this->attendanceCounts($card->group_membership_id, $from, $to);
+        $counts = $this->attendanceCounts($card->group_membership_id, $from, $to, (int)$card->masjid_id);
 
         $card->forceFill([
             'days_present' => $counts['present'],
@@ -425,8 +425,12 @@ class ReportCardService
     /**
      * @return array{present:int, absent:int, late:int}
      */
-    private function attendanceCounts(int $membershipId, ?Carbon $from, ?Carbon $to): array
+    private function attendanceCounts(int $membershipId, ?Carbon $from, ?Carbon $to, int $school): array
     {
+        if (\App\Support\PeriodAttendanceMode::held($school)) {
+            return array_intersect_key(app(AttendanceReader::class)->counts($membershipId, $from?->toDateString(), $to?->toDateString(), $school), array_flip(['present','absent','late']));
+        }
+
         $counts = AttendanceRecord::query()
             ->where('group_membership_id', $membershipId)
             ->when($from, fn ($q) => $q->whereDate('session_date', '>=', $from))

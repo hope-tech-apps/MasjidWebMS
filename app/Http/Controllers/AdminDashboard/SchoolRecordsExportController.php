@@ -220,7 +220,7 @@ class SchoolRecordsExportController extends Controller
             'enrollments' => [GroupMembership::whereIn('group_id', $gids)->whereIn('role', GroupMembership::PARTICIPANT_ROLES)->count(), 'Who is in which class'],
             'guardians' => [GroupMembership::whereIn('group_id', $gids)->where('role', GroupMembership::ROLE_GUARDIAN)->count(), 'Guardian-to-child edges'],
             'class_staff' => [\App\Models\GroupStaff::whereIn('group_id', $gids)->count(), 'Who taught each class'],
-            'attendance' => [AttendanceRecord::whereIn('group_id', $gids)->count(), 'The register'],
+            'attendance' => [app(\App\Services\Schools\AttendanceReader::class)->dayQuery()->whereIn('group_id', $gids)->count(), 'The register'],
             'assignments' => [ClassAssignment::withTrashed()->whereIn('group_id', $gids)->count(), 'Work that was set'],
             'assignment_scores' => [AssignmentScore::whereIn('group_id', $gids)->count(), 'Marks'],
             'report_cards' => [ReportCard::whereIn('group_id', $gids)->count(), 'Report cards and progress reports'],
@@ -354,7 +354,7 @@ class SchoolRecordsExportController extends Controller
             'Session date', 'Status', 'Note']);
 
         Csv::each(
-            AttendanceRecord::whereIn('group_id', $this->schoolGroupIds())
+            app(\App\Services\Schools\AttendanceReader::class)->dayQuery()->whereIn('group_id', $this->schoolGroupIds())
                 ->with(['membership.contact' => fn ($q) => $q->withTrashed()]),
             fn (AttendanceRecord $r) => Csv::row($out, [
                 Csv::num($r->id), Csv::num($r->group_id), Csv::num($r->group_membership_id),

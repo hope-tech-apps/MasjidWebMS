@@ -87,6 +87,7 @@
                                 {{ ATTENDANCE_LABELS[entry.status] }}
                             </span>
                             <span v-if="entry.note" class="text-muted small flex-grow-1">{{ entry.note }}</span>
+                            <div v-for="period in entry.periods ?? []" :key="period.meeting_id" class="small text-break">{{ period.period }} · {{ period.subject }} · {{ ATTENDANCE_LABELS[period.status] }}</div>
                         </div>
                         <div v-if="!member.entries.length" class="text-muted small p-3">
                             Nothing has been marked for this child in this window.

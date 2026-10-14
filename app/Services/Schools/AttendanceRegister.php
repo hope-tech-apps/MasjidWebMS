@@ -21,6 +21,12 @@ class AttendanceRegister
     {
         return DB::transaction(function () use ($reader, $request, $masjid_id, $group_id) {
             $this->lockClass((int) $masjid_id, (int) $group_id);
+            \App\Support\SchoolCalendarRequestMode::enabled((int)$masjid_id);
+            if (\App\Support\PeriodAttendanceMode::enabled(\App\Support\PeriodAttendanceMode::school((int)$masjid_id))) {
+                $date = $request->query('date') ?? SchoolCalendarReaders::for((int)$masjid_id)->today();
+                if (\App\Support\PeriodAttendanceMode::usesPeriods((int)$masjid_id, $date)) return app(PeriodAttendance::class)->classDay($request, (int)$masjid_id, (int)$group_id, $date);
+            }
+
             $response = $reader->readFrozen($request, $masjid_id, $group_id);
             $date = $response->getData(true)['data']['session_date'];
             $response->headers->set(self::REVISION_HEADER, $this->revision($this->marks((int) $masjid_id, (int) $group_id, $date)));
@@ -32,30 +38,63 @@ class AttendanceRegister
     public function save(AttendanceController $writer, SaveAttendanceRequest $request, $masjid_id, $group_id): JsonResponse
     {
         return DB::transaction(function () use ($writer, $request, $masjid_id, $group_id) {
-            // The first statement must be the mutex: InnoDB then creates its read
-            // view only after the preceding register writer has committed.
+            // School then class matches switch/calendar writers and keeps the switch read fresh.
+            $org = $this->lockSchool((int)$masjid_id);
             $this->lockClass((int) $masjid_id, (int) $group_id);
             $date = $request->validated('session_date');
-            $marks = $this->marks((int) $masjid_id, (int) $group_id, $date);
-            $revision = $request->header(self::REVISION_HEADER);
-            // A page loaded before registers carried a revision sends none. Re-reading the register inside
-            // that page cannot help, so the sentence has to send the person to refresh the page itself.
-            $pageOutOfDate = $revision === null || $revision === '';
-            if ($pageOutOfDate) $revision = null;
-            $overwrites = $marks->whereIn('group_membership_id', collect($request->validated('marks'))->pluck('membership_id')->all())->isNotEmpty();
-            if (($revision === null && $overwrites) || ($revision !== null && ! hash_equals($this->revision($marks), $revision))) {
-                $latest = $marks->sortByDesc(fn ($m) => [$m->updated_at, $m->id])->first();
-                $marker = $latest ? self::marker($latest->name, $latest->type) : 'another staff member';
-                $time = $latest ? Carbon::parse($latest->updated_at)->setTimezone(SchoolCalendarReaders::for((int) $masjid_id)->timezone())->format('F j, Y, g:i A') : 'an earlier time';
-                return response()->json(['status' => 'failed', 'message' => $pageOutOfDate
-                    ? 'This page is out of date. Refresh the page, then make your change.'
-                    : "This register was changed by {$marker} at {$time}. Reload it, then make your change."], 409);
+            if (\App\Support\PeriodAttendanceMode::usesPeriods((int)$masjid_id, $date, $org)) {
+                return response()->json(['status'=>'failed','message'=>'Choose a period to take or correct its register.'],422);
             }
-            return $writer->saveFrozen($request, $masjid_id, $group_id);
+            $marks = $this->marks((int) $masjid_id, (int) $group_id, $date);
+            $conflict = $this->conflict($request, $marks, collect($request->validated('marks'))->pluck('membership_id')->all(), (int) $masjid_id);
+            if ($conflict) return $conflict;
+            $response = $writer->saveFrozen($request, $masjid_id, $group_id);
+            if ($response->getStatusCode() === 200 && \App\Support\PeriodAttendanceMode::held((int)$masjid_id, $org) && DB::table('period_attendance_records')->where('masjid_id',$masjid_id)->where('group_id',$group_id)->whereDate('session_date',$date)->exists()) {
+                $values = $org->capability_overrides ?? [];
+                foreach ($request->validated('marks') as $mark) {
+                    $member = (string)$mark['membership_id'];
+                    $dates = $values[\App\Support\PeriodAttendanceMode::DAILY_DATES][$member] ?? [];
+                    $values[\App\Support\PeriodAttendanceMode::DAILY_DATES][$member] = array_values(array_unique([...$dates, $date]));
+                }
+                $org->forceFill(['capability_overrides'=>$values])->save();
+                \App\Support\ClassSubjectMode::forget((int)$masjid_id);
+            }
+            return $response;
         });
     }
 
-    private function lockClass(int $school, int $class): void
+    public function conflict(Request $request, Collection $marks, array $memberships, int $school): ?JsonResponse
+    {
+        $revision = $request->header(self::REVISION_HEADER);
+        // A page loaded before registers carried a revision sends none. Re-reading the register inside
+        // that page cannot help, so the sentence has to send the person to refresh the page itself.
+        $pageOutOfDate = $revision === null || $revision === '';
+        if ($pageOutOfDate) $revision = null;
+        $overwrites = $marks->whereIn('group_membership_id', $memberships)->isNotEmpty();
+        if (($revision === null && $overwrites) || ($revision !== null && ! hash_equals($this->revision($marks), $revision))) {
+            $latest = $marks->sortByDesc(fn ($m) => [$m->updated_at, $m->id])->first();
+            $marker = $latest ? self::marker($latest->name, $latest->type) : 'another staff member';
+            $time = $latest ? Carbon::parse($latest->updated_at)->setTimezone(SchoolCalendarReaders::for($school)->timezone())->format('F j, Y, g:i A') : 'an earlier time';
+            return response()->json(['status' => 'failed', 'message' => $pageOutOfDate
+                ? 'This page is out of date. Refresh the page, then make your change.'
+                : "This register was changed by {$marker} at {$time}. Reload it, then make your change."], 409);
+        }
+        return null;
+    }
+
+
+    /** First locking statement on writes: an old page cannot write across a newly enabled switch. */
+    public function lockSchool(int $id, bool $archived = false): \App\Models\Masjid
+    {
+        $school = \App\Models\Masjid::query()->when($archived, fn($q)=>$q->withTrashed())->whereKey($id)->lockForUpdate()->firstOrFail();
+        \App\Support\ClassSubjectMode::forget($id);
+        \App\Support\SchoolCalendarRequestMode::forget($id);
+        \App\Support\ClassSubjectMode::rememberLoaded($school);
+        \App\Support\SchoolCalendarRequestMode::remember($school);
+        return $school;
+    }
+
+    public function lockClass(int $school, int $class): void
     {
         Group::query()->whereKey($class)->where('masjid_id', $school)->lockForUpdate()->firstOrFail();
     }
@@ -68,7 +107,7 @@ class AttendanceRegister
             ->orderBy('marks.id')->get(['marks.*', 'marker.name', 'marker.type']);
     }
 
-    private function revision(Collection $marks): string
+    public function revision(Collection $marks): string
     {
         return hash('sha256', $marks->map(function ($mark) {
             $row = (array) $mark;
@@ -99,8 +138,10 @@ class AttendanceRegister
     /** One classes query, one marks/marker join, independent of class count. */
     public function overview(int $school, string $date): array
     {
-        $classes = Group::query()->where('masjid_id', $school)->where('kind', Group::KIND_CLASS)->inDisplayOrder()->get(['id', 'name']);
-        $marks = DB::table('attendance_records as marks')
+        $classes = Group::query()->join('masjids as school','school.id','=','groups.masjid_id')->where('groups.masjid_id', $school)->where('kind', Group::KIND_CLASS)->orderByRaw('groups.position IS NULL')->orderBy('groups.position')->orderBy('groups.name')->orderBy('groups.id')->get(['groups.id','groups.name','school.capability_overrides']);
+        $org = new \App\Models\Masjid();
+        $org->forceFill(['id'=>$school,'org_type'=>'school','capability_overrides'=>json_decode($classes->first()?->capability_overrides ?? 'null', true)]);
+        $marks = (\App\Support\PeriodAttendanceMode::held($school, $org) ? DB::query()->fromSub(app(AttendanceReader::class)->dayQuery($school, $org)->toBase(), 'marks') : DB::table('attendance_records as marks'))
             ->leftJoin('users as marker', 'marker.id', '=', 'marks.marked_by_user_id')
             ->where('marks.masjid_id', $school)->whereIn('marks.group_id', $classes->pluck('id'))
             ->whereDate('marks.session_date', $date)

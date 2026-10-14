@@ -232,6 +232,7 @@ class SchoolTimetableController extends Controller
                 return $day;
             }, array_values(array_filter($teacherWeek['days'], fn($day)=>$day['meeting_day'])));
         }
+        $payload=app(\App\Services\Schools\PeriodAttendance::class)->scheduleLinks($payload,(int)$school,true);
         return $this->result($payload)->header('Cache-Control', 'no-store');
     }
     private function meetingData(Request $r,SchoolYear $year,Masjid $org,?TimetableMeeting $old=null): array

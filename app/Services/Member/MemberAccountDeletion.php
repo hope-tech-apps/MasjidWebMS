@@ -121,6 +121,7 @@ class MemberAccountDeletion
         // ward, and a ward's record is office data about them too.
         'group_memberships' => ['contact_id', 'guardian_of_contact_id'],
         // The office keeps delivery history when a member removes their login.
+        'period_attendance_records' => ['student_contact_id'],
         'attendance_absence_mails' => ['guardian_contact_id'],
         'attendance_absence_mail_children' => ['guardian_contact_id', 'student_contact_id'],
         'group_messages' => ['author_contact_id'],
@@ -686,7 +687,7 @@ class MemberAccountDeletion
 
             // These optional logs do not exist in the code-before-migration deployment window.
             // Only a genuinely missing table skips: a failed schema check must stop erasure.
-            if (in_array($table, ['attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
+            if (in_array($table, ['period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
                 && ! \Illuminate\Support\Facades\Schema::hasTable($table)) continue;
 
             $held = DB::table($table)

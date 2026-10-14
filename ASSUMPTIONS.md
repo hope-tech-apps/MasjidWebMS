@@ -546,3 +546,8 @@ The rollout grant permits the office's letter-grade settings; the office must en
   not currently enrolled, so a later enrolment cannot introduce a range gap.
 - Learning behaviours are admin-only (owner decision in DECISIONS.md); every
   teacher, including an unrestricted class teacher, edits only authorised subjects.
+## Period attendance — 2026-10-14
+- The guide session's named local demo and guide pages are a separate walk, not an authorization to read or change live school data. This build uses invented practice fixtures only.
+- The existing class/day counting unit is retained for class reports and family totals; periods never multiply it. The period status itself is aggregated across each child's scheduled classes.
+- The first scheduled clock controls lateness, including simultaneous first periods; the meeting ID is retained as an audit tie-breaker. Joint classes keep separate child rosters.
+- New non-English Periods labels are machine drafts, not fluent-reader verified. SQLite and mounted SPA checks do not prove MySQL locking/DDL, browser geometry/accessibility, real mail/queues, CI/staging/production or the later demo walk.

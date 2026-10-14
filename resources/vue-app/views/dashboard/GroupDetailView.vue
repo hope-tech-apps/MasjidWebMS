@@ -105,7 +105,7 @@
                     </GroupRosterTab>
 
                     <GroupAttendanceTab v-else-if="activeTab === 'attendance' && attendanceAvailable" :key="groupId"
-                        :groupId="groupId" :masjidId="masjidStore.masjid?.id ?? 0" :date="typeof route.query.date === 'string' ? route.query.date : ''" />
+                        :groupId="groupId" :masjidId="masjidStore.masjid?.id ?? 0" :meeting-id="Number(route.query.meeting) || undefined" :date="typeof route.query.date === 'string' ? route.query.date : ''" />
 
                     <GroupStoryTab v-else-if="activeTab === 'story'" :groupId="groupId" />
 

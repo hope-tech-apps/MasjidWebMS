@@ -130,6 +130,9 @@
             </section>
 
             <!-- ================================================= ATTENDANCE -->
+            <section v-else-if="activeTab === 'attendance' && attPeriodMode">
+                <GroupAttendanceTab :masjid-id="Number(masjidId)" :group-id="Number(groupId)" :date="attDate" realm="teacher" :transport="periodTransport" />
+            </section>
             <section v-else-if="activeTab === 'attendance'">
                 <div class="d-flex flex-wrap align-items-end gap-2 mb-3 tc-att-toolbar">
                     <div>
@@ -2657,6 +2660,7 @@
 </template>
 
 <script setup lang="ts">
+import GroupAttendanceTab from '@/views/dashboard/groups/GroupAttendanceTab.vue';
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText, uploadErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
@@ -2846,6 +2850,8 @@ const localDay = (d: Date): string =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 const todayIso = localDay(new Date());
+const attPeriodMode = ref(false);
+const periodTransport = { get: (url: string) => TeacherApiService.get(url), put: (url: string, body: any, _contentType?: string, headers?: any) => TeacherApiService.put(url, body, headers) };
 const attDate = ref<string>(todayIso);
 const marks = ref<Record<number, string>>({});
 const attNotes = ref<Record<number, string | null>>({});
@@ -2888,6 +2894,7 @@ const loadAttendance = async () => {
         const res = await TeacherApiService.get(`${base.value}/attendance?date=${date}`);
         if (date !== attDate.value) return;
         const data = res.data?.data ?? {};
+        attPeriodMode.value = !!data.period_mode || !!data.retained_periods?.length;
         attRevision.value = res.headers?.['x-attendance-revision'] ?? '';
         attLoadedDate.value = date;
         attConflicts.value = {};

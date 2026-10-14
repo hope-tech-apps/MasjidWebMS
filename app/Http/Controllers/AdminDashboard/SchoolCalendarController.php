@@ -131,6 +131,10 @@ class SchoolCalendarController extends Controller
      */
     public function destroyYear($masjid_id, $year_id): JsonResponse
     {
+        if (\App\Support\PeriodAttendanceMode::held($this->masjidId($masjid_id))) {
+            return app(SchoolCalendarConfigurationController::class)->destroyYear($masjid_id, $year_id);
+        }
+
         if (\App\Support\SchoolCalendarRequestMode::enabled($this->masjidId($masjid_id))) {
             return app(SchoolCalendarConfigurationController::class)->destroyYear($masjid_id, $year_id);
         }
@@ -205,6 +209,11 @@ class SchoolCalendarController extends Controller
     /** @param  array{school_year_id:mixed,closed_on:string,reason:string}  $data */
     private function writeClosure(array $data, int $masjidId): void
     {
+        if (\App\Support\PeriodAttendanceMode::held($masjidId)) {
+            app(SchoolCalendarConfigurationController::class)->writeClosure($data, $masjidId);
+            return;
+        }
+
         // Every query here names the organisation as well as relying on the scope
         // (.claude/rules/school-calendar.md): another school's register marks on
         // the same Sunday must never block this one's closure.
@@ -274,7 +283,7 @@ class SchoolCalendarController extends Controller
             }
             $removed = array_diff(\App\Support\SchoolDateAuthority::weekdays($year), $weekdays);
             if ($removed !== []) {
-                $marks = AttendanceRecord::query()->where('masjid_id', $masjidId)
+                $marks = app(\App\Services\Schools\AttendanceReader::class)->dayQuery($masjidId, includeRetainedDayCells: true)->where('masjid_id', $masjidId)
                     ->whereDate('session_date', '>=', $year->first_day->toDateString())
                     ->whereDate('session_date', '<=', $year->last_day->toDateString())->get(['session_date']);
                 if ($marks->contains(fn ($m) => in_array(SchoolCalendar::day(substr((string) $m->session_date, 0, 10))->dayOfWeek, $removed, true))) {
@@ -286,6 +295,15 @@ class SchoolCalendarController extends Controller
             }
         }
 
+        if ($ignoreYearId && \App\Support\PeriodAttendanceMode::held($masjidId)) {
+            $year = SchoolYear::whereKey($ignoreYearId)->lockForUpdate()->firstOrFail();
+            $days = app(\App\Services\Schools\AttendanceReader::class)->dayQuery($masjidId, includeRetainedDayCells: true)
+                ->whereDate('session_date','>=',$year->first_day)->whereDate('session_date','<=',$year->last_day)->pluck('session_date');
+            $weekday = SchoolCalendar::day($data['first_day'])->dayOfWeek;
+            if ($days->contains(fn($d)=>substr($d,0,10)<$data['first_day'] || substr($d,0,10)>$data['last_day'] || (! \App\Support\SchoolSettings::calendarTerms($org) && SchoolCalendar::day(substr($d,0,10))->dayOfWeek!==$weekday))) {
+                throw ValidationException::withMessages(['first_day'=>'Attendance exists on a day these dates would remove. Keep that day in the school calendar.']);
+            }
+        }
         $overlap = SchoolCalendar::overlappingYear($masjidId, $data['first_day'], $data['last_day'], $ignoreYearId);
 
         if ($overlap !== null) {

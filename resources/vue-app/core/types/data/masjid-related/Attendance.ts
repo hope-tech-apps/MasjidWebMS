@@ -27,6 +27,8 @@
  */
 
 /** The four marks a register can hold. `late` is being in the room, late. */
+export type AttendancePeriod = { meeting_id: number; period: string; subject: string; status: AttendanceStatus };
+
 export type AttendanceStatus = 'present' | 'late' | 'absent' | 'excused';
 
 /**
@@ -78,6 +80,7 @@ export type AttendanceClosure = {
 export type AttendanceCell = {
     status: AttendanceStatus;
     note: string | null;
+    periods?: AttendancePeriod[];
 };
 
 /**
@@ -217,6 +220,7 @@ export type AttendanceEntry = {
     date: string;
     status: AttendanceStatus;
     note: string | null;
+    periods?: AttendancePeriod[];
 };
 
 /** The child, without their cells: the drill-down lists entries instead. */

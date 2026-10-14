@@ -211,6 +211,7 @@ export const FR: Record<string, string> = {
     attendance_mark_late: "En retard",
     attendance_mark_absent: "Absent",
     attendance_mark_excused: "Absence justifiée",
+    attendance_periods: "Périodes",
     attendance_year: "Cette année scolaire",
     attendance_empty: "Aucune présence n’a encore été enregistrée.",
     attendance_error: "Impossible de charger les présences. Veuillez réessayer.",

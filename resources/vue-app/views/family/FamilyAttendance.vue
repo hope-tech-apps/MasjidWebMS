@@ -18,10 +18,21 @@
                     </p>
                     <p v-if="!record(child).days.length" class="text-muted small mb-0">{{ t('attendance_empty') }}</p>
                     <ul v-else class="list-group list-group-flush">
-                        <li v-for="day in record(child).days" :key="`${day.date}-${day.class.id}`" class="list-group-item px-0 d-flex flex-wrap justify-content-between gap-2 attendance-day">
+                        <li v-for="day in record(child).days" :key="`${day.date}-${day.class.id}`" class="list-group-item px-0 attendance-day">
+                            <div class="d-flex flex-wrap justify-content-between gap-2">
                             <span>{{ date(day.date) }}</span>
                             <span dir="auto">{{ day.class.name }}</span>
                             <span class="fw-semibold">{{ t('attendance_mark_' + day.status) }}</span>
+                            </div>
+                            <div v-if="day.periods?.length" class="small mt-2">
+                                <span class="text-muted">{{ t('attendance_periods') }}</span>
+                                <ul class="mb-0">
+                                    <li v-for="period in day.periods" :key="period.meeting_id" class="d-flex flex-wrap justify-content-between gap-2">
+                                        <span dir="auto">{{ period.period }} · {{ period.subject }}</span>
+                                        <span class="fw-semibold">{{ t('attendance_mark_' + period.status) }}</span>
+                                    </li>
+                                </ul>
+                            </div>
                         </li>
                     </ul>
                 </template>

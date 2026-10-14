@@ -553,6 +553,7 @@ class Masjid extends Model implements HasMedia
         if (! \App\Support\SchoolSettings::timetable($this)) unset($out['school_timetable']);
         if (! \App\Support\SchoolSettings::familyDutyRota($this)) unset($out['family_duty_rota']);
         if (! \App\Support\AttendanceAbsenceSettings::enabled($this)) unset($out['attendance_absence_emails']);
+        if (! \App\Support\PeriodAttendanceMode::enabled($this)) unset($out['period_attendance']);
         if (! \App\Support\StudentAllergies::enabled($this)) unset($out['student_allergies']);
         if (! \App\Support\ReportCardCriteria::enabled($this)) unset($out['report_card_criteria']);
         if (! \App\Support\LetterGrades::offered($this)) unset($out['letter_grades']);
@@ -624,6 +625,10 @@ class Masjid extends Model implements HasMedia
             if (! $this->hasCapability($key) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides'][$key]);
         }
         if (is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['lesson_plan_photo_fill_teacher_ids']);
+        if (is_array($attributes['capability_overrides'] ?? null)) {
+            unset($attributes['capability_overrides'][\App\Support\PeriodAttendanceMode::WINDOWS], $attributes['capability_overrides'][\App\Support\PeriodAttendanceMode::DAILY_DATES]);
+            if (! \App\Support\PeriodAttendanceMode::enabled($this)) unset($attributes['capability_overrides']['period_attendance']);
+        }
         return $attributes;
     }
 

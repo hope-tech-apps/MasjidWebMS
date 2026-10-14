@@ -127,6 +127,10 @@ final class CapabilityWriter
      */
     public static function apply(Masjid $org, array $changes, ?int $actor): array
     {
+        if (array_key_exists(PeriodAttendanceMode::CAPABILITY, $changes)) {
+            return PeriodAttendanceMode::apply($org, $changes, $actor);
+        }
+
         if (array_key_exists(SchoolSettings::SCHOOL_CALENDAR_TERMS, $changes)) {
             return SchoolCalendarCapabilityWriter::apply($org, $changes, $actor);
         }

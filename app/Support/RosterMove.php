@@ -993,7 +993,7 @@ class RosterMove
         // day after. Half-open ranges on the raw column, as
         // AttendanceLogController::marksIn reads it: the `date` cast stores
         // 'Y-m-d 00:00:00' on SQLite, where an exact match would miss.
-        $lastMark = DB::table('attendance_records')
+        $lastMark = app(\App\Services\Schools\AttendanceReader::class)->dayQuery((int)$row->masjid_id)->toBase()
             ->where('group_membership_id', $row->getKey())
             ->where('session_date', '>=', $on)
             ->max('session_date');
@@ -1012,7 +1012,7 @@ class RosterMove
         // class kept that day, and its mark). Then they ARE marked, and telling
         // the office to chase the teacher would be wrong. A new place can hold
         // no mark, so the other path needs no second look.
-        $onFirstDay = fn () => DB::table('attendance_records')
+        $onFirstDay = fn () => app(\App\Services\Schools\AttendanceReader::class)->dayQuery((int)$row->masjid_id)->toBase()
             ->where('session_date', '>=', $plan->firstDay)
             ->where('session_date', '<', self::shift($plan->firstDay, 1));
 
@@ -1024,7 +1024,7 @@ class RosterMove
             // register while the student was away. Then the place counts from
             // the first day back, so the days it met without them are not
             // "not marked"; marks already saved still count.
-            $missed = DB::table('attendance_records')
+            $missed = app(\App\Services\Schools\AttendanceReader::class)->dayQuery((int)$row->masjid_id)->toBase()
                 ->where('group_id', $to->getKey())
                 ->where('session_date', '>=', self::shift($back->left_on->toDateString(), 1))
                 ->where('session_date', '<', $plan->firstDay)

@@ -241,6 +241,7 @@ export const FA_AF: Record<string, string> = {
     attendance_mark_late: "ناوقت",
     attendance_mark_absent: "غایب",
     attendance_mark_excused: "غیابت موجه",
+    attendance_periods: "ساعت‌های درسی",
     attendance_year: "این سال تعلیمی",
     attendance_empty: "هنوز حاضری ثبت نشده است.",
     attendance_error: "حاضری بارگیری نشد. لطفاً دوباره کوشش کنید.",

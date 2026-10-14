@@ -41,6 +41,7 @@ trait PlantsRosterRecords
         }
 
         $columns = match ($table) {
+            'period_attendance_records' => $base + ['session_date' => $day('2026-09-06'), 'status' => 'present', 'meeting_id' => 1, 'student_contact_id' => $row->contact_id, 'class_name' => 'Practice class', 'period_id' => 1, 'period_name' => 'Practice period', 'starts_at' => '08:00', 'ends_at' => '08:45', 'subject_name' => 'Practice lesson', 'teacher_ids' => '[]', 'first_scheduled_meeting_id' => 1, 'first_scheduled_starts_at' => '08:00'],
             'attendance_records' => $base + ['session_date' => $day('2026-09-06'), 'status' => 'present'],
             'assignment_scores' => $base + [
                 'class_assignment_id' => DB::table('class_assignments')->insertGetId([

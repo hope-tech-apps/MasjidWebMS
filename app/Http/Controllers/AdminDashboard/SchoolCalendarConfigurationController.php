@@ -67,7 +67,7 @@ class SchoolCalendarConfigurationController extends Controller
             $stranded = $closures->filter(fn ($c) => $c->closed_on->toDateString() < $data['first_day'] || $c->closed_on->toDateString() > $data['last_day']);
             if ($stranded->isNotEmpty()) throw ValidationException::withMessages(['first_day' => 'These dates would leave no-school days outside the school year. Remove those no-school days first.']);
             // Ordinary check after the parent lock: attendance save uses this same year lock.
-            $marks = AttendanceRecord::query()->where('masjid_id', $org)
+            $marks = app(\App\Services\Schools\AttendanceReader::class)->dayQuery($org, includeRetainedDayCells: true)->where('masjid_id', $org)
                 ->whereDate('session_date', '>=', $locked->first_day->toDateString())
                 ->whereDate('session_date', '<=', $locked->last_day->toDateString())->get(['session_date']);
             if ($marks->contains(fn ($m) => in_array(SchoolCalendar::day(substr((string) $m->session_date, 0, 10))->dayOfWeek, $removed, true))) {
@@ -105,7 +105,7 @@ class SchoolCalendarConfigurationController extends Controller
             $locked = SchoolYear::query()->whereKey($year->id)->lockForUpdate()->firstOrFail();
             $first = $locked->first_day->toDateString(); $last = $locked->last_day->toDateString();
             $closures = $locked->closures()->count();
-            $marks = AttendanceRecord::query()->where('masjid_id', $org)->whereDate('session_date','>=',$first)->whereDate('session_date','<=',$last)->count();
+            $marks = app(\App\Services\Schools\AttendanceReader::class)->dayQuery($org, includeRetainedDayCells: true)->where('masjid_id', $org)->whereDate('session_date','>=',$first)->whereDate('session_date','<=',$last)->count();
             $answers = FormOptionSources::answersNaming($org, SchoolDateAuthority::for($org)->meetingDays($locked));
             $held = array_filter([$closures ? "$closures no-school day".($closures === 1 ? '' : 's') : null, $marks ? "$marks attendance mark".($marks === 1 ? '' : 's')." inside its dates" : null, $answers ? "$answers form answer".($answers === 1 ? '' : 's')." naming its days" : null]);
             if ($held) throw ValidationException::withMessages(['year' => 'This school year cannot be deleted while it has '.implode(', ', $held).'.']);
@@ -137,7 +137,7 @@ class SchoolCalendarConfigurationController extends Controller
             || ! in_array(SchoolCalendar::day($day)?->dayOfWeek, SchoolDateAuthority::weekdays($year), true)) {
             throw ValidationException::withMessages(['closed_on' => 'This date is no longer inside its school year or on one of the days the school meets. Reload the calendar and try again.']);
         }
-        $marks = AttendanceRecord::query()->where('masjid_id',$org)->whereDate('session_date',$day)->count();
+        $marks = app(\App\Services\Schools\AttendanceReader::class)->dayQuery($org, includeRetainedDayCells: true)->where('masjid_id',$org)->whereDate('session_date',$day)->count();
         if ($marks) throw ValidationException::withMessages(['closed_on' => sprintf('A register was already taken on %s (%d attendance mark%s), so it cannot become a no-school day. Clear those marks first if there really was no school.', SchoolCalendar::label($day), $marks, $marks === 1 ? '' : 's')]);
         SchoolClosure::create(['school_year_id' => $year->id, 'closed_on' => $day, 'reason' => $data['reason']]);
     }
