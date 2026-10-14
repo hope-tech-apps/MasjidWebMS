@@ -126,20 +126,24 @@ final class LetterGrades
 
     private static function readable(ReportCard $card, ?Masjid $school = null): bool
     {
-        if ($card->type !== ReportCard::TYPE_REPORT_CARD || ! self::enabled($school ?? self::school((int) $card->masjid_id))) return false;
+        if ($card->type !== ReportCard::TYPE_REPORT_CARD) return false;
+        // A sent card shows what it was sent with until it is taken back, whatever the switch says today.
         if ($card->isPublished()) return $card->marks()->where('kind', ReportCardMark::KIND_TERM_GRADE)->whereNotNull('letter_snapshot_at')->exists();
+        if (! self::enabled($school ?? self::school((int) $card->masjid_id))) return false;
         return self::eligible(self::school((int) $card->masjid_id), GroupMembership::find($card->group_membership_id)?->grade_label);
     }
 
     /** The term-grade criterion carries a frozen dated heading; skill criteria keep their original meaning. */
     public static function periodLabel(ReportCard $card, ?Collection $marks = null, ?Masjid $school = null): ?string
     {
-        if ($card->type !== ReportCard::TYPE_REPORT_CARD || ! self::enabled($school ?? self::school((int) $card->masjid_id))) return null;
+        if ($card->type !== ReportCard::TYPE_REPORT_CARD) return null;
+        // A sent card keeps its frozen dated heading even after letters are switched off.
         if ($card->isPublished()) {
             $mark = $marks?->first(fn ($row) => $row->kind === ReportCardMark::KIND_TERM_GRADE && $row->letter_snapshot_at !== null)
                 ?? ($marks === null ? $card->marks()->where('kind', ReportCardMark::KIND_TERM_GRADE)->whereNotNull('letter_snapshot_at')->first() : null);
             return $mark?->criterion;
         }
+        if (! self::enabled($school ?? self::school((int) $card->masjid_id))) return null;
         if (! self::eligible($school ?? self::school((int) $card->masjid_id), GroupMembership::find($card->group_membership_id)?->grade_label)) return null;
         $term = self::term($card);
         return $term ? self::datedLabel($card, $term) : null;
@@ -178,7 +182,7 @@ final class LetterGrades
                 'can_fill'=>$canFill, 'calculated_percentage'=>$canFill ? $percent : null, 'calculated_letter'=>$canFill ? $letter : null,
                 'override_letter'=>$canFill ? $mark->override_letter : null, 'override_reason'=>$canFill ? $mark->override_reason : null,
                 'override_by_user_id'=>$canFill ? $mark->override_by_user_id : null,
-                'override_by_name'=>$canFill && $mark->override_by_user_id ? \App\Models\User::withTrashed()->whereKey($mark->override_by_user_id)->value('name') : null, 'override_at'=>$canFill ? $mark->override_at?->toIso8601String() : null,
+                'override_by_name'=>$canFill && $mark->override_by_user_id ? \App\Models\User::withTrashed()->whereKey($mark->override_by_user_id)->value('name') : null, 'override_at'=>$canFill && $mark->override_at ? $mark->override_at->copy()->setTimezone(\App\Support\SchoolCalendarReaders::for((int) $card->masjid_id)->timezone())->format('M j, Y, g:i A') : null,
                 'comment'=>$canFill ? $mark->comment : null,
                 'final_letter'=>$canFill ? ($card->isPublished() ? $mark->final_letter : ($mark->override_letter ?? $letter)) : null,
                 'excluded_work'=>! $card->isPublished() && $term && $canFill ? self::excluded($card, (int) $mark->class_subject_id, $term) : [],

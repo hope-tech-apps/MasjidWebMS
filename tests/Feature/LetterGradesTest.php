@@ -352,6 +352,31 @@ class LetterGradesTest extends TestCase
         $this->assertStringContainsString('autumn-semester', app(\App\Services\Schools\ReportCardPdfService::class)->filename($card->fresh(),$member));
     }
 
+    /** Walk finding: switching letters off stripped grades and the dated heading from cards already sent. */
+    #[Test]
+    public function a_sent_card_keeps_its_letters_and_heading_after_letters_are_switched_off(): void
+    {
+        [$school,$member,$subject,$term] = $this->world();
+        $this->piece($member,$subject,'2026-09-01','scored',93);
+        $service = app(ReportCardService::class);
+        $card = $service->prepare($member,'report_card','2026-2027',1);
+        $service->publish($card);
+        $family = LetterGrades::family($card->fresh());
+        $heading = LetterGrades::periodLabel($card->fresh());
+        $this->assertNotSame([], $family);
+        foreach ([['letter_grades'=>false], []] as $overrides) {
+            // Off by the office's setting, and off by the switch itself.
+            $school->forceFill(['letter_grade_settings'=>['enabled'=>false] + $school->letter_grade_settings, 'capability_overrides'=>$overrides + $school->capability_overrides])->save();
+            \Illuminate\Support\Facades\Cache::flush();
+            $fresh = $card->fresh();
+            $this->assertSame($family, LetterGrades::family($fresh));
+            $this->assertSame($heading, LetterGrades::periodLabel($fresh));
+            $pdf = (new \ReflectionMethod(app(\App\Services\Schools\ReportCardPdfService::class),'data'))->invoke(app(\App\Services\Schools\ReportCardPdfService::class),$fresh,$member);
+            $this->assertSame($family, $pdf['letterGrades']);
+            $this->assertSame($heading, $pdf['periodLabel']);
+        }
+    }
+
     #[Test]
     public function current_term_uses_the_schools_local_day_at_a_utc_boundary(): void
     {

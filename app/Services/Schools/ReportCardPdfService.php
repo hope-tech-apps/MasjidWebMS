@@ -116,7 +116,7 @@ class ReportCardPdfService
         $marks = $card->marks()->orderBy('position')->get();
 
         return [
-            ...(\App\Support\LetterGrades::enabled($masjid) ? ['letterGrades'=>\App\Support\LetterGrades::family($card, $masjid)] : []),
+            ...(($letterGrades = \App\Support\LetterGrades::family($card, $masjid)) !== [] ? ['letterGrades'=>$letterGrades] : []),
             'schoolName' => (string) ($masjid?->name ?? ''),
             'logo' => $this->logoDataUri($masjid),
             'palette' => DesignTokens::resolve($masjid?->themeSettings),
