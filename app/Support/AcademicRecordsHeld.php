@@ -99,7 +99,7 @@ final class AcademicRecordsHeld
      * @var array<string, array{0: string, 1: string, 2: string, 3: bool}>
      */
     public const KEYS = [
-        'period_attendance_records' => ['group_membership_id', 'period register marks', 'cascade', true],
+        'period_attendance_records' => ['group_membership_id', 'period register marks', 'restrict', true],
         'attendance_records' => ['group_membership_id', 'register marks', 'restrict', true],
         'assignment_scores' => ['group_membership_id', 'marks', 'restrict', true],
         'report_cards' => ['group_membership_id', 'report cards', 'restrict', true],

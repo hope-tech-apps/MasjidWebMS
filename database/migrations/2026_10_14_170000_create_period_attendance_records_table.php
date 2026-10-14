@@ -15,7 +15,8 @@ return new class extends Migration
             $table->date('session_date');
             $table->unsignedBigInteger('meeting_id');
             $table->foreignId('student_contact_id')->constrained('contacts')->cascadeOnDelete();
-            $table->foreignId('group_membership_id')->constrained('group_memberships')->cascadeOnDelete();
+            // Like the day register: a roster row with period marks cannot be deleted out from under them.
+            $table->foreignId('group_membership_id')->constrained('group_memberships')->restrictOnDelete();
             $table->foreignId('group_id')->constrained()->cascadeOnDelete();
             $table->text('class_name');
             $table->unsignedBigInteger('period_id');
