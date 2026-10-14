@@ -147,7 +147,10 @@ test('office panel replaces the footer only while enabled and copy requires a pr
     assert.match(officeSource,/<CopyStudentAllergies v-for="copyKey in \(allergiesEnabled \?/);
     assert.match(teacherSource,/registerAllergies\.value = Object\.fromEntries\(\(data\.students/);
     assert.match(officeSource,/max-inline-size: 11rem/);
-    assert.match(officeSource,/min-inline-size: 0; white-space: normal; overflow-wrap: anywhere; text-align: start/);
+    assert.match(officeSource,/flex-wrap: wrap/);
+    assert.match(officeSource,/min-inline-size: min-content; white-space: normal; overflow-wrap: normal; text-align: start/);
+    // A marked name once stacked one letter per line: the name must never shrink below its longest word.
+    assert.doesNotMatch(officeSource,/student-name-button \{[^}]*overflow-wrap: anywhere/);
 });
 
 for (const surface of ['office','teacher','register'] as const) {

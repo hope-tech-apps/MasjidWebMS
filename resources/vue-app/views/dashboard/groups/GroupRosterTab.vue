@@ -1938,7 +1938,9 @@ onBeforeUnmount(() => { document.body.style.overflow = ''; });
 </style>
 
 <style scoped>
-.student-name-with-allergy { display: inline-flex; align-items: flex-start; gap: .375rem; max-inline-size: 16rem; vertical-align: top; }
-.student-name-with-allergy .student-name-button { flex: 1 1 auto; min-inline-size: 0; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+/* The mark wraps under the name when the column is narrow; the name never gives way to it
+   (min-inline-size: 0 with overflow-wrap: anywhere stacked a marked name one letter per line). */
+.student-name-with-allergy { display: inline-flex; flex-wrap: wrap; align-items: flex-start; gap: .25rem .375rem; max-inline-size: 16rem; vertical-align: top; }
+.student-name-with-allergy .student-name-button { flex: 0 1 auto; min-inline-size: min-content; white-space: normal; overflow-wrap: normal; text-align: start; }
 @media (max-width: 390px) { .student-name-with-allergy { max-inline-size: 11rem; } }
 </style>
