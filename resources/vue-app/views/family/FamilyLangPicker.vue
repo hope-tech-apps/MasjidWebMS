@@ -1,7 +1,7 @@
 <template>
     <!-- The portal's language, on every screen that used to carry the two-way
          English/العربية button, in the same spot.
-         A native <select> on purpose: six languages no longer fit a toggle,
+         A native <select> on purpose: seven languages no longer fit a toggle,
          and on a phone the OS draws the list full-size in its own chrome — the
          one control on the page that works the same for a parent whatever
          language they read. Every option is written in ITSELF (اردو, not

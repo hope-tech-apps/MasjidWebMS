@@ -1,12 +1,12 @@
 /**
- * The parent portal's six word tables (familyI18n.ts en and ar, locales/ ur, ps, fa-AF, es):
+ * The parent portal's seven word tables (familyI18n.ts en and ar, locales/ ur, ps, fa-AF, es, fr):
  * every table carries every key exactly once.
  *
  * A JS object literal keeps the LAST of two equal keys without a word, so a block pasted into
  * the wrong table does not fail: the English portal quietly prints Arabic (this is the bug
  * that put the weekly report's Arabic labels on an English page during T-003.3), and a table
  * missing a key falls back to English mid-screen. FamilyLanguagesMirrorTest.php already checks
- * the four locale files against English; this also covers English against Arabic and
+ * the five locale files against English; this also covers English against Arabic and
  * duplicates inside any one table.
  * Run: npm run test:spa
  */
@@ -31,6 +31,7 @@ const tables: Record<string, string[]> = {
     ps: keysOf(read('locales/ps.ts'), 4),
     'fa-AF': keysOf(read('locales/fa-AF.ts'), 4),
     es: keysOf(read('locales/es.ts'), 4),
+    fr: keysOf(read('locales/fr.ts'), 4),
 };
 
 test('the tables were found and are not trivially small', () => {

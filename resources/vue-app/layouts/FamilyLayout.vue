@@ -104,6 +104,29 @@ const familyStore = useFamilyStore();
 // header is never in a different language from the page under it.
 const { lang, dir, t } = useFamilyLang();
 
+// The document follows this realm too; restore its attributes before staff or
+// public pages mount so the family preference never changes their language.
+let restoreDocumentLanguage: (() => void) | undefined;
+onMounted(() => {
+    const html = document.documentElement;
+    if (!html) return;
+    const previous = { lang: html.getAttribute('lang'), dir: html.getAttribute('dir') };
+    const stop = watch([lang, dir], ([language, direction]) => {
+        html.setAttribute('lang', language);
+        html.setAttribute('dir', direction);
+    }, { immediate: true });
+    restoreDocumentLanguage = () => {
+        stop();
+        for (const attribute of ['lang', 'dir'] as const) {
+            const value = previous[attribute];
+            if (value === null) html.removeAttribute(attribute);
+            else html.setAttribute(attribute, value);
+        }
+    };
+});
+onBeforeUnmount(() => restoreDocumentLanguage?.());
+
+
 const masjidId = computed(() => String(route.params.masjidId ?? ''));
 const isCalendarActive = computed(() => route.name === 'familyCalendar');
 const signedInHere = computed(() => familyStore.isSignedInTo(masjidId.value));

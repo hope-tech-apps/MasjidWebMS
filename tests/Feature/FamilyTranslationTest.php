@@ -430,7 +430,7 @@ class FamilyTranslationTest extends TestCase
         $this->as($this->parent)
             ->postJson($this->url($this->masjid), $this->payload([
                 ['key' => 'x', 'text' => 'Good morning.'],
-            ], target: 'fr'))
+            ], target: 'de'))
             ->assertStatus(422)
             ->assertJsonPath('status', 'failed')
             ->assertJsonStructure(['data' => ['target']]);
@@ -438,7 +438,7 @@ class FamilyTranslationTest extends TestCase
         $this->assertSame(0, $this->translator->calls);
     }
 
-    // ------------------------------------------------- the five languages
+    // ------------------------------------------------- the six target languages
     //
     // Urdu, Pashto, Dari and Spanish joined Arabic on 2026-09-21. The request
     // layer is what keeps "translate this into <whatever the caller sent>" out
@@ -456,6 +456,7 @@ class FamilyTranslationTest extends TestCase
             'Pashto' => ['ps', 'rtl', 'Pashto'],
             'Dari' => ['fa-AF', 'rtl', 'Dari'],
             'Spanish' => ['es', 'ltr', 'Spanish'],
+            'French' => ['fr', 'ltr', 'French'],
         ];
     }
 
@@ -531,6 +532,28 @@ class FamilyTranslationTest extends TestCase
         );
     }
 
+    #[Test]
+    public function french_form_requests_cache_posts_notes_and_messages_separately_from_spanish(): void
+    {
+        $items = [
+            ['key' => 'post-1-body', 'text' => 'We read together today.'],
+            ['key' => 'note-1-body', 'text' => 'Please bring a notebook.'],
+            ['key' => 'message-1-body', 'text' => 'Thank you for your reply.'],
+        ];
+
+        foreach (['es', 'fr', 'fr'] as $target) {
+            $this->as($this->parent)->post($this->url($this->masjid), $this->payload($items, target: $target))
+                ->assertOk()->assertJsonPath('data.target', $target)->assertJsonPath('data.dir', 'ltr')
+                ->assertJsonCount(3, 'data.translations')->assertJsonPath('meta.complete', true);
+        }
+
+        $this->assertSame(2, $this->translator->calls);
+        foreach (['es', 'fr'] as $target) {
+            $this->assertSame(3, ContentTranslation::withoutMasjidScope()
+                ->where('masjid_id', $this->masjid->id)->where('target_lang', $target)->count());
+        }
+    }
+
     /** @return array<string,array{0:string}> */
     public static function refusedTags(): array
     {
@@ -547,6 +570,8 @@ class FamilyTranslationTest extends TestCase
             'fa-af' => ['fa-af'],
             'ur-PK' => ['ur-PK'],
             'es-419' => ['es-419'],
+            'fr-CA' => ['fr-CA'],
+            'FR' => ['FR'],
             // English is the source, not a target.
             'en' => ['en'],
             // A prompt fragment is the whole reason this rule exists.
@@ -575,14 +600,14 @@ class FamilyTranslationTest extends TestCase
         // config/translation.php is the offer; App\Support\PortalLanguage is
         // the description. A tag with no description would reach the model as
         // a bare code with no known direction, so it is not offered at all.
-        config(['translation.languages' => ['ar', 'fr']]);
+        config(['translation.languages' => ['ar', 'de']]);
 
         $this->assertSame(['ar'], PortalLanguage::allowed());
 
         $this->as($this->parent)
             ->postJson($this->url($this->masjid), $this->payload([
                 ['key' => 'x', 'text' => 'Good morning.'],
-            ], target: 'fr'))
+            ], target: 'de'))
             ->assertStatus(422);
 
         $this->assertSame(0, $this->translator->calls);
@@ -609,16 +634,16 @@ class FamilyTranslationTest extends TestCase
     }
 
     #[Test]
-    public function the_shipped_config_offers_exactly_the_five_languages_in_picker_order(): void
+    public function the_shipped_config_offers_exactly_the_six_target_languages_in_picker_order(): void
     {
         // Pinned deliberately: this list used to be ['ar'], and a change to it
         // is a change to what every family is offered and to what the school
         // pays for, so it should take a failing test to make.
         $this->assertSame(
-            ['ar', 'ur', 'ps', 'fa-AF', 'es'],
+            ['ar', 'ur', 'ps', 'fa-AF', 'es', 'fr'],
             (require base_path('config/translation.php'))['languages'],
         );
-        $this->assertSame(['ar', 'ur', 'ps', 'fa-AF', 'es'], PortalLanguage::allowed());
+        $this->assertSame(['ar', 'ur', 'ps', 'fa-AF', 'es', 'fr'], PortalLanguage::allowed());
     }
 
     // ------------------------------------------- a reply the parser cannot trust

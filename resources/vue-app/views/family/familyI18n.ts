@@ -3,12 +3,13 @@ import { UR } from "@/views/family/locales/ur";
 import { PS } from "@/views/family/locales/ps";
 import { FA_AF } from "@/views/family/locales/fa-AF";
 import { ES } from "@/views/family/locales/es";
+import { FR } from "@/views/family/locales/fr";
 
 /**
  * The language layer for the PARENT portal: English and Arabic, and since
- * 2026-09-21 Urdu, Pashto, Dari and Spanish.
+ * 2026-09-21 Urdu, Pashto, Dari and Spanish; French joined 2026-10-13.
  *
- * THE FOUR NEWER LANGUAGES ARE MACHINE-DRAFTED. Their tables live one per file
+ * THE FIVE NEWER LANGUAGES ARE MACHINE-DRAFTED. Their tables live one per file
  * under ./locales/ precisely so that each can carry that warning at its head
  * and be handed to a fluent reader on its own; until one has been reviewed its
  * `reviewed` flag in FAMILY_LANGS below stays false. English and Arabic stay in
@@ -38,7 +39,7 @@ import { ES } from "@/views/family/locales/es";
  * rewritten, and the English column is left exactly as it appears on screen
  * today so that turning Arabic on is the only thing this layer changes.
  */
-export type FamilyLang = "en" | "ar" | "ur" | "ps" | "fa-AF" | "es";
+export type FamilyLang = "en" | "ar" | "ur" | "ps" | "fa-AF" | "es" | "fr";
 
 /**
  * Everything the portal needs to know about one language, in the order the
@@ -82,6 +83,7 @@ export const FAMILY_LANGS: FamilyLangInfo[] = [
     { code: "ps", label: "پښتو", dir: "rtl", intl: "ps-u-ca-gregory-nu-latn", reviewed: false },
     { code: "fa-AF", label: "دری", dir: "rtl", intl: "fa-AF-u-ca-gregory-nu-latn", reviewed: false },
     { code: "es", label: "Español", dir: "ltr", intl: "es", reviewed: false },
+    { code: "fr", label: "Français", dir: "ltr", intl: "fr", reviewed: false },
 ];
 
 const INFO: Record<FamilyLang, FamilyLangInfo> = Object.fromEntries(
@@ -102,7 +104,7 @@ export function normaliseFamilyLang(tag: unknown): FamilyLang | null {
 
     if (primary === "prs" || primary === "fa") return "fa-AF";
 
-    return (["en", "ar", "ur", "ps", "es"] as const).find((code) => code === primary) ?? null;
+    return (["en", "ar", "ur", "ps", "es", "fr"] as const).find((code) => code === primary) ?? null;
 }
 
 /**
@@ -135,10 +137,10 @@ const lang = ref<FamilyLang>(initial());
  *
  * The translate button and its notices are labelled in two languages at once
  * (see tBoth) for the parent who has not found the picker. With one other
- * language that second label was always Arabic; with five, it is the first one
+ * language that second label was always Arabic; with six, it is the first one
  * the parent's own browser says it reads, and Arabic when it names none of
  * ours — which is exactly what this portal did before, for every parent whose
- * phone is not set to Urdu, Pashto, Dari or Spanish. Read once: a browser's
+ * phone is not set to Urdu, Pashto, Dari, Spanish or French. Read once: a browser's
  * language list does not change under an open page.
  */
 function suggestedOther(): Exclude<FamilyLang, "en"> {
@@ -164,6 +166,7 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
     ps: PS,
     "fa-AF": FA_AF,
     es: ES,
+    fr: FR,
     en: {
         // ------------------------------------------------------------ shared
         switch_lang_title: "Switch language",
@@ -897,7 +900,7 @@ export function useFamilyLang() {
      * returns exactly today's wording when the portal is in English.
      */
     function tCount(base: string, n: number): string {
-        // Urdu, Pashto, Dari and Spanish have one form for one and one for the
+        // Urdu, Pashto, Dari, Spanish and French have one form for one and one for the
         // rest, the same two English has; each table fills all four keys so a
         // missing one can never fall through to English mid-sentence.
         const suffix = lang.value !== "ar"

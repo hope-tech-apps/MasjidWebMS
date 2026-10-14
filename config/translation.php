@@ -52,7 +52,7 @@ return [
     | prompt the caller would be writing.
     |
     | Arabic since 2026-09-12; Urdu, Pashto, Dari and Spanish added 2026-09-21
-    | at the owner's request. Each tag must ALSO be described in
+    | at the owner's request; French added 2026-10-13. Each tag must ALSO be described in
     | App\Support\PortalLanguage (its prompt name and its direction) — a tag
     | listed here and not there is silently not offered, rather than reaching
     | the model as a bare code. Dari is `fa-AF`, not `prs`: see PortalLanguage
@@ -62,7 +62,7 @@ return [
     | the per-request ceilings below: one request still translates into ONE
     | language.
     */
-    'languages' => ['ar', 'ur', 'ps', 'fa-AF', 'es'],
+    'languages' => ['ar', 'ur', 'ps', 'fa-AF', 'es', 'fr'],
 
     /*
     | How many strings one request may carry. A screen's worth — a feed post

@@ -111,7 +111,7 @@ test('every ledger kind has a word in English and in Arabic, and the other four 
     assert.equal(keys.filter((k) => k.startsWith('bucks_kind_')).length, 8);
     assert.ok(keys.includes('bucks_kind_transfer_out') && keys.includes('bucks_kind_transfer_in'));
 
-    for (const [lang, table] of [['en', en], ['ar', ar], ['ur', read('views/family/locales/ur.ts')], ['ps', read('views/family/locales/ps.ts')], ['fa-AF', read('views/family/locales/fa-AF.ts')], ['es', read('views/family/locales/es.ts')]] as const) {
+    for (const [lang, table] of [['en', en], ['ar', ar], ['ur', read('views/family/locales/ur.ts')], ['ps', read('views/family/locales/ps.ts')], ['fa-AF', read('views/family/locales/fa-AF.ts')], ['es', read('views/family/locales/es.ts')], ['fr', read('views/family/locales/fr.ts')]] as const) {
         for (const key of keys) {
             assert.match(table, new RegExp(`^\\s+${key}: ".+",$`, 'm'), `${lang} is missing ${key}`);
         }
@@ -129,7 +129,7 @@ test('the two lines of a moved student sit inside each table\'s Manara Bucks blo
     assert.equal(word(en, 'bucks_kind_transfer_out'), 'Moved to the new class');
     assert.equal(word(en, 'bucks_kind_transfer_in'), 'Brought from the previous class');
 
-    const drafted: Array<[string, string]> = [['ar', ar], ...['ur', 'ps', 'fa-AF', 'es'].map((l): [string, string] => [l, read(`views/family/locales/${l}.ts`)])];
+    const drafted: Array<[string, string]> = [['ar', ar], ...['ur', 'ps', 'fa-AF', 'es', 'fr'].map((l): [string, string] => [l, read(`views/family/locales/${l}.ts`)])];
     for (const [lang, table] of [['en', en] as [string, string], ...drafted]) {
         for (const key of moved) {
             const at = table.indexOf(`${key}:`);

@@ -53,7 +53,7 @@ test('teacher schedule stays English with no family locale dependency or selecto
     for(const file of ['views/teacher/TeacherSchedule.vue','views/teacher/ScheduleMeeting.vue','layouts/TeacherLayout.vue']) {
         const source=readFileSync(new URL('../'+file,import.meta.url),'utf8');assert.doesNotMatch(source,/familyI18n|useFamilyLang|schedule_title|urduFont/);
     }
-    for(const file of ['familyI18n.ts','locales/ur.ts','locales/ps.ts','locales/fa-AF.ts','locales/es.ts']) {
+    for(const file of ['familyI18n.ts','locales/ur.ts','locales/ps.ts','locales/fa-AF.ts','locales/es.ts','locales/fr.ts']) {
         assert.doesNotMatch(readFileSync(new URL('../views/family/'+file,import.meta.url),'utf8'),/schedule_\w+/);
     }
 });

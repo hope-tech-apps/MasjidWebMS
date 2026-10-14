@@ -72,13 +72,18 @@ final class PortalLanguage
             'prompt' => 'neutral Latin American Spanish',
             'dir' => 'ltr',
         ],
+        'fr' => [
+            'name' => 'French',
+            'prompt' => 'standard French, addressing parents politely with vous',
+            'dir' => 'ltr',
+        ],
     ];
 
     /**
      * The tags a parent may ask for on THIS deployment: config's list, filtered
      * to the ones this class describes.
      *
-     * The filter is the point. An operator who adds `fr` to
+     * The filter is the point. An operator who adds `de` to
      * config/translation.php without adding it here would otherwise open a tag
      * that reaches the model as a bare code and has no known direction; with
      * it, an undescribed tag is simply not offered, and the request's

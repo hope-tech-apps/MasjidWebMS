@@ -9,7 +9,7 @@ const vue = require('vue');
 
 async function language(code: string) {
     const deps: any = { vue };
-    for (const file of ['ur','ps','fa-AF','es']) deps[`@/views/family/locales/${file}`] = await loadTs(`views/family/locales/${file}.ts`, {});
+    for (const file of ['ur','ps','fa-AF','es','fr']) deps[`@/views/family/locales/${file}`] = await loadTs(`views/family/locales/${file}.ts`, {});
     const module = await loadTs('views/family/familyI18n.ts', deps);
     module.useFamilyLang().setLang(code);
     return module;

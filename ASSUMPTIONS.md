@@ -515,3 +515,7 @@ Assumption: item 2 is the final attendance Keep behavior, retaining saved Absent
 - Assumption (review fixes): a later dated row of the same class, weekday and period is the same lesson changed from a date, whatever changed in it (teachers, name, kind). Joining therefore covers it. If the later row is really a different lesson that shares a teacher or room with the other class, the office takes that row out; the join's answer lists every row it now covers.
 - Assumption (review fixes): one same-time lesson in a save's review may be ticked for the office, because there is nothing to choose between and the box names the class; more than one never is.
 - Unverified (review fixes): keyboard-only and screen-reader passes in a real browser. Focus and roles are asserted on the mounted screen, where a click runs a handler and there is no real focus ring or speech.
+
+## French family language — 2026-10-13
+- French labels are a machine draft, not checked by a fluent reader; FR carries the explicit warning and reviewed false. Standard polite vous and preserved school/religious terms follow the brief.
+- Mounted SPA tests verify rendering and handlers but do not verify real-browser geometry, trusted input or accessibility. No browser/reader, real translation-provider purchase, MySQL, CI/staging/production or mail delivery is claimed.

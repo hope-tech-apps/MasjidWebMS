@@ -19,6 +19,7 @@ const locales: Record<string, string> = {
     ps: read('../views/family/locales/ps.ts'),
     'fa-AF': read('../views/family/locales/fa-AF.ts'),
     es: read('../views/family/locales/es.ts'),
+    fr: read('../views/family/locales/fr.ts'),
 };
 
 /** The keys of one table: a line that is `key: "..."` inside it. */
@@ -50,7 +51,7 @@ test('the parser found the tables it is checking', () => {
     }
 });
 
-test('every new marks word exists, and is not empty, in all six languages', () => {
+test('every new marks word exists, and is not empty, in all seven languages', () => {
     for (const [lang, table] of Object.entries(tables)) {
         for (const key of NEW_KEYS) {
             assert.ok(table.has(key), `${lang} is missing ${key}`);

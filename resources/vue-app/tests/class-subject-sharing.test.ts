@@ -67,7 +67,7 @@ test('sharing OFF changes no teacher controls or mark payload', async () => {
 
 async function language() {
     const modules: any = { vue };
-    for (const name of ['ur', 'ps', 'fa-AF', 'es']) modules[`@/views/family/locales/${name}`] = await loadTs(`views/family/locales/${name}.ts`, {});
+    for (const name of ['ur', 'ps', 'fa-AF', 'es', 'fr']) modules[`@/views/family/locales/${name}`] = await loadTs(`views/family/locales/${name}.ts`, {});
     return loadTs('views/family/familyI18n.ts', modules);
 }
 test('family Subjects area mounts shared title, words, comment, date and child notes in English and Arabic at 390 and 320', async () => {

@@ -59,6 +59,7 @@ test('the notice says PARENTS and WHEN in every language: staff see each guardia
     const others: [string, RegExp, RegExp][] = [
         ['views/family/familyI18n.ts', /أولياء الأمور/, /العائلات/],
         ['views/family/locales/es.ts', /padres/, /familias/],
+        ['views/family/locales/fr.ts', /parents/, /familles/],
         ['views/family/locales/ur.ts', /والدین/, /خاندان/],
         ['views/family/locales/ps.ts', /والدینو/, /کورن/],
         ['views/family/locales/fa-AF.ts', /والدین/, /خانواده/],

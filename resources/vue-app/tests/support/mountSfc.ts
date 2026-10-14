@@ -149,7 +149,7 @@ const { createApp } = vue.createRenderer({ ...nodeOps, patchProp });
 
 /** An ES `import` clause turned into `const` lines that read from the modules the test supplied. */
 function rewriteImports(code: string): string {
-    return code.replace(/^\s*import\s+(type\s+)?([\s\S]*?)\s+from\s+['"]([^'"]+)['"];?[ \t]*$/gm, (_all, isType, clause: string, spec: string) => {
+    return code.replace(/^import\s+['"][^'"]+['"];?[ \t]*$/gm, '').replace(/^\s*import\s+(type\s+)?([\s\S]*?)\s+from\s+['"]([^'"]+)['"];?[ \t]*$/gm, (_all, isType, clause: string, spec: string) => {
         if (isType) return '';
         const mod = `__sfcModule(${JSON.stringify(spec)})`;
         const lines: string[] = [];

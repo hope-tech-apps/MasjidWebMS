@@ -107,6 +107,7 @@ test('the family portal names both sets in every language it ships', () => {
     for (const path of [
         '../views/family/familyI18n.ts',
         '../views/family/locales/es.ts',
+        '../views/family/locales/fr.ts',
         '../views/family/locales/fa-AF.ts',
         '../views/family/locales/ur.ts',
         '../views/family/locales/ps.ts',

@@ -187,7 +187,7 @@ test('the story types carry the two new fields', () => {
 
 test('the Edited word is in every family language table', () => {
     for (const rel of ['views/family/familyI18n.ts', 'views/family/locales/ur.ts', 'views/family/locales/ps.ts',
-        'views/family/locales/fa-AF.ts', 'views/family/locales/es.ts']) {
+        'views/family/locales/fa-AF.ts', 'views/family/locales/es.ts', 'views/family/locales/fr.ts']) {
         const count = (source(rel).match(/^\s+story_edited: "[^"]+",$/gm) ?? []).length;
 
         assert.equal(count, rel.endsWith('familyI18n.ts') ? 2 : 1, `${rel} carries story_edited`);

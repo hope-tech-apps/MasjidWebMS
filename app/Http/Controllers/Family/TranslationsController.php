@@ -11,7 +11,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * "Translate", over whatever a parent is looking at — into Arabic, Urdu,
- * Pashto, Dari or Spanish (App\Support\PortalLanguage).
+ * Pashto, Dari, Spanish or French (App\Support\PortalLanguage).
  *
  * Parents at Al-Razi do not all read English and their teachers write in it, so
  * a class story, a message from a teacher and a report-card comment are all

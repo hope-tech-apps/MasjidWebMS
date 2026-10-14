@@ -12,7 +12,7 @@ use Tests\TestCase;
  * (App\Support\PortalLanguage + config/translation.php), and every locale file
  * must carry every label.
  *
- * There is no SPA test runner, so the PHP suite reads the files, the way
+ * The PHP suite also reads the files, the way
  * CapabilityTsMirrorTest does. Three things drift silently without it:
  *
  *   - DIRECTION. Urdu, Pashto and Dari are right-to-left like Arabic. The
@@ -38,6 +38,7 @@ class FamilyLanguagesMirrorTest extends TestCase
         'ps' => 'resources/vue-app/views/family/locales/ps.ts',
         'fa-AF' => 'resources/vue-app/views/family/locales/fa-AF.ts',
         'es' => 'resources/vue-app/views/family/locales/es.ts',
+        'fr' => 'resources/vue-app/views/family/locales/fr.ts',
     ];
 
     private function read(string $relative): string
@@ -125,7 +126,7 @@ class FamilyLanguagesMirrorTest extends TestCase
     #[Test]
     public function the_rtl_flag_is_right_for_each_language(): void
     {
-        $expected = ['en' => 'ltr', 'ar' => 'rtl', 'ur' => 'rtl', 'ps' => 'rtl', 'fa-AF' => 'rtl', 'es' => 'ltr'];
+        $expected = ['en' => 'ltr', 'ar' => 'rtl', 'ur' => 'rtl', 'ps' => 'rtl', 'fa-AF' => 'rtl', 'es' => 'ltr', 'fr' => 'ltr'];
 
         $ts = $this->tsLanguages();
 
@@ -139,7 +140,7 @@ class FamilyLanguagesMirrorTest extends TestCase
         }
 
         // An unknown tag is laid out left-to-right rather than guessed at.
-        $this->assertSame('ltr', PortalLanguage::dir('fr'));
+        $this->assertSame('ltr', PortalLanguage::dir('de'));
     }
 
     #[Test]
@@ -181,10 +182,11 @@ class FamilyLanguagesMirrorTest extends TestCase
 
             foreach ($english as $key => $value) {
                 $this->assertSame(
-                    str_contains($value, '{x}'),
-                    str_contains($table[$key], '{x}'),
-                    "{$code}.{$key}: the {x} slot must survive translation",
+                    preg_match_all('/\{[^{}]+\}/', $value, $englishSlots),
+                    preg_match_all('/\{[^{}]+\}/', $table[$key], $localeSlots),
+                    "{$code}.{$key}: slot count must survive translation",
                 );
+                $this->assertEqualsCanonicalizing($englishSlots[0], $localeSlots[0], "{$code}.{$key}: placeholders must survive");
                 $this->assertNotSame('', trim($table[$key]), "{$code}.{$key} is blank");
             }
         }
@@ -203,7 +205,7 @@ class FamilyLanguagesMirrorTest extends TestCase
             }
         }
 
-        // The four added 2026-09-21 have not been read by a fluent speaker.
+        // The four added 2026-09-21 and French added 2026-10-13 await a fluent reader.
         // Flipping one of these is a claim that somebody has; make it on purpose.
         foreach (array_keys(self::LOCALE_FILES) as $code) {
             $this->assertFalse($ts[$code]['reviewed'], "{$code} is marked reviewed — was it?");

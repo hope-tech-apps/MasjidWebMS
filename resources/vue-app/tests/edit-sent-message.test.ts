@@ -173,7 +173,7 @@ test('the family portal word is in all six tables', () => {
     const en = source(`${dir}familyI18n.ts`);
 
     assert.equal((en.match(/^ {8}msg_edited:/gm) ?? []).length, 2, 'English and Arabic');
-    for (const lang of ['ur', 'ps', 'fa-AF', 'es']) {
+    for (const lang of ['ur', 'ps', 'fa-AF', 'es', 'fr']) {
         assert.equal((source(`${dir}locales/${lang}.ts`).match(/^ {4}msg_edited:/gm) ?? []).length, 1, lang);
     }
 });
