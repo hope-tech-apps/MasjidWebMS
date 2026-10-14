@@ -96,6 +96,9 @@ class MemberAccountDeletionCoverageTest extends TestCase
             'donations' => ['contact_id'],
             'donation_subscriptions' => ['contact_id'],
             'group_memberships' => ['contact_id', 'guardian_of_contact_id'],
+            // The office keeps delivery history when a member removes their login.
+            'attendance_absence_mails' => ['guardian_contact_id'],
+            'attendance_absence_mail_children' => ['guardian_contact_id', 'student_contact_id'],
             'group_messages' => ['author_contact_id'],
             // 2026-09-21: a parent's reaction in a class conversation. Office
             // record, like the read bookmark below; only a guardian can write

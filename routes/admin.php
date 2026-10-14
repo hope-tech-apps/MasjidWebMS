@@ -1291,6 +1291,8 @@ Route::prefix('admin')->group(function () {
                 // needed: this is the same kind of record about the same
                 // children, read by the same people.
                 // Office register management reuses the roster's permission in both directions.
+                Route::put('{masjid_id}/attendance/absence-emails/settings', [\App\Http\Controllers\AdminDashboard\OfficeAttendanceController::class, 'saveAbsenceSettings'])
+                    ->middleware('permission:manage contacts');
                 Route::get('{masjid_id}/attendance/registers', [\App\Http\Controllers\AdminDashboard\OfficeAttendanceController::class, 'overview'])
                     ->middleware('permission:manage contacts');
                 Route::prefix('{masjid_id}/groups/{group_id}/attendance')

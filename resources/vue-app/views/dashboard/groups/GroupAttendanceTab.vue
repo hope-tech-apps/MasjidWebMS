@@ -4,9 +4,9 @@
             <div class="register-date">
                 <label for="office-attendance-date" class="form-label">Day</label>
                 <input id="office-attendance-date" class="form-control" type="date" v-model="draft"
-                    :max="today || undefined" :disabled="saving" @change="dateInput.typed" @blur="dateInput.commitNow" @keydown.enter.prevent="dateInput.commitNow" />
+                    :max="today || undefined" :disabled="saving || emailSaving" @change="dateInput.typed" @blur="dateInput.commitNow" @keydown.enter.prevent="dateInput.commitNow" />
             </div>
-            <button type="button" class="btn btn-outline-secondary" :disabled="loading || saving" @click="load(draft)">Reload</button>
+            <button type="button" class="btn btn-outline-secondary" :disabled="loading || saving || emailSaving" @click="load(draft)">Reload</button>
         </div>
         <p v-if="loading" class="text-muted" role="status">Loading the register…</p>
         <p v-if="error" class="alert alert-danger" role="alert">{{ error }}</p>
@@ -46,13 +46,35 @@
                 <span v-if="saved" class="text-success" role="status">{{ savedMessage }}</span>
             </div>
         </div>
+        <section v-if="absenceEmails && !overviewLoading && !overviewError" class="mt-4" aria-labelledby="absence-emails-title">
+            <h6 id="absence-emails-title">Absence emails</h6>
+            <p class="small text-muted">Once a day, confirmed guardians receive the absences still marked at this time ({{ timezone }}).</p>
+            <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+                <div class="register-date">
+                    <label for="absence-email-time" class="form-label">Send time</label>
+                    <input id="absence-email-time" class="form-control" type="time" v-model="emailTime" :disabled="emailSaving" />
+                </div>
+                <button type="button" class="btn btn-outline-secondary" :disabled="emailSaving || !emailTime" @click="saveEmailTime">Save email time</button>
+            </div>
+            <p v-if="emailError" class="alert alert-danger" role="alert">{{ emailError }}</p>
+            <p v-if="emailSaved" class="text-success small" role="status">Email time saved.</p>
+            <p class="small text-muted">For {{ formatSchoolDay(loaded, 'en-US') }}. Sent means the mail service accepted the email.</p>
+            <p v-if="!absenceEmails.rows.length" class="small text-muted">No absence emails for this day.</p>
+            <ul v-else class="list-group">
+                <li v-for="row in absenceEmails.rows" :key="row.id" class="list-group-item text-break">
+                    <div>{{ row.guardian_email }} · {{ row.child }}</div>
+                    <div class="small">{{ row.classes.map((c: any) => c.name).join(', ') }}</div>
+                    <div class="small text-muted">{{ row.status }}<template v-if="row.sent_at"> · {{ when(row.sent_at) }}</template></div>
+                </li>
+            </ul>
+        </section>
         <div v-if="loaded" class="mt-4">
             <h6>School registers for {{ formatSchoolDay(loaded, 'en-US') }}</h6>
             <p v-if="overviewError" class="alert alert-danger" role="alert">{{ overviewError }} <button type="button" class="btn btn-sm btn-outline-danger" @click="loadOverview(loaded)">Retry overview</button></p>
             <p v-if="overviewLoading" class="text-muted" role="status">Loading school registers…</p>
             <div v-else class="list-group">
                 <div v-for="classroom in classes" :key="classroom.id" class="list-group-item text-break">
-                    <button type="button" class="btn btn-link text-start p-0 text-break" :disabled="saving" @click="openClass(classroom.id)">{{ classroom.name }}</button>
+                    <button type="button" class="btn btn-link text-start p-0 text-break" :disabled="saving || emailSaving" @click="openClass(classroom.id)">{{ classroom.name }}</button>
                     <div class="small text-muted">{{ classroom.taken ? `Taken by ${classroom.marked_by} at ${when(classroom.marked_at)}` : 'Not taken' }}</div>
                 </div>
             </div>
@@ -78,6 +100,7 @@ const options = [{ value: 'present', label: 'Present' }, { value: 'absent', labe
 const draft = ref(props.date ?? ''); const loaded = ref(''); const today = ref(''); const timezone = ref('America/New_York');
 const students = ref<Student[]>([]); const classes = ref<Classroom[]>([]); const taken = ref(false); const refusal = ref('');
 const loading = ref(false); const saving = ref(false); const saved = ref(false); const error = ref(''); const overviewError = ref(''); const overviewLoading = ref(false);
+const absenceEmails = ref<any>(null); const emailTime = ref(''); const emailSaving = ref(false); const emailError = ref(''); const emailSaved = ref(false);
 const revision = ref(''); const baseline = ref<Record<number, { status: string | null; note: string }>>({});
 const conflicts = ref<Record<number, string>>({}); const confirmAll = ref(false);
 const protectedKinds = ['absent', 'late', 'excused'];
@@ -111,7 +134,7 @@ function completeDate() {
 const dateInput = useCommittedDate(draft, completeDate);
 async function load(date = '', keepChoices = false) {
     if (saving.value) return;
-    dateInput.clear(); const run = ++generation; loading.value = true; error.value = ''; saved.value = false;
+    dateInput.clear(); const run = ++generation; ++overviewGeneration; absenceEmails.value = null; emailSaving.value = false; emailTime.value = ''; emailSaved.value = false; emailError.value = ''; loading.value = true; error.value = ''; saved.value = false;
     // Invalidate the old overview too: a later date must never receive an older answer.
     ++overviewGeneration; classes.value = []; overviewError.value = ''; confirmAll.value = false;
     if (!keepChoices) { loaded.value = ''; students.value = []; refusal.value = ''; revision.value = ''; conflicts.value = {}; }
@@ -129,9 +152,26 @@ async function loadOverview(date: string) {
     const run = ++overviewGeneration; overviewLoading.value = true; overviewError.value = '';
     try {
         const response = await ApiService.get(`/api/admin/masjids/${props.masjidId}/attendance/registers?date=${encodeURIComponent(date)}`);
-        if (alive && run === overviewGeneration) classes.value = response.data.data.classes;
+        if (alive && run === overviewGeneration) {
+            classes.value = response.data.data.classes;
+            absenceEmails.value = response.data.data.absence_emails ?? null;
+            if (!emailSaving.value) emailTime.value = absenceEmails.value?.send_time ?? '';
+        }
     } catch (e) { if (alive && run === overviewGeneration) overviewError.value = apiErrorText(e, 'Could not load school registers.'); }
     finally { if (alive && run === overviewGeneration) overviewLoading.value = false; }
+}
+async function saveEmailTime() {
+    if (!absenceEmails.value || emailSaving.value) return;
+    const run = generation;
+    emailSaving.value = true; emailError.value = ''; emailSaved.value = false;
+    try {
+        const response = await ApiService.put(`/api/admin/masjids/${props.masjidId}/attendance/absence-emails/settings`, { send_time: emailTime.value });
+        if (!alive || run !== generation) return;
+        emailTime.value = response.data.data.send_time;
+        absenceEmails.value.send_time = emailTime.value; emailSaved.value = true;
+    } catch (e) {
+        if (alive && run === generation) emailError.value = apiErrorText(e, 'Could not save the absence email time.');
+    } finally { if (alive && run === generation) emailSaving.value = false; }
 }
 function setAllPresent(keepMarks = false) {
     if (!editable.value) return;

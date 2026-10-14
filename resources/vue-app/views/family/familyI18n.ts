@@ -442,6 +442,15 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         // report card, on the tab next to this one — so "Grades" would be two
         // different things on one screen for the parent least able to tell them
         // apart. "Marks" is also what the teachers here call them.
+        // Attendance wording added 2026-10-14.
+        tab_attendance: "Attendance",
+        attendance_mark_present: "Present",
+        attendance_mark_late: "Late",
+        attendance_mark_absent: "Absent",
+        attendance_mark_excused: "Excused",
+        attendance_year: "This school year",
+        attendance_empty: "No attendance has been recorded yet.",
+        attendance_error: "Attendance could not be loaded. Please try again.",
         tab_grades: "Marks",
         marks_empty: "No marks yet. When your teacher enters one you will see it here.",
         marks_error: "Some marks could not be loaded just now.",
@@ -758,6 +767,15 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         // "الدرجات" for the marks themselves; the report card's year level is
         // "الصف" elsewhere, so the two do not collide in Arabic the way "Marks"
         // and "Grades" would in English.
+        // Attendance wording added 2026-10-14. Arabic wording needs a fluent-reader check.
+        tab_attendance: "الحضور",
+        attendance_mark_present: "حاضر",
+        attendance_mark_late: "متأخر",
+        attendance_mark_absent: "غائب",
+        attendance_mark_excused: "غياب بعذر",
+        attendance_year: "هذا العام الدراسي",
+        attendance_empty: "لم يُسجَّل الحضور بعد.",
+        attendance_error: "تعذّر تحميل سجل الحضور. يرجى المحاولة مرة أخرى.",
         tab_grades: "الدرجات",
         marks_empty: "لا توجد درجات بعد. وعندما يسجّل المعلّم درجةً، ستظهر هنا.",
         marks_error: "تعذّر تحميل بعض الدرجات الآن.",

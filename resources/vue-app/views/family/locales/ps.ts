@@ -233,6 +233,15 @@ export const PS: Record<string, string> = {
     report_download_failed: "دا راپور اوس نه شو ښکته کېدای.",
 
     // --------------------------------------- marks (the gradebook)
+    // MACHINE-DRAFTED 2026-10-14 — attendance wording needs a fluent-reader check.
+    tab_attendance: "حاضري",
+    attendance_mark_present: "حاضر",
+    attendance_mark_late: "ناوخته",
+    attendance_mark_absent: "غایب",
+    attendance_mark_excused: "په عذر غایب",
+    attendance_year: "دا ښوونیز کال",
+    attendance_empty: "تر اوسه حاضري نه ده ثبت شوې.",
+    attendance_error: "حاضري نه شوه پرانیستل کېدای. بیا هڅه وکړئ.",
     tab_grades: "نمرې",
     marks_empty: "تر اوسه نمرې نشته. کله چې ستاسو ښوونکی نمره ثبت کړي، دلته به یې ووینئ.",
     marks_error: "ځینې نمرې اوس نه شوې راوړل کېدای.",

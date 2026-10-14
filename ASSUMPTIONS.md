@@ -530,3 +530,5 @@ Pilot identity remains unspecified; empty allowlist and OFF capability admit nob
 - Resource caps are deliberate engineering ceilings: the existing 2 MiB upload cap, 8 MiB per ZIP entry/32 MiB total/128 entries, 20,000 source rows/128 columns. They do not claim a measured export size.
 - The explicit unchanged-service instruction wins over fixing the inherited blank-name database failure without added scope. A generated blank guardian last name reproduced a commit 500; the null-writing branches and non-null schema were read. An optional owner question is pending, not treated as approval.
 - Local SQLite tests and mounted Vue checks do not verify MySQL, real browser geometry, a real vendor export, CI or deployed behavior.
+## Parent attendance, 2026-10-14
+The new 30/minute queue ceiling is a conservative starting value, not a measured provider allowance. The first eligible five-minute sweep is the school’s send-time snapshot; no later register creates a second batch. These choices and crash-loss limits are in DECISIONS and docs/parent-attendance.md. Live mail, queue and deployment configuration were not inspected.

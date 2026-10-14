@@ -9,8 +9,6 @@ use App\Support\{DutyRotaMode, DutyRotaService, DutyRotaMailService, SchoolDateA
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\{DB, Mail};
-use Illuminate\Mail\Transport\{LogTransport, ArrayTransport};
-use Symfony\Component\Mailer\Transport\{TransportInterface, RoundRobinTransport};
 use Throwable;
 
 class SendDutyRotaMail implements ShouldQueue
@@ -42,7 +40,7 @@ class SendDutyRotaMail implements ShouldQueue
                         $a=DutyRotaAssignment::where('masjid_id',$this->schoolId)->where('rota_id',$r->id)->where('family_id',$family->id)->find($row->assignment_id);
                         if (! $a || $a->released_at || $a->duty_on < $calendar->today() || ! in_array($a->duty_on,$calendar->openDaysBetween($a->duty_on,$a->duty_on),true)) { $this->failed(new \RuntimeException('Assignment no longer due')); return; }
                     }
-                    if (! in_array(config('app.env'),['local','testing'],true) && self::unsafeTransport(Mail::mailer()->getSymfonyTransport())) {
+                    if (! in_array(config('app.env'),['local','testing'],true) && \App\Support\SchoolMailTransport::unsafe(Mail::mailer()->getSymfonyTransport())) {
                         $this->failed(new \RuntimeException('mail is not configured for delivery')); return;
                     }
                     // Releases need these same mutexes. Sending inside makes a release after handoff wait.
@@ -58,16 +56,6 @@ class SendDutyRotaMail implements ShouldQueue
                 $this->failed($e); throw $e;
             }
         });
-    }
-    private static function unsafeTransport(TransportInterface $transport): bool
-    {
-        if ($transport instanceof LogTransport || $transport instanceof ArrayTransport) return true;
-        if ($transport instanceof RoundRobinTransport) {
-            // Symfony 7 exposes no member accessor; inspect the resolved graph, including cached/custom mailers.
-            $members=(new \ReflectionProperty(RoundRobinTransport::class,'transports'))->getValue($transport);
-            foreach ($members as $member) if (self::unsafeTransport($member)) return true;
-        }
-        return false;
     }
     public function failed(?Throwable $exception): void
     {

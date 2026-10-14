@@ -6,23 +6,23 @@ import { compileSfc, mountSfc, loadTs, click, type, flush, httpError } from './s
 import * as dates from '../core/types/data/masjid-related/SchoolCalendar.ts';
 import { formatLastOpened } from '../core/helpers/lastOpened.ts';
 const require = createRequire(import.meta.url); const vue = require('vue');
-async function screen(statuses?: (string | null)[]) {
+async function screen(statuses?: (string | null)[], emailData?: any) {
     const errors = await loadTs('core/services/ApiErrors.ts', { axios: require('axios') });
     const committed = await loadTs('composables/useCommittedDate.ts', { vue });
     const badge = await compileSfc('components/classes/AllergyBadge.vue', { vue });
     const reads: string[] = []; const writes: any[] = [];
-    let refusal: any = null; let readRefusal: any = null; let delayed: ((value: any) => void) | null = null; let heldDate = ''; let holdNext = false;
+    let refusal: any = null; let readRefusal: any = null; let delayed: ((value: any) => void) | null = null; let heldDate = ''; let holdNext = false; let holdEmail = false; let emailReply: (() => void) | null = null;
     const rows = [1,2].map(id => ({ membership_id: id, contact: { first_name: id === 1 ? 'Practice' : 'Sample', last_name: 'Student' }, grade_label: 'KG', status: id === 1 ? 'absent' : null, note: id === 1 ? 'Earlier note' : '', marked_by: id === 1 ? 'Practice Teacher' : null, marked_at: id === 1 ? '2026-10-19T13:05:00Z' : null, student_allergy: id === 1 ? { allergies: 'Practice allergy', unavailable: false } : null }));
     if (statuses) { rows.splice(0, rows.length, ...statuses.map((status, i) => ({ ...rows[0], membership_id: i + 1, status, note: `Note ${i + 1}` }))); }
     let revision = 'revision-one';
     const response = (date = '2026-10-19') => ({ headers: { 'x-attendance-revision': revision }, data: { data: { session_date: date, today: '2026-10-19', timezone: 'America/New_York', taken: true, refusal: null, students: structuredClone(rows) } } });
     const api = {
-        get: async (url: string) => { reads.push(url); if (url.includes('/registers')) return { data: { data: { classes: [{ id: 4, name: 'Other Class', taken: false }, { id: 3, name: 'Practice Class', taken: true, marked_by: 'Practice Teacher', marked_at: '2026-10-19T13:05:00Z' }] } } }; if (holdNext) { holdNext = false; heldDate = url.split('date=')[1]; return new Promise(resolve => { delayed = resolve; }); } if (readRefusal) throw readRefusal; return response(url.split('date=')[1]); },
-        put: async (url: string, body: any, contentType?: string, headers?: any) => { writes.push({ url, body, headers }); if (refusal) throw refusal; for (const mark of body.marks) Object.assign(rows[mark.membership_id - 1], { ...mark, marked_by: 'Office: Practice Office', marked_at: '2026-10-19T14:10:00Z' }); return response(body.session_date); },
+        get: async (url: string) => { reads.push(url); if (url.includes('/registers')) return { data: { data: { absence_emails: emailData, classes: [{ id: 4, name: 'Other Class', taken: false }, { id: 3, name: 'Practice Class', taken: true, marked_by: 'Practice Teacher', marked_at: '2026-10-19T13:05:00Z' }] } } }; if (holdNext) { holdNext = false; heldDate = url.split('date=')[1]; return new Promise(resolve => { delayed = resolve; }); } if (readRefusal) throw readRefusal; return response(url.split('date=')[1]); },
+        put: async (url: string, body: any, contentType?: string, headers?: any) => { writes.push({ url, body, headers }); if (url.endsWith('/absence-emails/settings')) { const value = { data: { data: { send_time: body.send_time } } }; if (holdEmail) return new Promise(resolve => { emailReply = () => resolve(value); }); return value; } if (refusal) throw refusal; for (const mark of body.marks) Object.assign(rows[mark.membership_id - 1], { ...mark, marked_by: 'Office: Practice Office', marked_at: '2026-10-19T14:10:00Z' }); return response(body.session_date); },
     };
     const s = await mountSfc('views/dashboard/groups/GroupAttendanceTab.vue', { groupId: 3, masjidId: 1, date: '' }, { vue, '@/core/services/ApiService': { default: api }, '@/core/services/ApiErrors': errors, '@/core/types/data/masjid-related/SchoolCalendar': dates, '@/core/helpers/lastOpened': { formatLastOpened }, '@/components/classes/AllergyBadge.vue': { default: badge }, '@/composables/useCommittedDate': committed, 'vue-router': { useRouter: () => ({ push: (v: any) => routes.push(v) }) } });
     const routes: any[] = []; await flush();
-    return { ...s, reads, writes, routes, failRead: (e: any) => { readRefusal = e; }, server: (id: number, change: any) => { Object.assign(rows[id - 1], change); revision = 'revision-two'; }, fail: (e: any) => { refusal = e; }, delay: () => { holdNext = true; }, resolve: () => { delayed?.(response(heldDate)); delayed = null; } };
+    return { ...s, reads, writes, routes, holdEmail: () => { holdEmail = true; }, finishEmail: () => emailReply?.(), failRead: (e: any) => { readRefusal = e; }, server: (id: number, change: any) => { Object.assign(rows[id - 1], change); revision = 'revision-two'; }, fail: (e: any) => { refusal = e; }, delay: () => { holdNext = true; }, resolve: () => { delayed?.(response(heldDate)); delayed = null; } };
 }
 test('office controls mark all, absent with a note, save and correct with attribution and allergy', async () => {
     const s = await screen(); try {
@@ -187,5 +187,28 @@ test('office keeps unsaved choices visible if the conflict reload fails', async 
         click(s.button('Save register')); await flush();
         assert.equal(s.all(n => n.props.id === 'attendance-note-1')[0]?.value, 'Unsaved while offline');
         assert.match(s.text(), /This register was changed/);
+    } finally { s.unmount(); }
+});
+
+test('absence-email controls stay hidden off and the enabled day log saves the school-local time', async () => {
+    const off = await screen(); try { assert.ok(!off.text().includes('Absence emails')); } finally { off.unmount(); }
+    const s = await screen(undefined, { send_time: '10:00', rows: [{ id: 5, guardian_email: 'guardian@example.invalid', child: 'Sample', classes: [{ id: 3, name: 'Practice Class' }], sent_at: '2026-10-19T14:00:00Z', status: 'sent' }, { id: 6, guardian_email: 'second@example.invalid', child: 'Sample', classes: [{ id: 3, name: 'Practice Class' }], sent_at: null, status: 'failed' }] });
+    try {
+        for (const word of ['Absence emails', 'guardian@example.invalid', 'Practice Class', '10:00 AM', 'sent', 'failed']) assert.ok(s.text().includes(word), word);
+        const input = s.all((n: any) => n.tag === 'input' && n.props.type === 'time')[0]; type(input, '10:35'); await flush();
+        click(s.button('Save email time')); await flush();
+        assert.deepEqual(s.writes.at(-1).body, { send_time: '10:35' });
+        assert.equal(s.writes.at(-1).url, '/api/admin/masjids/1/attendance/absence-emails/settings');
+        assert.ok(s.reads.some(url => url.includes('registers?date=2026-10-19')));
+    } finally { s.unmount(); }
+});
+
+test('changing the log day stays disabled while the school email time is being saved', async () => {
+    const s = await screen(undefined, { send_time: '10:00', rows: [] });
+    try {
+        s.holdEmail(); click(s.button('Save email time')); await flush();
+        const day = s.all((n: any) => n.tag === 'input' && n.props.type === 'date')[0];
+        assert.equal(day.disabled, true); assert.equal(s.button('Reload').disabled, true);
+        s.finishEmail(); await flush(); assert.equal(day.disabled, false);
     } finally { s.unmount(); }
 });

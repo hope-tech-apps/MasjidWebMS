@@ -233,6 +233,15 @@ export const ES: Record<string, string> = {
     report_download_failed: "No se pudo descargar ese boletín en este momento.",
 
     // --------------------------------------- marks (the gradebook)
+    // MACHINE-DRAFTED 2026-10-14 — attendance wording needs a fluent-reader check.
+    tab_attendance: "Asistencia",
+    attendance_mark_present: "Presente",
+    attendance_mark_late: "Tarde",
+    attendance_mark_absent: "Ausente",
+    attendance_mark_excused: "Ausencia justificada",
+    attendance_year: "Este año escolar",
+    attendance_empty: "Todavía no se ha registrado la asistencia.",
+    attendance_error: "No se pudo cargar la asistencia. Inténtalo de nuevo.",
     tab_grades: "Notas",
     marks_empty: "Todavía no hay notas. Cuando el maestro registre una, la verá aquí.",
     marks_error: "Algunas notas no se pudieron cargar en este momento.",

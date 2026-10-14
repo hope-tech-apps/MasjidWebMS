@@ -922,3 +922,6 @@ Schedule::command('guides:ask-prune')->dailyAt('03:47')->withoutOverlapping();
 Schedule::command('duties:remind')->hourly()->withoutOverlapping(50);
 
 Schedule::command('push:sweep-outcomes')->everyFiveMinutes()->withoutOverlapping();
+
+// Unique guardian/day claims protect delivery even if scheduler locks expire.
+Schedule::command('attendance:absence-emails')->everyFiveMinutes()->withoutOverlapping(4);

@@ -99,6 +99,11 @@
                         {{ t('tab_grades') }}
                     </button>
                 </li>
+                <li v-if="group.children.length" class="nav-item">
+                    <button class="nav-link" :class="{ active: tab === 'attendance' }" @click="tab = 'attendance'">
+                        {{ t('tab_attendance') }}
+                    </button>
+                </li>
                 <!-- "Handouts", not "Resources" — that is the word a parent uses. -->
                 <li class="nav-item">
                     <button class="nav-link" :class="{ active: tab === 'handouts' }" @click="tab = 'handouts'">
@@ -108,7 +113,11 @@
             </ul>
 
             <!-- -------------------------------------------------- handouts -->
-            <section v-if="tab === 'handouts'">
+            <section v-if="tab === 'attendance'">
+                <FamilyAttendance :masjid-id="masjidId" :group-id="groupId" :children="group.children" />
+            </section>
+
+            <section v-else-if="tab === 'handouts'">
                 <p v-if="handoutsError" class="text-danger small">{{ tMessage(handoutsError) }}</p>
                 <p v-else-if="!handouts.length" class="text-muted small mb-0">{{ t('handouts_empty') }}</p>
                 <div v-else class="list-group">
@@ -1048,6 +1057,7 @@
     </template>
 
 <script setup lang="ts">
+import FamilyAttendance from '@/views/family/FamilyAttendance.vue';
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
 import { hifzDayLabel } from '@/core/helpers/hifzDay';

@@ -291,6 +291,16 @@ return [
         'catalogue_when_off' => false,
     ],
 
+    'attendance_absence_emails' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Same-day absence emails',
+        'description' => 'Email confirmed guardians once on an open school day about children still marked absent.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'family_duty_rota' => [
         'kind' => 'grant',
         'group' => 'school',

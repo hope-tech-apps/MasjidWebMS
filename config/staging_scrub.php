@@ -97,6 +97,8 @@ return [
     */
     'drop_rows' => [
         'roster_import_mappings' => 'School-owned header signature and column choices; staging starts with its own mappings.',
+        'attendance_absence_mail_children' => 'Frozen child names and classes from attendance emails; delete before the parent mail log.',
+        'attendance_absence_mails' => 'Guardian email addresses and attendance delivery history.',
         'member_question_helps' => 'Member-selected help choices are private login data.',
         'member_question_answers' => 'Optional adult networking answers, including encrypted free text.',
         'duty_rota_mails' => 'Clear private family duty email history and pending delivery records.',

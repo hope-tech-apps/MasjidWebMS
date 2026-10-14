@@ -233,6 +233,15 @@ export const UR: Record<string, string> = {
     report_download_failed: "یہ رپورٹ ابھی ڈاؤن لوڈ نہیں ہو سکی۔",
 
     // --------------------------------------- marks (the gradebook)
+    // MACHINE-DRAFTED 2026-10-14 — attendance wording needs a fluent-reader check.
+    tab_attendance: "حاضری",
+    attendance_mark_present: "حاضر",
+    attendance_mark_late: "دیر سے آئے",
+    attendance_mark_absent: "غیر حاضر",
+    attendance_mark_excused: "معذرت کے ساتھ غیر حاضر",
+    attendance_year: "یہ تعلیمی سال",
+    attendance_empty: "ابھی تک حاضری درج نہیں کی گئی۔",
+    attendance_error: "حاضری لوڈ نہیں ہو سکی۔ دوبارہ کوشش کریں۔",
     tab_grades: "نمبر",
     marks_empty: "ابھی کوئی نمبر نہیں۔ جب آپ کے استاد نمبر درج کریں گے تو آپ انہیں یہاں دیکھیں گے۔",
     marks_error: "کچھ نمبر ابھی لوڈ نہیں ہو سکے۔",

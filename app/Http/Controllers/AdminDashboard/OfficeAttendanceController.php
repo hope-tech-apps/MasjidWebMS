@@ -4,10 +4,10 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Teacher\AttendanceController;
-use App\Http\Requests\AdminDashboard\SaveOfficeAttendanceRequest;
-use App\Models\{AttendanceRecord, Group, Masjid};
+use App\Http\Requests\AdminDashboard\{SaveAbsenceEmailTimeRequest, SaveOfficeAttendanceRequest};
+use App\Models\{AttendanceRecord, Group, Masjid, MasjidPointsSetting};
 use App\Services\Schools\AttendanceRegister;
-use App\Support\{SchoolCalendarReaders, StudentAllergies};
+use App\Support\{AttendanceAbsenceSettings, SchoolCalendarReaders, StudentAllergies};
 use Illuminate\Http\{JsonResponse, Request};
 use Illuminate\Validation\ValidationException;
 
@@ -54,12 +54,24 @@ class OfficeAttendanceController extends Controller
 
     public function overview(Request $request, $masjid_id): JsonResponse
     {
-        abort_unless(Masjid::findOrFail($masjid_id)->isSchool(), 404);
+        $school = Masjid::findOrFail($masjid_id);
+        abort_unless($school->isSchool(), 404);
         $request->validate(['date' => ['sometimes', 'date_format:Y-m-d']]);
         $date = $request->query('date', SchoolCalendarReaders::for((int) $masjid_id)->today());
         return response()->json(['status' => 'success', 'data' => $this->register->officeDay((int) $masjid_id, $date) + [
             'classes' => $this->register->overview((int) $masjid_id, $date),
+            ...(AttendanceAbsenceSettings::enabled($school) ? ['absence_emails' => app(\App\Services\Schools\AttendanceAbsenceEmails::class)->office($school, $date)] : []),
         ]]);
+    }
+
+    /** Office-only time control, separate from the SuperAdmin grant. Disabled schools expose no write. */
+    public function saveAbsenceSettings(SaveAbsenceEmailTimeRequest $request, $masjid_id): JsonResponse
+    {
+        $school = Masjid::findOrFail($masjid_id);
+        abort_unless(AttendanceAbsenceSettings::enabled($school), 404);
+        $values = $request->validated();
+        MasjidPointsSetting::updateOrCreate(['masjid_id' => $school->id], ['attendance_absence_send_time' => $values['send_time']]);
+        return response()->json(['status' => 'success', 'data' => ['send_time' => AttendanceAbsenceSettings::time((int) $school->id)]]);
     }
 
     private function classroom($id): Group

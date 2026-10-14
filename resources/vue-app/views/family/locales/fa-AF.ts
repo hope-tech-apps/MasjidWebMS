@@ -233,6 +233,15 @@ export const FA_AF: Record<string, string> = {
     report_download_failed: "این نتیجه‌نامه فعلاً دانلود نشد.",
 
     // --------------------------------------- marks (the gradebook)
+    // MACHINE-DRAFTED 2026-10-14 — attendance wording needs a fluent-reader check.
+    tab_attendance: "حاضری",
+    attendance_mark_present: "حاضر",
+    attendance_mark_late: "ناوقت",
+    attendance_mark_absent: "غایب",
+    attendance_mark_excused: "غیابت موجه",
+    attendance_year: "این سال تعلیمی",
+    attendance_empty: "هنوز حاضری ثبت نشده است.",
+    attendance_error: "حاضری بارگیری نشد. لطفاً دوباره کوشش کنید.",
     tab_grades: "نمره‌ها",
     marks_empty: "هنوز نمره‌ای نیست. وقتی معلم شما نمره‌ای ثبت کند، آن را اینجا می‌بینید.",
     marks_error: "بعضی نمره‌ها فعلاً بارگذاری نشدند.",

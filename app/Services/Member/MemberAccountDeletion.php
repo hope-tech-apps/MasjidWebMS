@@ -120,6 +120,9 @@ class MemberAccountDeletion
         // Participant, leader AND guardian edges: `guardian_of_contact_id` is the
         // ward, and a ward's record is office data about them too.
         'group_memberships' => ['contact_id', 'guardian_of_contact_id'],
+        // The office keeps delivery history when a member removes their login.
+        'attendance_absence_mails' => ['guardian_contact_id'],
+        'attendance_absence_mail_children' => ['guardian_contact_id', 'student_contact_id'],
         'group_messages' => ['author_contact_id'],
         // A parent's 🤲/👍/💯/❓ in a class conversation — part of that
         // conversation's record, classified like the read bookmark beside it.
@@ -678,6 +681,11 @@ class MemberAccountDeletion
             if (in_array($table, CartTables::NAMES, true) && ! CartTables::existsOrFail($table)) {
                 continue;
             }
+
+            // These optional logs do not exist in the code-before-migration deployment window.
+            // Only a genuinely missing table skips: a failed schema check must stop erasure.
+            if (in_array($table, ['attendance_absence_mails', 'attendance_absence_mail_children'], true)
+                && ! \Illuminate\Support\Facades\Schema::hasTable($table)) continue;
 
             $held = DB::table($table)
                 ->where(function ($query) use ($columns, $contact) {
