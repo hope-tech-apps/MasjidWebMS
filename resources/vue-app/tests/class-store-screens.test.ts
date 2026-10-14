@@ -28,7 +28,7 @@ const familyBucks = read('views/family/FamilyBucks.vue');
 const officeView = read('views/dashboard/ClassStoreView.vue');
 
 test('the teacher sees the Class Store tab only when the class payload says the store is on', () => {
-    assert.match(teacherTab, /shownMoreTabs = computed\(\(\) => moreTabs\.filter\(\(t\) => t\.key !== 'store' \|\| group\.value\?\.class_store === true\)\)/);
+    assert.match(teacherTab, /shownMoreTabs = computed\(\(\) => moreTabs\.filter\(\(t\) => \(t\.key !== 'store' \|\| group\.value\?\.class_store === true\) && \(t\.key !== 'criteria' \|\| group\.value\?\.report_card_criteria_enabled === true\)\)\)/);
     assert.match(teacherTab, /v-for="t in shownMoreTabs"/, 'the menu draws the filtered list, not the whole one');
     assert.match(teacherTab, /activeTab === 'store' && group\.class_store === true/, 'and the section itself is guarded, so a stale tab key opens nothing');
 });

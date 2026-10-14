@@ -37,6 +37,7 @@ async function mountForm(file: string, organization = 'Masjid', confirmed = true
         privacy_policy_url: 'https://www.example.org/privacy',
         primary_color: '#01B151', secondary_color: '#0B7A3B', accent_color: '#F2B705', background_color: '#FFFFFF' };
     const screen = await mountSfc(`views/dashboard/${file}.vue`, {}, {
+        '@/components/classes/ReportCardCriteriaEditor.vue': { default: { render: () => null } },
         '@/components/classes/LetterGradeSettings.vue': { default: { render: () => null } },
         '@/components/form/ColumnInputContainer.vue': { default: slotOnly },
         '@/components/form/LoadingButton.vue': { default: { setup(_: any, { slots }: any) { return () => vue.h('button', slots.default?.()); } } },

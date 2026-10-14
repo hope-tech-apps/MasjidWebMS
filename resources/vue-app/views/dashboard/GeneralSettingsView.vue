@@ -106,10 +106,12 @@
             </button>
         </div>
     </Form>
+    <ReportCardCriteriaEditor v-if="masjidStore.masjid?.capabilities?.report_card_criteria === true" :school-id="masjidStore.masjid.id" />
     <LetterGradeSettings v-if="masjidStore.masjid?.capabilities?.letter_grades === true" :school-id="masjidStore.masjid.id" />
 </template>
 
 <script setup lang="ts">
+import ReportCardCriteriaEditor from '@/components/classes/ReportCardCriteriaEditor.vue';
 import LetterGradeSettings from '@/components/classes/LetterGradeSettings.vue';
 import { ref, computed, onBeforeMount } from 'vue';
 import { Form, Field, ErrorMessage } from 'vee-validate';

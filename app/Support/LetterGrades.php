@@ -171,7 +171,7 @@ final class LetterGrades
         $school = self::school((int) $card->masjid_id);
         $group = Group::findOrFail($card->group_id);
         $limits = SubjectFence::limitsForWithClassSubjects(Auth::user(), (int) $group->id);
-        $marks = $card->marks()->where('kind', ReportCardMark::KIND_TERM_GRADE)->orderBy('position')->get();
+        $marks = ReportCardCriteria::marks($card)->where('kind', ReportCardMark::KIND_TERM_GRADE);
         $subjects = ClassSubject::where('masjid_id', $card->masjid_id)->where('group_id', $card->group_id)->get()->keyBy('id');
         $term = self::term($card);
         $summary = ! $card->isPublished() && $term
@@ -293,7 +293,7 @@ final class LetterGrades
     {
         if (! self::readable($card, $school)) return [];
         if (! $card->isPublished()) return array_map(fn ($row) => ['subject'=>$row['subject'], 'final_letter'=>$row['final_letter'], 'percentage'=>$row['override_letter'] === null || $row['override_letter'] === $row['calculated_letter'] ? $row['calculated_percentage'] : null, 'comment'=>$row['comment']], self::staff($card));
-        return $card->marks()->where('kind', ReportCardMark::KIND_TERM_GRADE)->whereNotNull('letter_snapshot_at')->orderBy('position')->get()->map(fn ($mark) => [
+        return ReportCardCriteria::marks($card)->where('kind', ReportCardMark::KIND_TERM_GRADE)->whereNotNull('letter_snapshot_at')->values()->map(fn ($mark) => [
             'subject'=>$mark->subject, 'final_letter'=>$mark->final_letter, 'percentage'=>$mark->final_percentage, 'comment'=>$mark->final_comment,
         ])->all();
     }

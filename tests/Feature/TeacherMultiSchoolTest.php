@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Support\TenantContext;
+
 use App\Http\Middleware\EchoResolvedTenant;
 use App\Http\Middleware\ResolveMasjidTenant;
 use App\Models\BehaviorSkill;
@@ -414,8 +416,9 @@ class TeacherMultiSchoolTest extends TestCase
             \App\Support\ClassSubjectInitializer::run($school, false, true);
             // Subject notes and marks are off by default too; swept for real, like the store.
             $on = $school->fresh();
-            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true,
+            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['report_card_criteria' => true, 'class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true,
                 'lesson_plan_photo_fill' => true, 'lesson_plan_photo_fill_teacher_ids' => [(int) $this->teacher->id]])])->save();
+            app(TenantContext::class)->runWithout(fn () => \App\Support\ReportCardCriteria::editor($on->fresh(), $this->teacher));
             \App\Models\MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $school->id, 'paper_bucks_enabled' => true]);
         }
 
@@ -790,6 +793,13 @@ class TeacherMultiSchoolTest extends TestCase
             ],
 
             // -- report cards. The period is named so the fixture card is the one prepared.
+            'PUT /groups/{group_id}/report-card-criteria' => [
+                'body' => fn (TeacherRealmWorld $w) => app(TenantContext::class)->runWithout(function () use ($w) {
+                    $editor = \App\Support\ReportCardCriteria::editor($w->school->fresh(), $this->teacher);
+                    return ['bands' => $editor['bands'], 'revision' => $editor['revision'], 'next_term' => false];
+                }),
+                'refuse' => $bodyRefusal,
+            ],
             'PUT /groups/{group_id}/members/{membership_id}/report-card' => [
                 'query' => $card,
                 // A foreign MARK id in the body is skipped by saveMarks, not refused: a

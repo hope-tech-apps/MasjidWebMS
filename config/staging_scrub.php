@@ -673,6 +673,15 @@ return [
     | Populated below by `php artisan test --filter=StagingScrubCoverage`.
     */
     'reviewed_keep' => [
+        'report_cards.criteria_band_id' => 'Reference to school curriculum, with no child text.',
+        'report_card_bands.name' => 'School grade-band curriculum label, not a person.',
+        'report_card_criteria.subject' => 'School curriculum subject heading, not a person.',
+        'report_card_criteria.text' => 'School curriculum criteria, not observations about a child.',
+        'report_card_criteria_drafts.bands' => 'School curriculum ranges, headings and criteria only; no student data.',
+        'report_card_criteria_drafts.actor_user_id' => 'Staff key; the staff row is scrubbed separately.',
+        'report_card_criteria_histories.actor_user_id' => 'Staff key; the staff row is scrubbed separately.',
+        'report_card_criteria_histories.action' => 'Fixed action label chosen by the server, not staff-entered text.',
+
         'masjids.letter_grade_settings' => 'School policy only: letter scale, starting grade and boolean. No student text.',
         'report_card_marks.class_subject_id' => 'Reference to the existing class subject; no identifying text.',
         'report_card_marks.calculated_percentage' => 'Academic numeric outcome; retained as existing levels are.',

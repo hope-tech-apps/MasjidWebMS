@@ -535,3 +535,14 @@ The new 30/minute queue ceiling is a conservative starting value, not a measured
 ## Letter grades, 2026-10-14
 
 The rollout grant permits the office's letter-grade settings; the office must enable letters after adding dated terms and choosing the starting grade. Points without class weights use the gradebook's existing pooled percentage. Thresholds apply to the gradebook's displayed percentage (one decimal), preserving gradebook parity; the scale lookup itself compares without rounding.
+
+## 2026-10-14 — Report-card criteria
+
+- Without configured school-year dates, use the report-card selector's existing
+  August rollover. With year dates but no next year, the next start repeats the
+  current year's start one year later. Dated-term schools must configure their
+  next term before a deferred draft can be saved; the editor explains the refusal.
+- Grade ranges cover the full supported Pre-K through 12th order, including grades
+  not currently enrolled, so a later enrolment cannot introduce a range gap.
+- An unrestricted teacher in a band may edit learning behaviours; a subject-limited
+  teacher may edit only assigned academic subjects. Admins can edit both.

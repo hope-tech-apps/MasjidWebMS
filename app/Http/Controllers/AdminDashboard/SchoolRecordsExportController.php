@@ -443,7 +443,7 @@ class SchoolRecordsExportController extends Controller
             'Level', 'Level label', 'Comment']);
 
         Csv::each(
-            ReportCardMark::query(),
+            \App\Support\ReportCardCriteria::markQuery(),
             fn (ReportCardMark $m) => Csv::row($out, [
                 Csv::num($m->id), Csv::num($m->report_card_id), Csv::text($m->kind),
                 Csv::text($m->subject), Csv::text($m->criterion),

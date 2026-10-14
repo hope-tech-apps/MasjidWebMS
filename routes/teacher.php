@@ -110,7 +110,7 @@ Route::prefix('teacher')
                 // The teacher's own classes (names-only), and the behaviour-skill
                 // vocabulary needed to fill the award dropdown. Neither is
                 // group-scoped, so `teacher.leads` does not apply.
-                Route::get('/groups', [TeacherGroupsController::class, 'index'])->middleware(\App\Http\Middleware\AppendClassLocation::class);
+                Route::get('/groups', [TeacherGroupsController::class, 'index'])->middleware([\App\Http\Middleware\AppendClassLocation::class, \App\Http\Middleware\AppendReportCardCriteria::class]);
                 Route::get('/avatars', [ContactAvatarController::class, 'catalogue']);
                 Route::get('/behavior-skills', [BehaviorSkillsController::class, 'index']);
 
@@ -157,7 +157,7 @@ Route::prefix('teacher')
                     ->middleware('teacher.leads')
                     ->group(function () {
 
-                        Route::get('/', [TeacherGroupsController::class, 'show'])->middleware(\App\Http\Middleware\AppendClassLocation::class);
+                        Route::get('/', [TeacherGroupsController::class, 'show'])->middleware([\App\Http\Middleware\AppendClassLocation::class, \App\Http\Middleware\AppendReportCardCriteria::class]);
 
                         // ARABIC — the letters tracker and the daily Arabic notes.
                         // `teacher.teaches:arabic` refuses a teacher whose
@@ -309,6 +309,10 @@ Route::prefix('teacher')
                         //
                         // Publishing is its own verb, separate from saving, because
                         // it is the moment a document becomes visible to a family.
+                        Route::middleware('capability:report_card_criteria')->group(function () {
+                            Route::get('/report-card-criteria', [\App\Http\Controllers\AdminDashboard\ReportCardCriteriaController::class, 'show']);
+                            Route::put('/report-card-criteria', [\App\Http\Controllers\AdminDashboard\ReportCardCriteriaController::class, 'update']);
+                        });
                         Route::get('/report-cards', [ReportCardController::class, 'index']);
                         Route::get('/members/{membership_id}/report-card', [ReportCardController::class, 'show']);
 

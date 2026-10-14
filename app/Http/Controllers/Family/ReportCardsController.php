@@ -82,7 +82,7 @@ class ReportCardsController extends FamilyController
             ->published()
             ->findOrFail($report_card_id);
 
-        $marks = $card->marks()->orderBy('position')->get();
+        $marks = \App\Support\ReportCardCriteria::marks($card);
 
         return response()->json([
             'status' => 'success',

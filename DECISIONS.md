@@ -9768,3 +9768,31 @@ Scale and starting grade are one atomic, hidden JSON school configuration: no ro
 Term records identify the student by contact rather than roster membership, so moving a student retains one student/subject/term record without introducing another roster foreign key. Publication writes the record and the card snapshot together; take-back hides the card and leaves the last issued term record until re-send replaces it.
 
 The brief calls the dated-terms table `school_calendar_terms`; code and existing foreign keys name it `school_terms`. `school_calendar_terms` is the existing grant. Reuse follows the code. Semesters and trimesters use their dated term positions as well as quarters; the legacy quarter matcher stays unchanged for schools without letters.
+
+## 2026-10-14 — Editable report-card criteria per grade band (default off)
+
+Owner decisions: school admins and teachers edit criteria per grade band (2026-09-30,
+reconfirmed 2026-10-14); publication freezes the band for the term. This supersedes
+the former SuperAdmin-only policy for criteria.
+
+1. `report_card_criteria` is a school-only rollout grant, default false for every
+   organisation, omitted from capabilities, panel history and raw overrides while off.
+   OFF uses the existing template and card serialization without new fields.
+2. Bands use GradeLevel's ordered Pre-K through 12th ranges; defaults are Pre-K,
+   Kindergarten and Grade 1 and up, with the existing learning behaviours in each.
+   Ranges cover the complete grade order without gaps or overlaps. Unknown/blank
+   student grades use the explicitly selected default band with a teacher notice.
+3. Ordered subjects/criteria and learning behaviours belong to each band. Existing
+   card subject names and current class-subject names are valid. Core-only schools
+   keep the three existing core subjects; learning behaviours remain separate.
+4. Admins edit all bands; teachers edit only subjects assigned through SubjectFence
+   in classes containing students in that band. Learning behaviours belong to no subject and
+   cover every class in a band, so only admins edit them (teachers never do). Every saved revision records staff and time.
+5. Publication writes a persistent band/period lock, including progress reports;
+   unpublishing does not remove it. Dated school terms define periods when enabled;
+   otherwise the school year does. Deferred full-configuration revisions apply on
+   the next dated term/year start, under the same school mutex as publication.
+6. Tenant-owned bands, ordered criterion rows, dated drafts, history and publication
+   locks have primary keys. Report cards store a hidden band reference, but their
+   subject/criterion mark snapshots are never rewritten by criteria edits. Existing
+   in-progress cards retain their rows; new cards use the current reader.

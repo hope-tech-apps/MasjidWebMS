@@ -1382,6 +1382,12 @@ Route::prefix('admin')->group(function () {
                         Route::get('/members/{membership_id}/grades', 'forMember')->middleware('permission:view contacts');
                     });
 
+                Route::prefix('{masjid_id}/report-card-criteria')->middleware(['capability:report_card_criteria', 'permission:manage contacts'])
+                    ->controller(\App\Http\Controllers\AdminDashboard\ReportCardCriteriaController::class)->group(function () {
+                        Route::get('/', 'show');
+                        Route::put('/', 'update');
+                    });
+
                 Route::prefix('{masjid_id}/letter-grade-settings')->middleware(['capability:letter_grades', 'permission:manage contacts'])
                     ->controller(\App\Http\Controllers\AdminDashboard\LetterGradeSettingsController::class)->group(function () {
                         Route::get('/', 'show');

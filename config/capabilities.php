@@ -607,6 +607,16 @@ return [
         'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
     ],
 
+    'report_card_criteria' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Report-card criteria',
+        'description' => 'School staff edit report-card criteria by grade band, frozen after publication.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'letter_grades' => [
         'kind' => 'grant',
         'group' => 'school',

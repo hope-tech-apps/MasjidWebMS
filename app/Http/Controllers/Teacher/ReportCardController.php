@@ -311,7 +311,7 @@ class ReportCardController extends TeacherController
      */
     private function card(ReportCard $card, GroupMembership $membership): array
     {
-        $marks = $card->marks()->orderBy('position')->get();
+        $marks = \App\Support\ReportCardCriteria::marks($card);
 
         $reference = \App\Support\ClassSubjectMode::reportSummaryEnabled($card->masjid_id)
             ? \App\Support\ReportCardSubjectWork::forCard($card, $marks, request()->user()) : [];
@@ -337,6 +337,7 @@ class ReportCardController extends TeacherController
             'school_year' => $card->school_year,
             'term' => (int) $card->term,
             'period_label' => \App\Support\LetterGrades::periodLabel($card, $marks, $school) ?? ($this->datedTermsEnabled((int) $card->masjid_id) ? $this->datedPeriodLabel($card) : $card->periodLabel()),
+            ...(\App\Support\ReportCardCriteria::enabled($school) ? ['criteria_notice'=>\App\Support\ReportCardCriteria::notice($card, $school)] : []),
             'grade_label' => $card->grade_label,
             'teacher_comment' => $card->teacher_comment,
             'published' => $card->isPublished(),

@@ -7,7 +7,7 @@ use App\Models\GroupMembership;
 use App\Models\ReportCard;
 use App\Models\ReportCardMark;
 use App\Support\PerformanceLevel;
-use App\Support\ReportCardTemplate;
+use App\Support\ReportCardCriteria;
 use App\Support\SchoolSettings;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -44,6 +44,8 @@ use Illuminate\Support\Facades\DB;
  */
 class ReportCardService
 {
+    private bool $preparingCriteria = false;
+    private bool $publishingCriteria = false;
     private bool $preparingLetters = false;
     private bool $publishingLetters = false;
 
@@ -64,6 +66,14 @@ class ReportCardService
         int $term,
         ?\Closure $save = null,
     ): ReportCard {
+        if (! $this->preparingCriteria && ReportCardCriteria::enabled(\App\Support\LetterGrades::school((int) $membership->masjid_id))) {
+            return DB::transaction(function () use ($membership, $type, $schoolYear, $term, $save) {
+                \App\Models\Masjid::whereKey($membership->masjid_id)->lockForUpdate()->firstOrFail();
+                $this->preparingCriteria = true;
+                try { return $this->prepare($membership, $type, $schoolYear, $term, $save); }
+                finally { $this->preparingCriteria = false; }
+            });
+        }
         if (! $this->preparingLetters && $type === ReportCard::TYPE_REPORT_CARD && \App\Support\LetterGrades::eligible(\App\Support\LetterGrades::school((int) $membership->masjid_id), $membership->grade_label)) {
             return $this->prepareWithLetters($membership, $type, $schoolYear, $term, $save);
         }
@@ -167,7 +177,8 @@ class ReportCardService
     }
 
     /**
-     * Create any template row this card is missing, and touch nothing else.
+     * Create any legacy template row this card is missing, and touch nothing else.
+     * With editable criteria, an existing card keeps its complete saved row set.
      *
      * `firstOrCreate` per row rather than a delete-and-rebuild: a teacher may be
      * half way through a card when the school adds a criterion, and rebuilding
@@ -188,17 +199,21 @@ class ReportCardService
         // only. Read on every prepare, like the template itself, so a card that
         // already has other rows keeps them — see the docblock above.
         $org = SchoolSettings::org($card->masjid_id);
-        $coreOnly = SchoolSettings::reportCardCoreOnly($org);
         if ($saving && SchoolSettings::classSubjectReportSummary($org)) {
             \App\Models\Masjid::whereKey($card->masjid_id)->lockForUpdate()->firstOrFail();
             \App\Models\Group::whereKey($card->group_id)->lockForUpdate()->firstOrFail();
         }
 
-        foreach (ReportCardTemplate::rowsForGrade($card->grade_label, $coreOnly) as $row) {
-            $this->ensureRow($card, ReportCardMark::KIND_ACADEMIC, $row['subject'], $row['criterion'], $position++);
+        $template = ReportCardCriteria::template($org, $card->grade_label);
+        if (ReportCardCriteria::enabled($org)) {
+            // A started card is a document too: curriculum edits never rewrite its mark rows.
+            if ($card->marks()->exists()) return;
+            $card->forceFill(['criteria_band_id'=>$template['band_id']])->save();
         }
-
-        foreach (ReportCardTemplate::LEARNING_BEHAVIOURS as $criterion) {
+        foreach ($template['subjects'] as $subject => $criteria) {
+            foreach ($criteria as $criterion) $this->ensureRow($card, ReportCardMark::KIND_ACADEMIC, $subject, $criterion, $position++);
+        }
+        foreach ($template['behaviours'] as $criterion) {
             $this->ensureRow($card, ReportCardMark::KIND_BEHAVIOUR, 'Learning Behaviours', $criterion, $position++);
         }
     }
@@ -328,6 +343,19 @@ class ReportCardService
      */
     public function publish(ReportCard $card, ?Carbon $from = null, ?Carbon $to = null): ReportCard
     {
+        if (! $this->publishingCriteria && ReportCardCriteria::enabled(\App\Support\LetterGrades::school((int) $card->masjid_id))) {
+            $result = DB::transaction(function () use ($card, $from, $to) {
+                $school = \App\Models\Masjid::whereKey($card->masjid_id)->lockForUpdate()->firstOrFail();
+                \App\Models\Group::whereKey($card->group_id)->lockForUpdate()->firstOrFail();
+                $current = ReportCard::whereKey($card->id)->lockForUpdate()->firstOrFail();
+                ReportCardCriteria::freeze($school, $current);
+                $this->publishingCriteria = true;
+                try { return $this->publish($current, $from, $to); }
+                finally { $this->publishingCriteria = false; }
+            });
+            $card->setRawAttributes($result->getAttributes(), true);
+            return $card;
+        }
         if (! $this->publishingLetters && $card->type === ReportCard::TYPE_REPORT_CARD && \App\Support\LetterGrades::enabledFor((int) $card->masjid_id)) {
             $result = DB::transaction(function () use ($card, $from, $to) {
                 $org = \App\Models\Masjid::whereKey($card->masjid_id)->lockForUpdate()->firstOrFail();

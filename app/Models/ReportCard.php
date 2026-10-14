@@ -34,7 +34,7 @@ class ReportCard extends Model
     public const TERMS = [1, 2, 3, 4];
 
     // Internal link metadata never enters existing card serialization.
-    protected $hidden = ['school_term_id'];
+    protected $hidden = ['school_term_id', 'criteria_band_id'];
     protected $casts = ['school_term_id' => 'integer'];
 
     protected $fillable = [

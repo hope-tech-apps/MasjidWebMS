@@ -2343,6 +2343,7 @@
             </section>
 
             <!-- ====================================================== REPORTS -->
+            <ReportCardCriteriaEditor v-else-if="activeTab === 'criteria' && group?.report_card_criteria_enabled" :school-id="masjidId" :group-id="Number(groupId)" />
             <section v-else-if="activeTab === 'reports'">
 
                 <!-- ------------------------------------------- the whole class -->
@@ -2484,6 +2485,7 @@
                          readable at the moment a teacher is choosing between a 2 and a 3. -->
                     <PerformanceLevelHelp :levels="levelKey" />
 
+                    <p v-if="openCard.criteria_notice" class="small text-muted">{{ openCard.criteria_notice }}</p>
                     <p v-if="openCard.letter_grade_notice" class="small text-muted">{{ openCard.letter_grade_notice }}</p>
                     <ReportLetterGrade v-for="grade in openCard.letter_grades ?? []" :key="grade.id" :grade="grade" :draft="letterDraft[grade.id]" :scale="openCard.letter_scale" :published="openCard.published" @edit="editLetter" />
                     <div v-for="sub in openCard.subjects" :key="sub.subject" class="card border-0 shadow-sm mb-2">
@@ -2662,6 +2664,7 @@ import AllergyBadge from '@/components/classes/AllergyBadge.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
 import SubjectWorkPage from './subject/SubjectWorkPage.vue';
+import ReportCardCriteriaEditor from '@/components/classes/ReportCardCriteriaEditor.vue';
 import ReportLetterGrade from '@/components/classes/ReportLetterGrade.vue';
 import ReportSubjectSummary from '@/components/classes/ReportSubjectSummary.vue';
 import PerformanceLevelHelp from '@/components/classes/PerformanceLevelHelp.vue';
@@ -2712,7 +2715,7 @@ import { useToolResponseGuard, useToolSaveContext } from '@/composables/useToolR
 import Swal from 'sweetalert2';
 
 type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages'
-    | 'lessons' | 'grades' | 'files' | 'reports' | 'store' | 'subject';
+    | 'lessons' | 'grades' | 'files' | 'reports' | 'criteria' | 'store' | 'subject';
 
 const route = useRoute();
 const router = useRouter();
@@ -2757,13 +2760,14 @@ const moreTabs: { key: TabKey; label: string; icon: string }[] = [
     // NOT bi-clipboard-data: it sits directly under Grades' bi-clipboard-check
     // in the same dropdown, and two clipboards read as one entry.
     { key: 'reports', label: 'Reports', icon: 'bi-file-earmark-bar-graph' },
+    { key: 'criteria', label: 'Criteria', icon: 'bi-list-check' },
     { key: 'files', label: 'Files', icon: 'bi-folder2-open' },
     // Manara Bucks (T-003.4). Listed here but SHOWN only for a school that has the store on:
     // the class payload carries `class_store: true` then and no key at all otherwise.
     { key: 'store', label: 'Class Store', icon: 'bi-shop' },
 ];
 
-const shownMoreTabs = computed(() => moreTabs.filter((t) => t.key !== 'store' || group.value?.class_store === true));
+const shownMoreTabs = computed(() => moreTabs.filter((t) => (t.key !== 'store' || group.value?.class_store === true) && (t.key !== 'criteria' || group.value?.report_card_criteria_enabled === true)));
 
 const activeMoreTab = computed(() => moreTabs.find((t) => t.key === activeTab.value) ?? null);
 

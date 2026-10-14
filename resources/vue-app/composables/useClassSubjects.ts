@@ -71,7 +71,7 @@ export function useClassSubjects<T extends string>(options: {
         { label: 'Subjects', items: visibleSubjects.value.map(s => ({ key: `subject:${s.id}`, label: s.name, query: { subject: String(s.id) } })) },
         { label: 'Families', items: [line('story', 'Class Story'), line(options.realm === 'teacher' ? 'messages' : 'threads', 'Messages')] },
         { label: 'Planning and marks', items: [line('lessons', 'Lesson Plans'), line('grades', 'Grades'),
-            ...(options.realm === 'teacher' || (options.group.value?.class_subject_report_summary_enabled === true || options.group.value?.letter_grades_enabled === true) ? [line('reports', 'Reports')] : []), line('files', 'Files')] },
+            ...(options.realm === 'teacher' || (options.group.value?.class_subject_report_summary_enabled === true || options.group.value?.letter_grades_enabled === true) ? [line('reports', 'Reports')] : []), ...(options.realm === 'teacher' && options.group.value?.report_card_criteria_enabled === true ? [line('criteria', 'Criteria')] : []), line('files', 'Files')] },
     ]);
     const subject = ref<ClassSubject | null>(null);
     const notice = ref('');

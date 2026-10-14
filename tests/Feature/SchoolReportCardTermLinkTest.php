@@ -227,7 +227,7 @@ class SchoolReportCardTermLinkTest extends TestCase
         }
         $queries=[];DB::listen(function ($q) use (&$queries) { $queries[]=$q->sql; });
         $response=$this->getJson('/api/teacher/masjids/'.$this->school->id.'/groups/'.$this->member->group_id.'/members/'.$this->member->id.'/report-card'.$query)->assertOk();
-        $rows=DB::table('report_cards')->orderBy('id')->get()->map(function ($row) use ($query,$term) { $row=(array)$row;if (!array_key_exists('school_term_id',$row)) $row['school_term_id']=str_contains($query,'dormant')?$term->id:null;return $row; })->all();
+        $rows=DB::table('report_cards')->orderBy('id')->get()->map(function ($row) use ($query,$term) { $row=(array)$row;$this->assertNull($row['criteria_band_id']);unset($row['criteria_band_id']);if (!array_key_exists('school_term_id',$row)) $row['school_term_id']=str_contains($query,'dormant')?$term->id:null;return $row; })->all();
         $actual=['status'=>$response->status(),'body'=>$response->json(),'cards'=>$rows,'marks'=>DB::table('report_card_marks')->orderBy('id')->get()->map(function ($r) {
             $row = (array) $r;
             // New hidden term columns must remain empty on the legacy path. Fixtures remain verbatim.

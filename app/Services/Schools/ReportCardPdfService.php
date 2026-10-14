@@ -113,7 +113,7 @@ class ReportCardPdfService
     private function data(ReportCard $card, GroupMembership $membership): array
     {
         $masjid = $card->masjid ?? Masjid::withoutGlobalScopes()->find($card->masjid_id);
-        $marks = $card->marks()->orderBy('position')->get();
+        $marks = \App\Support\ReportCardCriteria::marks($card);
 
         return [
             ...(($letterGrades = \App\Support\LetterGrades::family($card, $masjid)) !== [] ? ['letterGrades'=>$letterGrades] : []),

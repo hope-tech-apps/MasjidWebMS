@@ -373,8 +373,13 @@ class MasjidsController extends Controller
     private function withoutHiddenCalendarTerms($response, string $masjid_id)
     {
         $org=\App\Support\ClassSubjectMode::loadedOrganisation((int)$masjid_id);
-        foreach (['letter_grades','app_member_questions','app_volunteer_entry','lesson_plan_photo_fill'] as $key) {
-            if (($key === 'letter_grades' ? \App\Support\LetterGrades::offered($org) : $org?->hasCapability($key)) || ($key !== 'letter_grades' && request()->boolean('include_'.$key))) continue;
+        foreach (['report_card_criteria','letter_grades','app_member_questions','app_volunteer_entry','lesson_plan_photo_fill'] as $key) {
+            $available = match ($key) {
+                'report_card_criteria' => \App\Support\ReportCardCriteria::enabled($org),
+                'letter_grades' => \App\Support\LetterGrades::offered($org),
+                default => $org?->hasCapability($key) || request()->boolean('include_'.$key),
+            };
+            if ($available) continue;
             $payload=$response->getData(true);
             foreach ($payload['data']['groups'] as &$group) $group['entries']=array_values(array_filter($group['entries'],fn($entry)=>$entry['key']!==$key));
             unset($group);
