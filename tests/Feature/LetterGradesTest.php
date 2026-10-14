@@ -352,6 +352,17 @@ class LetterGradesTest extends TestCase
         $this->assertStringContainsString('autumn-semester', app(\App\Services\Schools\ReportCardPdfService::class)->filename($card->fresh(),$member));
     }
 
+    /** Owner 2026-10-14: a subject with no letter and no comment is left off the family's card. */
+    #[Test]
+    public function a_subject_without_a_letter_or_comment_is_left_off_the_family_card(): void
+    {
+        [$school,$member,$subject,$term] = $this->world();
+        $service = app(ReportCardService::class);
+        $card = $service->prepare($member,'report_card','2026-2027',1);
+        $service->publish($card);
+        $this->assertSame([], LetterGrades::family($card->fresh()), 'no points work and no comment: nothing for the family');
+    }
+
     /** Walk finding: switching letters off stripped grades and the dated heading from cards already sent. */
     #[Test]
     public function a_sent_card_keeps_its_letters_and_heading_after_letters_are_switched_off(): void

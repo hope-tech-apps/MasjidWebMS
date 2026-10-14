@@ -146,9 +146,14 @@
     @foreach ($letterGrades ?? [] as $grade)
         <table class="subject">
             <tr><th colspan="2">{{ $grade['subject'] }}</th></tr>
+            {{-- Owner 2026-10-14: a subject with no letter shows no term-grade line, only the teacher's comment. --}}
+            @if ($grade['final_letter'] !== null)
             <tr><td>Term grade
                         @if ($grade['comment'])<span class="note">{{ $grade['comment'] }}</span>@endif</td>
-                <td class="mark">{{ $grade['final_letter'] ?? 'No points work in this term' }}@if ($grade['percentage'] !== null) &middot; {{ $grade['percentage'] }}%@endif</td></tr>
+                <td class="mark">{{ $grade['final_letter'] }}@if ($grade['percentage'] !== null) &middot; {{ $grade['percentage'] }}%@endif</td></tr>
+            @else
+            <tr><td colspan="2"><span class="note">{{ $grade['comment'] }}</span></td></tr>
+            @endif
         </table>
     @endforeach
 

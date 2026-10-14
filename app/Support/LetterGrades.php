@@ -272,7 +272,14 @@ final class LetterGrades
     }
 
     /** Allowlist used by both family JSON and PDF; no staff provenance keys can escape. */
+    /** Owner 2026-10-14: a subject with no letter and no comment is left off the family's card. */
     public static function family(ReportCard $card, ?Masjid $school = null): array
+    {
+        return array_values(array_filter(self::familyRows($card, $school),
+            fn ($row) => $row['final_letter'] !== null || trim((string) $row['comment']) !== ''));
+    }
+
+    private static function familyRows(ReportCard $card, ?Masjid $school = null): array
     {
         if (! self::readable($card, $school)) return [];
         if (! $card->isPublished()) return array_map(fn ($row) => ['subject'=>$row['subject'], 'final_letter'=>$row['final_letter'], 'percentage'=>$row['override_letter'] === null || $row['override_letter'] === $row['calculated_letter'] ? $row['calculated_percentage'] : null, 'comment'=>$row['comment']], self::staff($card));

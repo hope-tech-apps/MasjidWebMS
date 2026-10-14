@@ -45,9 +45,9 @@ test('teacher box shows both grades, attribution, omitted pieces and required re
 });
 
 test('family card renders only final letter and comment, omitting absent percentage', async () => {
-    const s = await mountSfc('components/classes/FamilyLetterGrades.vue', { grades: [{ subject: 'Science', final_letter: 'A−', percentage: null, comment: 'Keep practising' }, { subject: 'Arabic', final_letter: null, percentage: null, comment: null }] }, {
+    const s = await mountSfc('components/classes/FamilyLetterGrades.vue', { grades: [{ subject: 'Science', final_letter: 'A−', percentage: null, comment: 'Keep practising' }, { subject: 'Arabic', final_letter: null, percentage: null, comment: 'Lovely reading this term' }] }, {
         vue, '@/views/family/familyI18n': { useFamilyLang: () => ({ t: (key: string) => ({ term_grade: 'Term grade', term_no_points: 'No points work in this term' }[key] ?? key) }) },
     });
-    try { assert.match(s.text(), /Science.*A−.*Keep practising/); assert.match(s.text(), /No points work in this term/); assert.doesNotMatch(s.text(), /%|Worked out|Set by|reason/); }
+    try { assert.match(s.text(), /Science.*A−.*Keep practising/); assert.doesNotMatch(s.text(), /No points work in this term/); assert.match(s.text(), /Arabic.*Lovely reading this term/); assert.equal((s.text().match(/Term grade/g) ?? []).length, 1); assert.doesNotMatch(s.text(), /%|Worked out|Set by|reason/); }
     finally { s.unmount(); }
 });
