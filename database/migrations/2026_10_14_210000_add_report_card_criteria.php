@@ -50,7 +50,12 @@ return new class extends Migration
             $table->foreignId('masjid_id')->constrained('masjids')->restrictOnDelete();
             $table->foreignId('actor_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->string('action', 120);
+            // An applied configuration is kept as a version for its effective period, so a card reads its own term's criteria.
+            $table->string('effective_period', 80)->nullable();
+            $table->date('effective_on')->nullable();
+            $table->json('bands')->nullable();
             $table->timestamps();
+            $table->index(['masjid_id', 'effective_on', 'id'], 'rc_history_school_effective');
         });
         Schema::create('report_card_band_freezes', function (Blueprint $table) {
             $table->id();

@@ -648,15 +648,6 @@ class ReportCardCriteriaTest extends TestCase
     }
 
     #[Test]
-    public function version_history_rollback_refuses_to_discard_recoverable_period_configurations(): void
-    {
-        $school=$this->makeMasjid(); ReportCardCriteria::editor($school,$this->admin());
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Criteria versions exist');
-        (require database_path('migrations/2026_10_14_220000_version_report_card_criteria_history.php'))->down();
-    }
-
-    #[Test]
     public function sending_while_the_switch_is_off_freezes_a_previously_selected_band_on_reentry(): void
     {
         $this->travelTo(now()->setDate(2026,10,14));
