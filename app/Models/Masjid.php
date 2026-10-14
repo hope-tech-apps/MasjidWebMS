@@ -87,6 +87,7 @@ class Masjid extends Model implements HasMedia
      * identical to what it was before this slice.
      */
     protected $hidden = [
+        'letter_grade_settings',
         'has_timetable_records',
         'has_student_allergy_records',
         'active_owner_user_id',
@@ -120,6 +121,7 @@ class Masjid extends Model implements HasMedia
      * @var list<string>
      */
     public const PUBLIC_DIRECTORY_DENYLIST = [
+        'letter_grade_settings',
         // Internal timetable retention state; never part of a public identity.
         'has_timetable_records',
         'has_student_allergy_records',
@@ -192,6 +194,7 @@ class Masjid extends Model implements HasMedia
             // A SuperAdmin's explicit capability decisions; absent keys fall
             // back to config/capabilities.php defaults. See hasCapability().
             'capability_overrides' => 'array',
+            'letter_grade_settings' => 'array',
             // Public directory listing gate — see scopeListed() below.
             'listed_at' => 'datetime',
         ];
@@ -551,6 +554,7 @@ class Masjid extends Model implements HasMedia
         if (! \App\Support\SchoolSettings::familyDutyRota($this)) unset($out['family_duty_rota']);
         if (! \App\Support\AttendanceAbsenceSettings::enabled($this)) unset($out['attendance_absence_emails']);
         if (! \App\Support\StudentAllergies::enabled($this)) unset($out['student_allergies']);
+        if (! \App\Support\LetterGrades::offered($this)) unset($out['letter_grades']);
 
         foreach (['app_member_questions','app_volunteer_entry','lesson_plan_photo_fill'] as $key) if (! $this->hasCapability($key)) unset($out[$key]);
         if (! \App\Support\AppBottomTabs::enabled($this)) unset($out['app_bottom_tabs']);
@@ -595,6 +599,7 @@ class Masjid extends Model implements HasMedia
     public function attributesToArray(): array
     {
         $attributes = parent::attributesToArray();
+        if (! \App\Support\LetterGrades::offered($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['letter_grades']);
         if (! \App\Support\SchoolSettings::calendarTerms($this)
             && is_array($attributes['capability_overrides'] ?? null)
             && array_key_exists('school_calendar_terms', $attributes['capability_overrides'])) {

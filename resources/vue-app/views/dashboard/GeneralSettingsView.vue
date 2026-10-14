@@ -106,9 +106,11 @@
             </button>
         </div>
     </Form>
+    <LetterGradeSettings v-if="masjidStore.masjid?.capabilities?.letter_grades === true" :school-id="masjidStore.masjid.id" />
 </template>
 
 <script setup lang="ts">
+import LetterGradeSettings from '@/components/classes/LetterGradeSettings.vue';
 import { ref, computed, onBeforeMount } from 'vue';
 import { Form, Field, ErrorMessage } from 'vee-validate';
 import { object, string } from 'yup';

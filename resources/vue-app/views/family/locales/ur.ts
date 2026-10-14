@@ -28,6 +28,8 @@
  * extra.
  */
 export const UR: Record<string, string> = {
+    term_grade: "مدت کا گریڈ",
+    term_no_points: "اس مدت میں نمبروں سے جانچا گیا کوئی کام نہیں",
     // ------------------------------------------------------ shared
     switch_lang_title: "زبان تبدیل کریں",
     student: "طالب علم",

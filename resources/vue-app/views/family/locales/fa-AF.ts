@@ -28,6 +28,8 @@
  * extra.
  */
 export const FA_AF: Record<string, string> = {
+    term_grade: "درجۀ دوره",
+    term_no_points: "در این دوره کاری با نمره ارزیابی نشده است",
     // ------------------------------------------------------ shared
     switch_lang_title: "تغییر زبان",
     student: "شاگرد",

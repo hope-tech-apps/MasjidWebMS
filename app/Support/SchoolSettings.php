@@ -167,6 +167,12 @@ final class SchoolSettings
     /** Evaluate the intended map under the organisation mutex, before any writes. */
     public static function assertSubjectWorkChange(Masjid $school, array $changes): void
     {
+        if (($changes['letter_grades'] ?? false) === true && $school->orgType() !== 'school') {
+            throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>['Letter grades are available to school organisations only.']]);
+        }
+        if (\App\Support\LetterGrades::enabled($school) && ($changes['letter_grades'] ?? true) && (($changes['class_subjects'] ?? true) === false || ($changes['school_calendar_terms'] ?? true) === false)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>['Switch off letter grades before switching off their class subjects or dated terms.']]);
+        }
         if (($changes['family_duty_rota'] ?? false) === true && ($school->orgType() !== 'school' || ! ($changes['school_calendar'] ?? $school->hasCapability('school_calendar')))) {
             throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>['Switch on the school calendar at a school before enabling its family duty rota.']]);
         }

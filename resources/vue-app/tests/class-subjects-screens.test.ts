@@ -2210,3 +2210,28 @@ test('photo: mounted failed read keeps the form and never displays provider word
         assert.ok(r.screen.all((n: Node) => n.tag === 'textarea' && n.value === 'Existing activities').length);
     } finally { r.screen.unmount(); }
 });
+
+test('letter report saves a teacher override and comment through the actual Reports box', async () => {
+    const grade: any = { id: 31, class_subject_id: 102, subject: 'Arabic', can_fill: true, calculated_percentage: 88.4, calculated_letter: 'B+', override_letter: null, override_reason: null, comment: null, final_letter: 'B+', excluded_work: [] };
+    const card = { id: 7, student, type: 'report_card', type_label: 'Report Card', school_year: '2026-2027', term: 1, period_label: 'First term', published: false, subjects: [], learning_behaviours: [], attendance: {}, teacher_comment: '', letter_grades: [grade], letter_scale: [{ letter: 'A−', minimum: 90 }] };
+    const r = await setup('teacher', { read: (url: string) => {
+        if (url.includes('/report-cards?')) return ok({ period: { type: 'report_card', school_year: '2026-2027', term: 1 }, students: [student], letter_terms: [{ school_year: '2026-2027', position: 1, name: 'First term' }] });
+        if (url.includes('/report-card?')) return ok(card);
+    }, write: (method: string, url: string, body: any) => {
+        if (url.includes('/report-card?')) { Object.assign(grade, body.letter_grades[0]); return ok(card); }
+    } });
+    try {
+        await pick(r.screen, 'Reports'); click(r.screen.button('Practice student')); await flush(10);
+        assert.match(r.screen.text(), /Worked out B\+ \(88.4%\)/);
+        const letterSelect = r.screen.all(n => n.props['aria-label'] === 'Set letter for Arabic')[0];
+        letterSelect.value = 'A−';
+        chooseOption(letterSelect, 'A−');
+        type(r.screen.all(n => n.props['aria-label'] === 'Reason for Arabic')[0], 'Additional evidence');
+        type(r.screen.all(n => n.props['aria-label'] === 'Family comment for Arabic')[0], 'Keep practising');
+        await flush(); click(r.screen.button('Save')); await flush(10);
+        const body = r.calls.find(c => c.method === 'put' && c.url.includes('/report-card?')).body;
+        assert.deepEqual(body, { marks: [], letter_grades: [{ id: 31, override_letter: 'A−', override_reason: 'Additional evidence', comment: 'Keep practising' }] });
+        assert.match(r.screen.text(), /Set by the teacher: A−.*Additional evidence/);
+        assert.equal(r.screen.button('Save').disabled, true);
+    } finally { r.screen.unmount(); }
+});

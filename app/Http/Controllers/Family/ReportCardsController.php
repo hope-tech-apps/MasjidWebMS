@@ -63,7 +63,7 @@ class ReportCardsController extends FamilyController
                 'id' => (int) $c->id,
                 'type' => $c->type,
                 'type_label' => $c->typeLabel(),
-                'period_label' => $c->periodLabel(),
+                'period_label' => \App\Support\LetterGrades::periodLabel($c) ?? $c->periodLabel(),
                 'school_year' => $c->school_year,
                 'term' => (int) $c->term,
                 'published_at' => $c->published_at?->toIso8601String(),
@@ -87,10 +87,11 @@ class ReportCardsController extends FamilyController
         return response()->json([
             'status' => 'success',
             'data' => [
+                ...(($letters = \App\Support\LetterGrades::family($card)) !== [] ? ['letter_grades'=>$letters] : []),
                 'id' => (int) $card->id,
                 'type' => $card->type,
                 'type_label' => $card->typeLabel(),
-                'period_label' => $card->periodLabel(),
+                'period_label' => \App\Support\LetterGrades::periodLabel($card, $marks) ?? $card->periodLabel(),
                 'grade_label' => $card->grade_label,
                 'published_at' => $card->published_at?->toIso8601String(),
                 'teacher_comment' => $card->teacher_comment,

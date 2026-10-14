@@ -13,9 +13,10 @@
                     <option v-for="year in years" :key="year" :value="year">{{ year }}</option>
                 </select>
             </label>
-            <label class="small">Quarter
+            <label class="small">{{ letterTerms.length ? 'Term' : 'Quarter' }}
                 <select v-model="period.term" class="form-select form-select-sm" @change="load">
-                    <option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">Quarter {{ n }}</option>
+                    <template v-if="letterTerms.length"><option v-for="term in letterTerms.filter(row => row.school_year === period.school_year)" :key="term.position" :value="term.position">{{ term.name }}</option></template>
+                    <template v-else><option v-for="n in [1, 2, 3, 4]" :key="n" :value="n">Quarter {{ n }}</option></template>
                 </select>
             </label>
         </div>
@@ -32,6 +33,8 @@
             <h4 class="h6">{{ name(card.student) }}</h4>
             <p class="small text-muted">{{ card.type_label }} · {{ card.period_label }}</p>
             <PerformanceLevelHelp :levels="levels" />
+            <p v-if="card.letter_grade_notice" class="small text-muted">{{ card.letter_grade_notice }}</p>
+            <ReportLetterGrade v-for="grade in card.letter_grades ?? []" :key="grade.id" :grade="grade" readonly />
             <div v-for="subject in card.subjects" :key="subject.subject" class="card border-0 shadow-sm mb-2">
                 <div class="card-header bg-white small fw-semibold">{{ subject.subject }}</div>
                 <ReportSubjectSummary v-if="subject.work_summary" :summary="subject.work_summary" :levels="levels" :href="subjectHref(subject.work_summary.class_subject_id)" />
@@ -54,6 +57,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import ApiService from '@/core/services/ApiService';
 import PerformanceLevelHelp from '@/components/classes/PerformanceLevelHelp.vue';
+import ReportLetterGrade from '@/components/classes/ReportLetterGrade.vue';
 import ReportSubjectSummary from '@/components/classes/ReportSubjectSummary.vue';
 
 const props = defineProps<{ base: string }>();
@@ -62,6 +66,7 @@ const router = useRouter();
 const period = ref({ type: 'report_card', school_year: '', term: 1 });
 const schoolYears = ref<string[] | null>(null);
 const students = ref<any[]>([]);
+const letterTerms = ref<any[]>([]);
 const card = ref<any>(null);
 const levels = ref<any[]>([]);
 const loading = ref(false);
@@ -81,6 +86,7 @@ const load = async () => {
         if (mine !== generation) return;
         students.value = res.data.data.students;
         period.value = res.data.data.period;
+        letterTerms.value = res.data.data.letter_terms ?? [];
         schoolYears.value = res.data.data.school_years ?? null;
         levels.value = res.data.performance_levels ?? [];
     } catch { if (mine === generation) error.value = 'Could not load the report cards.'; }

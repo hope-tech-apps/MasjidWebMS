@@ -153,6 +153,8 @@ class MemberAccountDeletion
         'orders' => ['contact_id'],
         'registrants' => ['contact_id'],
         'registrations' => ['contact_id'],
+        // Issued academic history survives an account deletion, as its roster records do.
+        'term_grades' => ['contact_id'],
     ];
 
     /**

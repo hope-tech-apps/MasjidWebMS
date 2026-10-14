@@ -23,6 +23,9 @@ class ReportCardMark extends Model
     /** A subject criterion — Reading Fluency, Tajweed, Problem Solving. */
     public const KIND_ACADEMIC = 'academic';
 
+    /** One subject's term letter, separate from the existing skill lines. */
+    public const KIND_TERM_GRADE = 'term_grade';
+
     /**
      * A learning behaviour — "works well with others".
      *
@@ -35,7 +38,11 @@ class ReportCardMark extends Model
     public const KINDS = [
         self::KIND_ACADEMIC,
         self::KIND_BEHAVIOUR,
+        self::KIND_TERM_GRADE,
     ];
+
+    // Only explicit staff/family serializers expose letter data.
+    protected $hidden = ['class_subject_id','calculated_percentage','calculated_letter','override_letter','override_reason','override_by_user_id','override_at','final_letter','final_percentage','final_comment','letter_snapshot_at'];
 
     protected $fillable = [
         'masjid_id',
@@ -53,6 +60,10 @@ class ReportCardMark extends Model
         return [
             'level' => 'integer',
             'position' => 'integer',
+            'calculated_percentage' => 'float',
+            'final_percentage' => 'float',
+            'override_at' => 'datetime',
+            'override_by_user_id' => 'integer',
         ];
     }
 

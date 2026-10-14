@@ -64,6 +64,16 @@ final class GradeLevel
         return $flat;
     }
 
+    /** Position in the existing teaching order; unknown labels cannot select letters. */
+    public static function position(?string $label): ?int
+    {
+        $key = self::key($label);
+        foreach (self::LEVELS as $position => $level) {
+            if ($key !== null && self::key($level) === $key) return $position;
+        }
+        return null;
+    }
+
     /**
      * The level after this one in teaching order, spelled as LEVELS spells it:
      * what "move each grade up one" gives a student when a whole class is moved

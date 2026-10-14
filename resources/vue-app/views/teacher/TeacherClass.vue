@@ -2368,9 +2368,10 @@
                                     </select>
                                 </div>
                                 <div class="col-6 col-sm-auto">
-                                    <label class="form-label small text-muted mb-1">Quarter</label>
+                                    <label class="form-label small text-muted mb-1">{{ letterTerms.length ? 'Term' : 'Quarter' }}</label>
                                     <select v-model.number="reportTerm" class="form-select form-select-sm" style="width:7rem">
-                                        <option v-for="t in [1, 2, 3, 4]" :key="t" :value="t">{{ t }}</option>
+                                        <template v-if="letterTerms.length"><option v-for="term in letterTerms.filter(row => row.school_year === reportYear)" :key="term.position" :value="term.position">{{ term.name }}</option></template>
+                                        <template v-else><option v-for="t in [1, 2, 3, 4]" :key="t" :value="t">{{ t }}</option></template>
                                     </select>
                                 </div>
                                 <div class="col-6 col-sm-auto">
@@ -2382,7 +2383,7 @@
                             </div>
                             <p v-if="reportPeriod" class="text-muted small mt-2 mb-0">
                                 Showing {{ reportPeriod.type === 'progress' ? 'progress reports' : 'report cards' }}
-                                for Quarter {{ reportPeriod.term }}, {{ reportPeriod.school_year }}.
+                                for {{ letterTerms.find(row => row.school_year === reportPeriod.school_year && row.position === reportPeriod.term)?.name ?? `Quarter ${reportPeriod.term}` }}, {{ reportPeriod.school_year }}.
                             </p>
                             <p v-if="reportsError" class="text-danger small mt-2 mb-0">{{ reportsError }}</p>
                         </div>
@@ -2483,6 +2484,8 @@
                          readable at the moment a teacher is choosing between a 2 and a 3. -->
                     <PerformanceLevelHelp :levels="levelKey" />
 
+                    <p v-if="openCard.letter_grade_notice" class="small text-muted">{{ openCard.letter_grade_notice }}</p>
+                    <ReportLetterGrade v-for="grade in openCard.letter_grades ?? []" :key="grade.id" :grade="grade" :draft="letterDraft[grade.id]" :scale="openCard.letter_scale" :published="openCard.published" @edit="editLetter" />
                     <div v-for="sub in openCard.subjects" :key="sub.subject" class="card border-0 shadow-sm mb-2">
                         <div class="card-header bg-white fw-semibold small">{{ sub.subject }}</div>
                         <ReportSubjectSummary v-if="sub.work_summary" :summary="sub.work_summary" :levels="levelKey" :href="subjectReportHref(sub.work_summary.class_subject_id)" />
@@ -2659,6 +2662,7 @@ import AllergyBadge from '@/components/classes/AllergyBadge.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import TeacherClassStore from '@/views/teacher/TeacherClassStore.vue';
 import SubjectWorkPage from './subject/SubjectWorkPage.vue';
+import ReportLetterGrade from '@/components/classes/ReportLetterGrade.vue';
 import ReportSubjectSummary from '@/components/classes/ReportSubjectSummary.vue';
 import PerformanceLevelHelp from '@/components/classes/PerformanceLevelHelp.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
@@ -6586,6 +6590,7 @@ const reportType = ref<ReportType>('report_card');
 const reportTerm = ref<number | null>(null);
 const reportYear = ref('');
 const reportPeriod = ref<any>(null);
+const letterTerms = ref<any[]>([]);
 
 const reportRows = ref<any[]>([]);
 const reportsLoading = ref(false);
@@ -6597,6 +6602,10 @@ const openCard = ref<any>(null);
 // Keyed by MARK id, because ids are stable and array order is not.
 const draft = ref<Record<number, DraftCell>>({});
 const baseline = ref<Record<number, DraftCell>>({});
+const letterDraft = ref<Record<number, any>>({});
+const letterBaseline = ref<Record<number, any>>({});
+const dirtyLetterIds = computed(() => Object.keys(letterDraft.value).map(Number).filter(id => (openCard.value?.letter_grades ?? []).some((row: any) => row.id === id && row.can_fill !== false) && JSON.stringify(letterDraft.value[id]) !== JSON.stringify(letterBaseline.value[id])));
+const editLetter = (id: number, field: string, value: string | null) => { letterDraft.value[id] = { ...letterDraft.value[id], [field]: value }; onCardEdited(); };
 const teacherComment = ref('');
 const teacherCommentBaseline = ref('');
 
@@ -6631,7 +6640,7 @@ watch(() => (openCard.value?.subjects ?? []).filter((sub: any) => sub.can_fill =
     if (dropped) { closedLineNotice.value = true; cardSaved.value = false; }
 });
 const commentDirty = computed(() => teacherComment.value !== teacherCommentBaseline.value);
-const unsavedCount = computed(() => dirtyIds.value.length + (commentDirty.value ? 1 : 0));
+const unsavedCount = computed(() => dirtyIds.value.length + dirtyLetterIds.value.length + (commentDirty.value ? 1 : 0));
 const hasUnsaved = computed(() => unsavedCount.value > 0);
 
 // Counted from the DRAFT, so the header moves as the teacher marks rather than
@@ -6672,7 +6681,7 @@ const downloadCard = async () => {
     }
 };
 
-const cardAssessed = computed(() => Object.values(draft.value).filter((c) => c.level !== null).length);
+const cardAssessed = computed(() => Object.values(draft.value).filter((c) => c.level !== null).length + (openCard.value?.letter_grades ?? []).length);
 
 // Three years around whatever the server said the current one is — derived, so
 // nobody has to remember to add next year to a hardcoded list.
@@ -6716,6 +6725,7 @@ const loadReportCards = async () => {
         reportRows.value = res.data?.data?.students ?? [];
         reportSchoolYears.value = Array.isArray(res.data?.data?.school_years) ? res.data.data.school_years : null;
         reportPeriod.value = res.data?.data?.period ?? null;
+        letterTerms.value = res.data?.data?.letter_terms ?? [];
         levelKey.value = res.data?.performance_levels ?? levelKey.value;
         // Adopt what the server actually used. It clamps a bad term or year
         // silently, so without this the selects could claim one quarter while
@@ -6744,6 +6754,15 @@ const loadReportCards = async () => {
  * form can lock itself without throwing their work away.
  */
 const hydrateCardDraft = (card: any, preserve = false) => {
+    const nextLetters: Record<number, any> = {};
+    const nextLetterBaseline: Record<number, any> = {};
+    for (const row of card?.letter_grades ?? []) {
+        const server = { override_letter: row.override_letter ?? null, override_reason: row.override_reason ?? '', comment: row.comment ?? '' };
+        const cleanBefore = JSON.stringify(letterDraft.value[row.id]) === JSON.stringify(letterBaseline.value[row.id]);
+        nextLetterBaseline[row.id] = server;
+        nextLetters[row.id] = preserve && !cleanBefore && letterDraft.value[row.id] && row.can_fill !== false ? letterDraft.value[row.id] : { ...server };
+    }
+    letterDraft.value = nextLetters; letterBaseline.value = nextLetterBaseline;
     const nextDraft: Record<number, DraftCell> = preserve ? { ...draft.value } : {};
     const nextBaseline: Record<number, DraftCell> = {};
 
@@ -6815,6 +6834,7 @@ const reportErrorFrom = (e: any): string =>
     ?? e?.response?.data?.data?.marks?.[0]
     ?? e?.response?.data?.data?.['marks.0.level']?.[0]
     ?? e?.response?.data?.data?.teacher_comment?.[0]
+    ?? Object.entries((e?.response?.data?.data ?? {}) as Record<string, string[]>).find(([key]) => key.startsWith('letter_grades'))?.[1]?.[0]
     ?? 'Those marks could not be saved.';
 
 const saveReportCard = async (): Promise<boolean> => {
@@ -6835,15 +6855,18 @@ const saveReportCard = async (): Promise<boolean> => {
         }));
 
         const body: any = { marks };
+        if (dirtyLetterIds.value.length) body.letter_grades = dirtyLetterIds.value.map(id => ({ id, ...letterDraft.value[id] }));
         // Sent only when it changed, and as a string so '' can clear it —
         // null leaves the stored comment untouched.
         if (commentDirty.value) body.teacher_comment = teacherComment.value;
 
+        const sentLetters = Object.fromEntries(dirtyLetterIds.value.map(id => [id, JSON.stringify(letterDraft.value[id])]));
         const res = await TeacherApiService.put(
             `${base.value}/members/${openCard.value.student.membership_id}/report-card?${reportQuery()}`,
             body
         );
 
+        for (const [id, value] of Object.entries(sentLetters)) { if (JSON.stringify(letterDraft.value[Number(id)]) === value) letterBaseline.value[Number(id)] = { ...letterDraft.value[Number(id)] }; }
         openCard.value = res.data?.data ?? openCard.value;
         // preserve, NOT a clean re-hydrate. The inputs stay live during a save
         // (a teacher on a classroom phone keeps marking while the PUT is in
@@ -6941,6 +6964,7 @@ const saveAndClose = async () => {
 const discardAndClose = () => {
     openCard.value = null;
     leaveWarned.value = false;
+    letterDraft.value = {}; letterBaseline.value = {};
     draft.value = {};
     baseline.value = {};
     // The comment is half of `hasUnsaved`, and forgetting it left the whole tab

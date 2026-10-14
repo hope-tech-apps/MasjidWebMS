@@ -607,6 +607,16 @@ return [
         'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
     ],
 
+    'letter_grades' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Letter grades',
+        'description' => 'Term letters from the gradebook, with school scales and publication snapshots.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'student_allergies' => [
         'kind' => 'grant',
         'group' => 'school',

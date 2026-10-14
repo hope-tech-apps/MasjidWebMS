@@ -143,6 +143,15 @@
         @endforeach
     </table>
 
+    @foreach ($letterGrades ?? [] as $grade)
+        <table class="subject">
+            <tr><th colspan="2">{{ $grade['subject'] }}</th></tr>
+            <tr><td>Term grade
+                        @if ($grade['comment'])<span class="note">{{ $grade['comment'] }}</span>@endif</td>
+                <td class="mark">{{ $grade['final_letter'] ?? 'No points work in this term' }}@if ($grade['percentage'] !== null) &middot; {{ $grade['percentage'] }}%@endif</td></tr>
+        </table>
+    @endforeach
+
     @foreach ($subjects as $sub)
         <table class="subject">
             <tr><th colspan="2">{{ $sub['subject'] }}</th></tr>

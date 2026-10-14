@@ -688,7 +688,12 @@ class GradebookController extends TeacherController
         // a mark in a subject they do not teach.
         $limits = $this->limits($group);
         $subjectKeys = $limits === null ? null : $limits['class_subject_ids'];
-        $summary = GradeRecord::summaryForClassSubjects((int) $membership->id, $subjectKeys);
+        // A term request uses the same dated summary as the letter on the report.
+        $datedTerm = null;
+        if ($request->filled('school_term_id') && \App\Support\LetterGrades::enabled(SchoolSettings::org($masjid_id))) {
+            $datedTerm = \App\Models\SchoolTerm::where('masjid_id', $masjid_id)->findOrFail($request->input('school_term_id'));
+        }
+        $summary = $datedTerm ? GradeRecord::forTerm((int) $membership->id, $subjectKeys, $datedTerm->starts_on, $datedTerm->ends_on) : GradeRecord::summaryForClassSubjects((int) $membership->id, $subjectKeys);
 
         // The LIST is a bounded page, ordered BEFORE the limit so it is honestly
         // "the most recent N" rather than whichever rows the database returned.
@@ -698,6 +703,7 @@ class GradebookController extends TeacherController
             ->where('assignment_scores.group_membership_id', $membership->id)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
+            ->when($datedTerm, fn ($q) => $q->whereDate('class_assignments.assigned_on', '>=', $datedTerm->starts_on)->whereDate('class_assignments.assigned_on', '<=', $datedTerm->ends_on))
             ->when($subjectKeys !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectKeys))
             ->orderByDesc('class_assignments.assigned_on')
             ->orderByDesc('class_assignments.id')

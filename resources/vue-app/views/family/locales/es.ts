@@ -28,6 +28,8 @@
  * extra.
  */
 export const ES: Record<string, string> = {
+    term_grade: "Calificación del período",
+    term_no_points: "No hay trabajos calificados con puntos en este período",
     // ------------------------------------------------------ shared
     switch_lang_title: "Cambiar idioma",
     student: "Estudiante",

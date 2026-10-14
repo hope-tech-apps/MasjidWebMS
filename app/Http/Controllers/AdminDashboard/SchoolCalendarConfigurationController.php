@@ -109,6 +109,7 @@ class SchoolCalendarConfigurationController extends Controller
             $answers = FormOptionSources::answersNaming($org, SchoolDateAuthority::for($org)->meetingDays($locked));
             $held = array_filter([$closures ? "$closures no-school day".($closures === 1 ? '' : 's') : null, $marks ? "$marks attendance mark".($marks === 1 ? '' : 's')." inside its dates" : null, $answers ? "$answers form answer".($answers === 1 ? '' : 's')." naming its days" : null]);
             if ($held) throw ValidationException::withMessages(['year' => 'This school year cannot be deleted while it has '.implode(', ', $held).'.']);
+            if (\App\Models\TermGrade::where('masjid_id', $locked->masjid_id)->whereIn('school_term_id', $locked->terms()->pluck('id'))->exists()) throw ValidationException::withMessages(['year'=>['This year has issued letter grades. Keep its terms for academic records.']]);
             $locked->delete();
         });
         return $this->calendar($masjid_id);
@@ -165,7 +166,10 @@ class SchoolCalendarConfigurationController extends Controller
         if ($errors) throw ValidationException::withMessages($errors);
 
         $retained = array_column($terms, 'id');
-        foreach ($existing as $id => $term) if (! in_array($id, array_map('intval', $retained), true)) $term->delete();
+        foreach ($existing as $id => $term) if (! in_array($id, array_map('intval', $retained), true)) {
+            if (\App\Models\TermGrade::where('masjid_id', $year->masjid_id)->where('school_term_id', $id)->exists()) throw ValidationException::withMessages(['terms'=>['This term has issued letter grades. Keep it for academic records.']]);
+            $term->delete();
+        }
         // 0 is outside submitted term numbers and fits MySQL's unsigned TINYINT.
         // Move changed numbers through that spare slot so swaps never hit the unique index.
         $pending = collect($terms)->filter(fn ($t) => isset($t['id']))->keyBy('id');

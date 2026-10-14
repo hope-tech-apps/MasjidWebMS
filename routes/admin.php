@@ -1382,9 +1382,15 @@ Route::prefix('admin')->group(function () {
                         Route::get('/members/{membership_id}/grades', 'forMember')->middleware('permission:view contacts');
                     });
 
+                Route::prefix('{masjid_id}/letter-grade-settings')->middleware(['capability:letter_grades', 'permission:manage contacts'])
+                    ->controller(\App\Http\Controllers\AdminDashboard\LetterGradeSettingsController::class)->group(function () {
+                        Route::get('/', 'show');
+                        Route::put('/', 'update');
+                    });
+
                 // Staff-only report references; no office marking or publication route.
                 Route::prefix('{masjid_id}/groups/{group_id}')
-                    ->middleware(['permission:view contacts', 'capability:class_subject_report_summary'])
+                    ->middleware(['permission:view contacts', 'capability:class_subject_report_summary,letter_grades'])
                     ->controller(\App\Http\Controllers\Teacher\ReportCardController::class)
                     ->group(function () {
                         Route::get('/report-cards', 'index');

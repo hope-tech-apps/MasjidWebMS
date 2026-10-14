@@ -28,6 +28,8 @@
  * extra.
  */
 export const PS: Record<string, string> = {
+    term_grade: "د دورې درجه",
+    term_no_points: "په دې دوره کې په نمرو ارزول شوی کار نشته",
     // ------------------------------------------------------ shared
     switch_lang_title: "ژبه بدله کړئ",
     student: "زده کوونکی",

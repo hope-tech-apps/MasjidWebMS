@@ -122,6 +122,7 @@ class MemberAccountDeletionCoverageTest extends TestCase
             'orders' => ['contact_id'],
             'registrants' => ['contact_id'],
             'registrations' => ['contact_id'],
+            'term_grades' => ['contact_id'],
         ], MemberAccountDeletion::OFFICE_RECORDS);
 
         $this->assertSame([

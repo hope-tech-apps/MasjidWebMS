@@ -143,7 +143,7 @@
                          why the teacher's own form refuses to hold a follow-up
                          list. -->
                     <GroupReportsTab
-                        v-else-if="activeTab === 'reports' && group.class_subject_report_summary_enabled === true"
+                        v-else-if="activeTab === 'reports' && (group.class_subject_report_summary_enabled === true || group.letter_grades_enabled === true)"
                         :key="subjectBase" :base="subjectBase" />
                     <GroupLessonPlansTab
                         v-else-if="activeTab === 'lessons'"

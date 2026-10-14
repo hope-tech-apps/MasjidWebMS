@@ -210,6 +210,7 @@ final class SubjectFence
         $payload = ['class_subjects_enabled' => true, 'class_subjects' => $subjects, 'my_class_subject_ids' => $ids];
         if (ClassSubjectMode::workEnabled($group->masjid_id)) $payload['class_subject_work_enabled'] = true;
         if (ClassSubjectMode::reportSummaryEnabled($group->masjid_id)) $payload['class_subject_report_summary_enabled'] = true;
+        if (\App\Support\LetterGrades::forGroup($group)) $payload['letter_grades_enabled'] = true;
         return $payload;
     }
 

@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\DB;
  * Building, saving and publishing a report card.
  *
  * ---------------------------------------------------------------------------
- * A CARD IS PREPARED, NOT COMPUTED
+ * SKILL LEVELS ARE PREPARED, NOT COMPUTED
  * ---------------------------------------------------------------------------
  *
  * The tempting design generates every level from the gradebook. It is wrong for
@@ -32,6 +32,9 @@ use Illuminate\Support\Facades\DB;
  *     over two marks is not a quarter's judgement, but it looks exactly like one
  *     on a printed card.
  *
+ * Optional term letters use the gradebook arithmetic on separate term-grade
+ * rows; these skill levels remain teacher judgements.
+ *
  * So `prepare()` builds the ROWS — the right criteria for this child's grade, in
  * order — and leaves every level NULL for the teacher to fill in. There is no
  * `suggestionsFor()`: an earlier draft of this comment named one, and it was never
@@ -41,6 +44,9 @@ use Illuminate\Support\Facades\DB;
  */
 class ReportCardService
 {
+    private bool $preparingLetters = false;
+    private bool $publishingLetters = false;
+
     /**
      * The card for this child and period, creating its rows if it does not
      * exist yet.
@@ -58,6 +64,9 @@ class ReportCardService
         int $term,
         ?\Closure $save = null,
     ): ReportCard {
+        if (! $this->preparingLetters && $type === ReportCard::TYPE_REPORT_CARD && \App\Support\LetterGrades::eligible(\App\Support\LetterGrades::school((int) $membership->masjid_id), $membership->grade_label)) {
+            return $this->prepareWithLetters($membership, $type, $schoolYear, $term, $save);
+        }
         if (\App\Support\SchoolCalendarRequestMode::enabled((int) $membership->masjid_id)) {
             return $this->prepareWithTerm($membership, $type, $schoolYear, $term, $save);
         }
@@ -86,6 +95,28 @@ class ReportCardService
             $this->ensureRows($card);
 
             return $card->load(['marks' => fn ($q) => $q->orderBy('position')]);
+        });
+    }
+
+    /** Letter preparation joins existing template/term preparation without changing its OFF body. */
+    private function prepareWithLetters(GroupMembership $membership, string $type, string $year, int $term, ?\Closure $save): ReportCard
+    {
+        return DB::transaction(function () use ($membership, $type, $year, $term, $save) {
+            $org = \App\Models\Masjid::whereKey($membership->masjid_id)->lockForUpdate()->firstOrFail();
+            \App\Support\ClassSubjectMode::forget((int) $org->id);
+            \App\Support\ClassSubjectMode::rememberLoaded($org);
+            \App\Support\SchoolCalendarRequestMode::forget((int) $org->id);
+            \App\Models\Group::whereKey($membership->group_id)->lockForUpdate()->firstOrFail();
+            $this->preparingLetters = true;
+            try { $card = $this->prepare($membership, $type, $year, $term); }
+            finally { $this->preparingLetters = false; }
+            if (! \App\Support\LetterGrades::eligible($org, $membership->grade_label)) {
+                if ($save !== null) $save($card);
+                return $card;
+            }
+            \App\Support\LetterGrades::prepare($card);
+            if ($save !== null) $save($card);
+            return $card;
         });
     }
 
@@ -235,6 +266,19 @@ class ReportCardService
         });
     }
 
+    /** Save skills and term-letter edits atomically, rechecking the publication lock. */
+    public function saveWithLetters(ReportCard $card, array $marks, bool $updateComment, ?string $comment, array $letters): bool
+    {
+        return DB::transaction(function () use ($card, $marks, $updateComment, $comment, $letters) {
+            \App\Models\Masjid::whereKey($card->masjid_id)->lockForUpdate()->firstOrFail();
+            \App\Models\Group::whereKey($card->group_id)->lockForUpdate()->firstOrFail();
+            $current = ReportCard::whereKey($card->id)->lockForUpdate()->firstOrFail();
+            if ($current->isPublished()) return false;
+            \App\Support\LetterGrades::save($current, $letters);
+            return $this->saveMarks($current, $marks, $updateComment, $comment);
+        });
+    }
+
     private function saveMarksLegacy(ReportCard $card, array $marks, bool $updateComment, ?string $comment): bool
     {
         if ($card->isPublished()) {
@@ -249,7 +293,7 @@ class ReportCardService
             foreach ($marks as $row) {
                 $mark = $owned->get((int) ($row['id'] ?? 0));
 
-                if ($mark === null) {
+                if ($mark === null || $mark->kind === ReportCardMark::KIND_TERM_GRADE) {
                     continue;
                 }
 
@@ -284,6 +328,23 @@ class ReportCardService
      */
     public function publish(ReportCard $card, ?Carbon $from = null, ?Carbon $to = null): ReportCard
     {
+        if (! $this->publishingLetters && $card->type === ReportCard::TYPE_REPORT_CARD && \App\Support\LetterGrades::enabledFor((int) $card->masjid_id)) {
+            $result = DB::transaction(function () use ($card, $from, $to) {
+                $org = \App\Models\Masjid::whereKey($card->masjid_id)->lockForUpdate()->firstOrFail();
+                \App\Support\ClassSubjectMode::forget((int) $org->id);
+                \App\Support\ClassSubjectMode::rememberLoaded($org);
+                \App\Models\Group::whereKey($card->group_id)->lockForUpdate()->firstOrFail();
+                $current = ReportCard::whereKey($card->id)->lockForUpdate()->firstOrFail();
+                if ($current->isPublished()) return $current;
+                \App\Support\LetterGrades::snapshot($current);
+                $this->publishingLetters = true;
+                try { return $this->publish($current, $from, $to); }
+                finally { $this->publishingLetters = false; }
+            });
+            $card->setRawAttributes($result->getAttributes(), true);
+            return $card;
+        }
+
         if ($card->isPublished()) {
             return $card;
         }
@@ -311,6 +372,17 @@ class ReportCardService
      */
     public function unpublish(ReportCard $card): ReportCard
     {
+        if (\App\Support\LetterGrades::enabledFor((int) $card->masjid_id)) {
+            DB::transaction(function () use ($card) {
+                \App\Models\Masjid::whereKey($card->masjid_id)->lockForUpdate()->firstOrFail();
+                \App\Models\Group::whereKey($card->group_id)->lockForUpdate()->firstOrFail();
+                $current = ReportCard::whereKey($card->id)->lockForUpdate()->firstOrFail();
+                $current->forceFill(['published_at'=>null,'published_by_user_id'=>null,'days_present'=>null,'days_absent'=>null,'days_late'=>null])->save();
+                $card->setRawAttributes($current->getAttributes(), true);
+            });
+            return $card;
+        }
+
         $card->forceFill([
             'published_at' => null,
             'published_by_user_id' => null,

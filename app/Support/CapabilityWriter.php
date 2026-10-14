@@ -174,7 +174,7 @@ final class CapabilityWriter
             $unchanged = [];
             foreach ($keys as $key) {
                 // Hidden no-op: do not materialize an override or an audit row.
-                if (in_array($key, ['app_member_questions', 'app_volunteer_entry', 'app_bottom_tabs', 'class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'school_timetable', 'family_duty_rota', 'attendance_absence_emails'], true) && ! $locked->hasCapability($key) && $changes[$key] === false) {
+                if (in_array($key, ['letter_grades', 'app_member_questions', 'app_volunteer_entry', 'app_bottom_tabs', 'class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'school_timetable', 'family_duty_rota', 'attendance_absence_emails'], true) && ! $locked->hasCapability($key) && $changes[$key] === false) {
                     $unchanged[] = $key;
                     continue;
                 }

@@ -532,3 +532,6 @@ Pilot identity remains unspecified; empty allowlist and OFF capability admit nob
 - Local SQLite tests and mounted Vue checks do not verify MySQL, real browser geometry, a real vendor export, CI or deployed behavior.
 ## Parent attendance, 2026-10-14
 The new 30/minute queue ceiling is a conservative starting value, not a measured provider allowance. The first eligible five-minute sweep is the school’s send-time snapshot; no later register creates a second batch. These choices and crash-loss limits are in DECISIONS and docs/parent-attendance.md. Live mail, queue and deployment configuration were not inspected.
+## Letter grades, 2026-10-14
+
+The rollout grant permits the office's letter-grade settings; the office must enable letters after adding dated terms and choosing the starting grade. Points without class weights use the gradebook's existing pooled percentage. Thresholds apply to the gradebook's displayed percentage (one decimal), preserving gradebook parity; the scale lookup itself compares without rounding.

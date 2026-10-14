@@ -9759,3 +9759,12 @@ Recon found no stored attendance settings: the office register has date controls
 The absence command claims the school/date atomically in masjid_points_settings.attendance_absence_last_date, even with no absences. This adds no table and prevents later registers from being treated as the original send-time snapshot. A loss between that claim and queued batch creation is visible operationally as no mail; we prefer at-most-once notices to a duplicate/late alarm. Only an actual queue/send failure on a created mail row is recorded as failed.
 
 Absence delivery history is an office record under MemberAccountDeletion: removing a member login keeps the contact/audit. Explicit contact erasure still cascades the logs. The new contact-ID columns are classified in that service and its coverage test; missing optional tables are skipped during the code-before-migration window, but a failed schema check propagates. Studio's separate hidden-grant list and the hidden OFF no-op writer must include the grant as well as Masjid and MasjidsController.
+## Letter grades, 2026-10-14
+
+The family percentage is omitted only when a teacher has set a different letter. Staff retain the calculated percentage and letter, override, reason and actor/time. This avoids presenting a percentage that contradicts the final letter.
+
+Scale and starting grade are one atomic, hidden JSON school configuration: no row has meaning outside its complete scale, and saving the school row under its existing mutex avoids partial edits. The rollout capability is off everywhere; school settings contain the office's on/off choice after rollout is granted. Progress reports keep their existing levels.
+
+Term records identify the student by contact rather than roster membership, so moving a student retains one student/subject/term record without introducing another roster foreign key. Publication writes the record and the card snapshot together; take-back hides the card and leaves the last issued term record until re-send replaces it.
+
+The brief calls the dated-terms table `school_calendar_terms`; code and existing foreign keys name it `school_terms`. `school_calendar_terms` is the existing grant. Reuse follows the code. Semesters and trimesters use their dated term positions as well as quarters; the legacy quarter matcher stays unchanged for schools without letters.

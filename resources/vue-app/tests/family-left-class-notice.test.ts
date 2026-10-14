@@ -146,6 +146,7 @@ async function mountClass(api: any, groupId: number): Promise<Mounted> {
     const run = await loadTs('views/family/familyClassRun.ts', { '@/core/services/FamilyApiService': apiModule, vue });
 
     const screen = await mountSfc('views/family/FamilyClass.vue', {}, {
+        '@/components/classes/FamilyLetterGrades.vue': { default: stub },
         '@/core/services/FamilyApiService': apiModule,
         '@/components/common/PersonAvatar.vue': { default: stub },
         '@/core/helpers/behaviorSkills': behaviorSkills,

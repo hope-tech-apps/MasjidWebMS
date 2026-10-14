@@ -20,6 +20,8 @@
  * family-i18n-keys.test.ts check coverage and placeholders.
  */
 export const FR: Record<string, string> = {
+    term_grade: "Note du trimestre",
+    term_no_points: "Aucun travail noté en points pendant ce trimestre",
     switch_lang_title: "Changer de langue",
     student: "Élève",
     cancel: "Annuler",

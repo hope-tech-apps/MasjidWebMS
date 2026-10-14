@@ -347,7 +347,9 @@ class SchoolCalendarTermsTest extends TestCase
                 $this->assertSame(0,(int)$row['has_student_allergy_records']);
                 unset($row['has_student_allergy_records']);
                 $this->assertSame(0,(int)$row['has_timetable_records']);
-                unset($row['has_timetable_records']); return $row;
+                unset($row['has_timetable_records']);
+                $this->assertNull($row['letter_grade_settings']); unset($row['letter_grade_settings']);
+                return $row;
             },\Illuminate\Support\Facades\DB::table('masjids')->get()->all())];
         }
         return $responses;

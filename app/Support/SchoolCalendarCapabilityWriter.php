@@ -54,7 +54,7 @@ final class SchoolCalendarCapabilityWriter
             // hidden OFF -> OFF write, as main's writer does for class subjects.
             // Every other key stores its override and its audit row, no-ops included.
             $unchangedHidden = [];
-            foreach ([SchoolSettings::SCHOOL_CALENDAR_TERMS, 'class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'school_timetable', 'family_duty_rota'] as $hidden) {
+            foreach (['letter_grades', SchoolSettings::SCHOOL_CALENDAR_TERMS, 'class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'school_timetable', 'family_duty_rota'] as $hidden) {
                 if (($changes[$hidden] ?? null) === false && ! $locked->hasCapability($hidden)) {
                     $unchangedHidden[] = $hidden;
                     unset($changes[$hidden]);

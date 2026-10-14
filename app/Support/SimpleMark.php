@@ -122,12 +122,14 @@ final class SimpleMark
     }
 
 
-    public static function summaryForClassSubjects(int $membershipId, ?array $subjectIds = null): array
+    public static function summaryForClassSubjects(int $membershipId, ?array $subjectIds = null, ?\Illuminate\Support\Carbon $from = null, ?\Illuminate\Support\Carbon $to = null): array
     {
         $rows = AssignmentScore::query()
             ->where('assignment_scores.group_membership_id', $membershipId)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
+            ->when($from, fn ($q) => $q->whereDate('class_assignments.assigned_on', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('class_assignments.assigned_on', '<=', $to))
             // A subject-limited teacher reads only their own subjects' marks
             // (App\Support\SubjectFence). NULL is no filter.
             ->when($subjectIds !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectIds))

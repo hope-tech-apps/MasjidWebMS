@@ -83,7 +83,7 @@ class ReportCardPdfService
         $mpdf->SetTitle($this->documentTitle($card, $membership));
         $mpdf->SetAuthor((string) ($card->masjid?->name ?? 'Manara'));
         // A report card is a record, not a web page: make it findable as one.
-        $mpdf->SetSubject($card->typeLabel() . ' — ' . $card->periodLabel());
+        $mpdf->SetSubject($card->typeLabel() . ' — ' . $this->periodLabel($card));
 
         $mpdf->WriteHTML(view('pdf.report-card', $this->data($card, $membership))->render());
 
@@ -101,7 +101,7 @@ class ReportCardPdfService
         $parts = [
             $this->childName($membership),
             $card->typeLabel(),
-            $card->periodLabel(),
+            $this->periodLabel($card),
         ];
 
         $slug = Str::slug(implode(' ', array_filter($parts))) ?: 'report-card';
@@ -116,6 +116,7 @@ class ReportCardPdfService
         $marks = $card->marks()->orderBy('position')->get();
 
         return [
+            ...(\App\Support\LetterGrades::enabled($masjid) ? ['letterGrades'=>\App\Support\LetterGrades::family($card, $masjid)] : []),
             'schoolName' => (string) ($masjid?->name ?? ''),
             'logo' => $this->logoDataUri($masjid),
             'palette' => DesignTokens::resolve($masjid?->themeSettings),
@@ -123,7 +124,7 @@ class ReportCardPdfService
             'childName' => $this->childName($membership),
             'gradeLabel' => $card->grade_label,
             'typeLabel' => $card->typeLabel(),
-            'periodLabel' => $card->periodLabel(),
+            'periodLabel' => \App\Support\LetterGrades::periodLabel($card, $marks, $masjid) ?? $card->periodLabel(),
             'publishedAt' => $card->published_at?->format('F j, Y'),
 
             // Present already INCLUDES the late days, and the document says so
@@ -229,9 +230,15 @@ class ReportCardPdfService
         return 'data:' . $media->mime_type . ';base64,' . base64_encode((string) file_get_contents($path));
     }
 
+    /** Filename, PDF metadata and visible heading all identify the same frozen dated term. */
+    private function periodLabel(ReportCard $card): string
+    {
+        return \App\Support\LetterGrades::periodLabel($card, null, $card->masjid) ?? $card->periodLabel();
+    }
+
     private function documentTitle(ReportCard $card, GroupMembership $membership): string
     {
-        return $this->childName($membership) . ' — ' . $card->typeLabel() . ', ' . $card->periodLabel();
+        return $this->childName($membership) . ' — ' . $card->typeLabel() . ', ' . $this->periodLabel($card);
     }
 
     private function tempDir(): string

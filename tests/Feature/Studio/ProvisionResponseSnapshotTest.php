@@ -340,6 +340,7 @@ class ProvisionResponseSnapshotTest extends TestCase
                     }
                     $this->assertSame(0,(int)$row['has_timetable_records']);
                     unset($row['has_timetable_records']);
+                    if ($table === 'masjids') { $this->assertNull($row['letter_grade_settings']); unset($row['letter_grade_settings']); }
                 }
                 // The duty rota's hidden bookkeeping, pinned OFF by DutyRotaOffTest; legacy columns stay literal.
                 foreach (['forms' => ['has_duty_rota_records', 'duty_rota_enabled'], 'school_years' => ['has_duty_rota_records']][$table] ?? [] as $hint) {

@@ -19,6 +19,7 @@ export type ClassSubjectFields = {
     class_subjects_enabled?: boolean;
     class_subject_work_enabled?: boolean;
     class_subject_report_summary_enabled?: boolean;
+    letter_grades_enabled?: boolean;
     class_subjects?: ClassSubject[];
     my_class_subject_ids?: number[] | null;
 };

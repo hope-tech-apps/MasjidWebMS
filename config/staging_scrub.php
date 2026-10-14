@@ -611,7 +611,12 @@ return [
         'report_cards' => [
             'teacher_comment' => 'free_text', // the most sensitive free-text field in the school module
         ],
+        'term_grades' => [
+            'comment' => 'free_text',
+        ],
         'report_card_marks' => [
+            'override_reason' => 'free_text',
+            'final_comment' => 'free_text',
             'comment' => 'free_text',
         ],
         'subject_pieces' => [
@@ -668,6 +673,28 @@ return [
     | Populated below by `php artisan test --filter=StagingScrubCoverage`.
     */
     'reviewed_keep' => [
+        'masjids.letter_grade_settings' => 'School policy only: letter scale, starting grade and boolean. No student text.',
+        'report_card_marks.class_subject_id' => 'Reference to the existing class subject; no identifying text.',
+        'report_card_marks.calculated_percentage' => 'Academic numeric outcome; retained as existing levels are.',
+        'report_card_marks.calculated_letter' => 'Academic outcome; retained as existing levels are.',
+        'report_card_marks.override_letter' => 'Academic outcome only. The free-text reason is scrubbed.',
+        'report_card_marks.override_by_user_id' => 'Actor key to a scrubbed staff row.',
+        'report_card_marks.override_at' => 'Attribution timestamp; no identifying text.',
+        'report_card_marks.final_letter' => 'Publication snapshot of academic outcome.',
+        'report_card_marks.final_percentage' => 'Publication snapshot of numeric academic outcome.',
+        'report_card_marks.letter_snapshot_at' => 'Publication timestamp; no identifying text.',
+        'term_grades.id' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.masjid_id' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.contact_id' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.class_subject_id' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.school_term_id' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.report_card_id' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.subject' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.final_letter' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.percentage' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.published_at' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.created_at' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
+        'term_grades.updated_at' => 'Academic record key, subject heading, outcome or timestamp; contacts and staff are scrubbed separately. Free-text comment is scrubbed.',
         'member_question_settings.prompt' => 'Organisation question wording, not member-entered answers.',
         'member_question_options.label' => 'Organisation option labels, not member-entered answers.',
         'app_volunteer_settings.title' => 'Public link title entered by the organisation, not a member answer.',

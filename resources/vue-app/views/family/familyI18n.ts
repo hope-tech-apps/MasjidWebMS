@@ -168,6 +168,8 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
     es: ES,
     fr: FR,
     en: {
+        term_grade: "Term grade",
+        term_no_points: "No points work in this term",
         // ------------------------------------------------------------ shared
         switch_lang_title: "Switch language",
         student: "Student",
@@ -538,6 +540,9 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         bucks_more: "Show earlier",
     },
     ar: {
+        // New term labels machine-drafted; fluent review pending.
+        term_grade: "تقدير الفصل الدراسي",
+        term_no_points: "لا توجد أعمال مقيمة بالنقاط في هذا الفصل الدراسي",
         // ------------------------------------------------------------ shared
         switch_lang_title: "تغيير اللغة",
         student: "طالب",

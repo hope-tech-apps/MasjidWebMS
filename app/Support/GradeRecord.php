@@ -470,12 +470,14 @@ final class GradeRecord
     }
 
 
-    private static function levelSummaryClassSubjects(int $membershipId, ?array $subjectIds): array
+    private static function levelSummaryClassSubjects(int $membershipId, ?array $subjectIds, ?\Illuminate\Support\Carbon $from = null, ?\Illuminate\Support\Carbon $to = null): array
     {
         $rows = AssignmentScore::query()
             ->where('assignment_scores.group_membership_id', $membershipId)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
+            ->when($from, fn ($q) => $q->whereDate('class_assignments.assigned_on', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('class_assignments.assigned_on', '<=', $to))
             ->when($subjectIds !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectIds))
             ->where('class_assignments.scale', ClassAssignment::SCALE_LEVELS)
             ->whereIn('assignment_scores.status', AssignmentScore::COUNTS_TOWARD_AVERAGE)
@@ -512,15 +514,15 @@ final class GradeRecord
         ];
     }
 
-    public static function summaryForClassSubjects(int $membershipId, ?array $subjectIds = null): array
+    public static function summaryForClassSubjects(int $membershipId, ?array $subjectIds = null, ?\Illuminate\Support\Carbon $from = null, ?\Illuminate\Support\Carbon $to = null): array
     {
-        $totals = self::totalsClassSubjects($membershipId, $subjectIds);
+        $totals = self::totalsClassSubjects($membershipId, $subjectIds, $from, $to);
         $recorded = (int) $totals->sum('n');
         $countingRows = $totals->whereIn('status', AssignmentScore::COUNTS_TOWARD_AVERAGE);
 
         $pointRows = $countingRows->where('scale', ClassAssignment::SCALE_POINTS);
 
-        $pieces = self::piecesClassSubjects($membershipId, $subjectIds);
+        $pieces = self::piecesClassSubjects($membershipId, $subjectIds, $from, $to);
         $weights = self::weightsFor($membershipId);
 
         return [
@@ -533,10 +535,10 @@ final class GradeRecord
             'points_counted' => (int) $pointRows->sum('n'),
             // Levels work, reported as levels: a distribution and a mean level
             // to one decimal. Never a percentage.
-            'levels' => self::levelSummaryClassSubjects($membershipId, $subjectIds),
+            'levels' => self::levelSummaryClassSubjects($membershipId, $subjectIds, $from, $to),
             // Excellent / Good / Needs work: a count of each word. No mean and
             // no percentage (App\Support\SimpleMark).
-            'simple' => SimpleMark::summaryForClassSubjects($membershipId, $subjectIds),
+            'simple' => SimpleMark::summaryForClassSubjects($membershipId, $subjectIds, $from, $to),
             // T-001.2: the class's weights applied. See the class docblock.
             'weighting' => self::weighting($pieces, $weights),
             // T-001.3: the same marks, one block per subject.
@@ -544,12 +546,20 @@ final class GradeRecord
         ];
     }
 
-    private static function totalsClassSubjects(int $membershipId, ?array $subjectIds): Collection
+    /** Dated points summary uses exactly the same subject pooling and weighting as the gradebook. */
+    public static function forTerm(int $membershipId, ?array $subjectIds, \Illuminate\Support\Carbon $from, \Illuminate\Support\Carbon $to): array
+    {
+        return self::summaryForClassSubjects($membershipId, $subjectIds, $from, $to);
+    }
+
+    private static function totalsClassSubjects(int $membershipId, ?array $subjectIds, ?\Illuminate\Support\Carbon $from = null, ?\Illuminate\Support\Carbon $to = null): Collection
     {
         return AssignmentScore::query()
             ->where('assignment_scores.group_membership_id', $membershipId)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
+            ->when($from, fn ($q) => $q->whereDate('class_assignments.assigned_on', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('class_assignments.assigned_on', '<=', $to))
             ->when($subjectIds !== null, fn ($q) => $q->whereIn('class_assignments.class_subject_id', $subjectIds))
             ->groupBy('assignment_scores.status', 'class_assignments.scale')
             ->selectRaw('assignment_scores.status as status')
@@ -560,12 +570,14 @@ final class GradeRecord
             ->get();
     }
 
-    private static function piecesClassSubjects(int $membershipId, ?array $subjectIds): Collection
+    private static function piecesClassSubjects(int $membershipId, ?array $subjectIds, ?\Illuminate\Support\Carbon $from = null, ?\Illuminate\Support\Carbon $to = null): Collection
     {
         return AssignmentScore::query()
             ->where('assignment_scores.group_membership_id', $membershipId)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
+            ->when($from, fn ($q) => $q->whereDate('class_assignments.assigned_on', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('class_assignments.assigned_on', '<=', $to))
             ->leftJoin('class_subjects', function ($join) {
                 $join->on('class_subjects.id', '=', 'class_assignments.class_subject_id')
                     ->on('class_subjects.masjid_id', '=', 'class_assignments.masjid_id')

@@ -30,6 +30,11 @@ class SaveReportCardRequest extends BaseFormRequest
     public function rules(): array
     {
         return [
+            'letter_grades' => ['sometimes', 'array', 'max:200'],
+            'letter_grades.*.id' => ['required', 'integer', 'distinct'],
+            'letter_grades.*.override_letter' => ['nullable', 'string', 'max:20'],
+            'letter_grades.*.override_reason' => ['nullable', 'string', 'max:1000'],
+            'letter_grades.*.comment' => ['nullable', 'string', 'max:1000'],
             'marks' => ['sometimes', 'array', 'max:200'],
             'marks.*.id' => ['required', 'integer'],
             'marks.*.level' => ['nullable', Rule::in(PerformanceLevel::ALL)],

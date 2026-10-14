@@ -42,6 +42,15 @@ class ReportCardController extends TeacherController
             ->map(fn ($year) => $year->first_day->format('Y').'-'.$year->last_day->format('Y'))->unique()->values()->all();
     }
 
+    /** Dates and names for the teacher/office selectors; never expose another school's terms. */
+    private function letterTerms(int $org): array
+    {
+        return \App\Models\SchoolYear::where('masjid_id', $org)->with('terms')->get()->flatMap(fn ($year) => $year->terms->map(fn ($term) => [
+            'school_year'=>$year->first_day->format('Y').'-'.$year->last_day->format('Y'), 'position'=>$term->position,
+            'name'=>$term->name, 'starts_on'=>$term->starts_on->toDateString(), 'ends_on'=>$term->ends_on->toDateString(),
+        ]))->values()->all();
+    }
+
     private function datedPeriodLabel(ReportCard $card): string
     {
         $term = $card->school_term_id ? \App\Models\SchoolTerm::query()->where('masjid_id', $card->masjid_id)->find($card->school_term_id) : null;
@@ -94,11 +103,23 @@ class ReportCardController extends TeacherController
             ->with('contact')
             ->get();
 
+        // Keep main's first calendar lookup after the roster read. Only eligible letter classes
+        // re-read with dated defaults once that existing lookup has established the school policy.
+        if ($this->datedTermsEnabled((int) $masjid_id) && \App\Support\LetterGrades::forGroup($group)
+            && $type === ReportCard::TYPE_REPORT_CARD && (! $request->has('school_year') || ! $request->has('term'))) {
+            [$datedType, $datedYear, $datedTerm] = $this->period($request);
+            if ($datedYear !== $year || $datedTerm !== $term) {
+                $request->merge(['school_year'=>$datedYear, 'term'=>$datedTerm]);
+                return $this->index($request, $masjid_id, $group_id);
+            }
+        }
+
         return response()->json([
             'status' => 'success',
             'data' => [
                 'period' => ['type' => $type, 'school_year' => $year, 'term' => $term],
                 ...($this->datedTermsEnabled((int) $masjid_id) ? ['school_years' => $this->datedSchoolYears((int) $masjid_id)] : []),
+                ...(\App\Support\LetterGrades::forGroup($group) && $type === ReportCard::TYPE_REPORT_CARD ? ['letter_terms'=>$this->letterTerms((int) $masjid_id)] : []),
                 'students' => $students->map(function (GroupMembership $m) use ($cards): array {
                     $card = $cards->get($m->id);
 
@@ -177,12 +198,17 @@ class ReportCardController extends TeacherController
 
         $saved = null;
         $write = function (ReportCard $card) use ($request, &$saved): void {
+            if ($request->has('letter_grades')) {
+                $saved = $this->cards->saveWithLetters($card, $request->validated('marks', []), $request->has('teacher_comment'), (string) $request->input('teacher_comment'), $request->validated('letter_grades', []));
+                return;
+            }
             $saved = $this->cards->saveMarks(
                 $card,
                 $request->validated('marks', []),
                 $request->has('teacher_comment'),
                 (string) $request->input('teacher_comment'),
             );
+
         };
         // ON saves run inside preparation's transaction. OFF keeps the original two transactions.
         $card = $this->cards->prepare($membership, $type, $year, $term, $write);
@@ -298,14 +324,19 @@ class ReportCardController extends TeacherController
                 'criteria' => $rows->map(fn (ReportCardMark $m) => $this->mark($m))->values(),
             ])->values();
 
+        $letters = \App\Support\LetterGrades::staff($card);
+        $school = \App\Support\LetterGrades::school((int) $card->masjid_id);
+        $unknownGrade = ! $card->isPublished() && $card->type === ReportCard::TYPE_REPORT_CARD && \App\Support\LetterGrades::enabled($school) && \App\Support\GradeLevel::position($membership->grade_label) === null;
         return [
+            ...($letters !== [] ? ['letter_grades'=>$letters, 'school_term_id'=>$card->school_term_id, 'letter_scale'=>$school->letter_grade_settings['scale'] ?? \App\Support\LetterGrades::DEFAULT_SCALE] : []),
+            ...($unknownGrade ? ['letter_grade_notice'=>'This student’s grade cannot be placed in the school grade order. Levels are kept until the office sets a recognised grade.'] : []),
             'id' => (int) $card->id,
             'student' => $this->student($membership),
             'type' => $card->type,
             'type_label' => $card->typeLabel(),
             'school_year' => $card->school_year,
             'term' => (int) $card->term,
-            'period_label' => $this->datedTermsEnabled((int) $card->masjid_id) ? $this->datedPeriodLabel($card) : $card->periodLabel(),
+            'period_label' => \App\Support\LetterGrades::periodLabel($card, $marks, $school) ?? ($this->datedTermsEnabled((int) $card->masjid_id) ? $this->datedPeriodLabel($card) : $card->periodLabel()),
             'grade_label' => $card->grade_label,
             'teacher_comment' => $card->teacher_comment,
             'published' => $card->isPublished(),
@@ -364,6 +395,13 @@ class ReportCardController extends TeacherController
             $year = $this->currentSchoolYear();
         }
 
+        if ($type === ReportCard::TYPE_REPORT_CARD && (\App\Support\ClassSubjectMode::loadedOrganisation((int) app(\App\Support\TenantContext::class)->get())?->hasCapability('letter_grades') && \App\Support\LetterGrades::forGroup(\App\Models\Group::findOrFail($request->route('group_id'))))) {
+            $terms = collect($this->letterTerms((int) app(\App\Support\TenantContext::class)->get()));
+            $today = \App\Support\SchoolDateAuthority::for((int) app(\App\Support\TenantContext::class)->get())->today();
+            $current = $terms->first(fn ($row) => $row['starts_on'] <= $today && $row['ends_on'] >= $today);
+            if ($current && ! $request->has('school_year')) $year = $current['school_year'];
+            if ($current && $current['school_year'] === $year && ! $request->has('term')) $term = $current['position'];
+        }
         return [$type, $year, $term];
     }
 

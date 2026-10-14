@@ -644,6 +644,7 @@
                         </div>
                     </div>
 
+                    <FamilyLetterGrades v-if="openCard.letter_grades" :grades="openCard.letter_grades" />
                     <div v-for="(sub, si) in openCard.subjects" :key="sub.subject" class="card border-0 shadow-sm mb-2">
                         <div class="card-header bg-white fw-semibold small" dir="auto">{{ sub.subject }}</div>
                         <div class="list-group list-group-flush">
@@ -1058,6 +1059,7 @@
 
 <script setup lang="ts">
 import FamilyAttendance from '@/views/family/FamilyAttendance.vue';
+import FamilyLetterGrades from '@/components/classes/FamilyLetterGrades.vue';
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import { hifzKindLabel, hifzQualityLabel } from '@/core/helpers/hifzLabels';
 import { hifzDayLabel } from '@/core/helpers/hifzDay';
