@@ -51,6 +51,11 @@ use Illuminate\Validation\Rule;
  */
 class SaveLessonPlanRequest extends BaseFormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        if ($this->hasFile('photos') && $this->input('resource_ids') === '[]') $this->merge(['resource_ids' => []]);
+    }
+
     public function rules(): array
     {
         $prose = (int) config('groups.lessons.max_section_length', 2000);
@@ -97,6 +102,9 @@ class SaveLessonPlanRequest extends BaseFormRequest
             'reflection_worked' => ['nullable', 'string', 'max:' . $prose],
             'reflection_improve' => ['nullable', 'string', 'max:' . $prose],
 
+            // Photos remain in the browser until this whole-plan save.
+            'photos' => ['sometimes', 'array', 'max:4'],
+            'photos.*' => \App\Support\LessonPlanPhotoAccess::imageRules(),
             // See the docblock: `sometimes`, not `nullable`, deliberately.
             'resource_ids' => ['sometimes', 'array', 'max:' . (int) config('groups.lessons.max_attachments', 10)],
             'resource_ids.*' => ['integer', 'min:1', 'distinct'],

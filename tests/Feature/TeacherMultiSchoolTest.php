@@ -393,6 +393,12 @@ class TeacherMultiSchoolTest extends TestCase
                 }
             });
 
+        config(['lesson_plan_photo.enabled' => true]);
+        \Illuminate\Support\Facades\Http::fake(['api.anthropic.com/*' => \Illuminate\Support\Facades\Http::response([
+            'stop_reason' => 'tool_use', 'content' => [['type' => 'tool_use', 'name' => 'read_lesson_pages',
+                'input' => ['days' => [['date' => null, 'date_written' => 'No date written', 'fields' => ['body' => 'Invented sweep activities']]]]]],
+        ])]);
+
         $skillA = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolA->id)->firstOrFail();
         $skillB = BehaviorSkill::withoutMasjidScope()->where('masjid_id', $this->schoolB->id)->firstOrFail();
 
@@ -408,7 +414,8 @@ class TeacherMultiSchoolTest extends TestCase
             \App\Support\ClassSubjectInitializer::run($school, false, true);
             // Subject notes and marks are off by default too; swept for real, like the store.
             $on = $school->fresh();
-            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true])])->save();
+            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true,
+                'lesson_plan_photo_fill' => true, 'lesson_plan_photo_fill_teacher_ids' => [(int) $this->teacher->id]])])->save();
             \App\Models\MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $school->id, 'paper_bucks_enabled' => true]);
         }
 
@@ -741,6 +748,12 @@ class TeacherMultiSchoolTest extends TestCase
             ],
 
             // -- lesson plans
+            'POST /groups/{group_id}/lesson-plans/photo-fill' => [
+                'body' => fn (TeacherRealmWorld $w) => ['session_date' => $w->plan->session_date->toDateString(),
+                    'plan_id' => $w->plan->id, 'class_subject_id' => $w->subject->id],
+                'files' => fn () => ['photos' => [UploadedFile::fake()->image('invented.png', 32, 32)]],
+                'refuse' => $bodyRefusal,
+            ],
             'POST /groups/{group_id}/lesson-plans' => [
                 'body' => fn (TeacherRealmWorld $w) => ['session_date' => $soon, 'subject' => $w->subject->name, 'body' => 'Sweep plan.', 'resource_ids' => [$w->resource->id]],
                 'refuse' => $bodyRefusal,

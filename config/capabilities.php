@@ -103,6 +103,14 @@ return [
     // Grants
     // ------------------------------------------------------------------
 
+    'lesson_plan_photo_fill' => [
+        'kind' => 'grant', 'group' => 'school', 'catalogue_when_off' => false,
+        'label' => 'Lesson plan from a photo',
+        'description' => 'Allow selected teachers to fill a draft lesson plan from notebook photos.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
     'app_member_questions' => [
         'kind' => 'grant', 'group' => 'content', 'catalogue_when_off' => false,
         'label' => 'App member questions',

@@ -194,7 +194,9 @@ abstract class TeacherController extends Controller
      */
     private function classStoreFlag(Group $group): array
     {
-        return SchoolSettings::classStore(SchoolSettings::org($group->masjid_id)) ? ['class_store' => true] : [];
+        $school = SchoolSettings::org($group->masjid_id);
+        return (SchoolSettings::classStore($school) ? ['class_store' => true] : [])
+            + (\App\Support\LessonPlanPhotoAccess::allowed($school, (int) Auth::id()) ? ['lesson_plan_photo_fill' => true] : []);
     }
 
     /**

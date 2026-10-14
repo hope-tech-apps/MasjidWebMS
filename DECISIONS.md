@@ -9743,3 +9743,8 @@ Owner requires saved tab choice as well as enabled availability. Named catalogue
 
 ## 2026-10-13 — French family language
 Add fr / Français / LTR / intl fr after Spanish in the existing client registries and server translation offer. Preference remains MANARA_FAMILY_LANG in localStorage; there is no server preference field or enum to migrate. Explicit teacher-content translation reuses tenant/source/target caches and unchanged ceilings. FamilyLayout synchronizes document lang/dir while mounted and restores prior attributes on departure. Lunch remains en/ar; public/branded landing pages, staff realms and family mail remain English. French has 260 keys matching Spanish, MACHINE-DRAFTED dated 2026-10-13, reviewed false; no fluent reader yet. All existing six word tables and fixtures remain unchanged.
+
+## 2026-10-14 — Lesson-plan photo fill
+Use existing private capability_overrides for lesson_plan_photo_fill_teacher_ids, no public identity field. Add optional curriculum_weeks.standard_description because current pacing-guide rows carry no description; never substitute focus/objective. 4 images, 3 MiB each, 2000px long side, 20 reads/hour per teacher, 8192 output tokens, 60s timeout, one call without retries. Photos ride the plan save and existing GroupResourceFiles/attachment paths, staff only.
+
+Photo-fill OFF preservation: permission rides existing class payload only when admitted; no bootstrap request is added. Pilot key hidden in raw serialization, grant hidden in disabled maps and catalogues. Existing frozen method tails stay unchanged. Use existing SDK with fakeable PSR transport and explicit request/client retry count zero. Cache nonmatching days in the draft; Fill anyway makes no additional provider call.

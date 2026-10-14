@@ -1500,12 +1500,18 @@
                                         @click="selectPlan(planClash.id)">Open it</button>
                             </div>
 
-                            <div v-if="curriculum.grades.length" class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-                                <button class="btn btn-sm btn-outline-success" :disabled="!canPrefill || prefilling"
+                            <div v-if="curriculum.grades.length || canPhotoFill" class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                                <button v-if="curriculum.grades.length" class="btn btn-sm btn-outline-success" :disabled="!canPrefill || prefilling"
                                         @click="prefillFromGuide()">
                                     <i class="bi bi-stars me-1"></i>
                                     {{ prefilling ? 'Filling…' : 'Prefill from pacing guide' }}
                                 </button>
+                                <template v-if="canPhotoFill">
+                                    <button type="button" class="btn btn-sm btn-outline-success" :disabled="photoBusy || planSaving"
+                                            @click="photoInput?.click()">{{ photoBusy ? 'Reading photos…' : 'Fill from a photo' }}</button>
+                                    <input ref="photoInput" type="file" accept="image/*" multiple class="d-none" @change="readPlanPhotos">
+                                    <span v-if="photoFilled" class="badge bg-success-subtle text-success-emphasis fw-normal">from your photo</span>
+                                </template>
                                 <span v-if="planForm.prefill_source" class="badge bg-success-subtle text-success-emphasis fw-normal">
                                     from the pacing guide
                                 </span>
@@ -1520,6 +1526,18 @@
                                         :disabled="copying" @click="copyAcrossWeek">
                                     {{ copying ? 'Copying…' : (selectedPlan.subject ? `Copy this ${selectedPlan.subject} plan to the rest of this week` : 'Copy to the rest of this week') }}
                                 </button>
+                            </div>
+
+                            <div v-if="canPhotoFill" class="small mb-2">
+                                <p class="text-muted mb-1">The photos are sent to be read so Manara can fill the plan, and are kept in the plan's Files for staff when you save.</p>
+                                <p v-if="photoMessage" role="status" class="mb-1">{{ photoMessage }}</p>
+                                <p v-if="photoKept" class="text-muted mb-1">Kept what this plan already says. Clear a field to fill it from the photo.</p>
+                                <p v-if="pendingPhotos.length" class="text-muted mb-1">{{ pendingPhotos.length }} photos waiting for Save.
+                                    <span v-if="photoSlots(planForm.attachments.length, pendingPhotos.length) < pendingPhotos.length">The Files limit is {{ MAX_PLAN_FILES }}; only {{ photoSlots(planForm.attachments.length, pendingPhotos.length) }} photos will fit.</span>
+                                    <button type="button" class="btn btn-sm btn-link p-0" :disabled="photoBusy || planSaving" @click="pendingPhotos = []; photoChoices = []">Remove photos</button>
+                                </p>
+                                <button v-for="(day, i) in photoChoices" :key="i" type="button" class="btn btn-sm btn-outline-secondary me-1"
+                                        :disabled="photoBusy || planSaving" @click="fillPhotoDay(day)">Fill anyway from {{ day.date_written }}</button>
                             </div>
 
                             <!-- The guide gives ONE code per subject per week and a
@@ -1607,7 +1625,9 @@
 
                         <div v-if="planOpen[sec.key]" class="card-body pt-0">
                             <template v-for="f in sec.fields" :key="f.key">
-                                <label class="form-label small text-muted mb-1">{{ f.label }}</label>
+                                <label class="form-label small text-muted mb-1">{{ f.label }}
+                                    <span v-if="photoSuggestions[f.key]" class="badge bg-warning-subtle text-warning-emphasis ms-1">Suggested: check before saving</span>
+                                </label>
 
                                 <!-- Learning outcomes: a real list, not a textarea
                                      pretending. Stored as json. -->
@@ -1636,6 +1656,7 @@
                                             {{ m.label }}
                                         </button>
                                     </div>
+                                    <span v-if="photoSuggestions.teaching_methods_other" class="badge bg-warning-subtle text-warning-emphasis">Suggested: check before saving</span>
                                     <input v-if="planForm.teaching_methods.includes('other')"
                                            v-model="planForm.teaching_methods_other" type="text" maxlength="255"
                                            class="form-control form-control-sm mb-2" placeholder="Other — which?">
@@ -1720,7 +1741,7 @@
                     </div>
 
                     <div class="d-flex align-items-center gap-2 mt-3">
-                        <button class="btn btn-sm btn-success" :disabled="!canSavePlan(planSaving, planForm.body, planClash)"
+                        <button class="btn btn-sm btn-success" :disabled="photoBusy || !canSavePlan(planSaving, planForm.body, planClash)"
                                 @click="savePlan">
                             {{ planSaving ? 'Saving…' : 'Save plan' }}
                         </button>
@@ -2676,6 +2697,7 @@ import {
     threadNewLabel, unreadNumber, unreadPill, unreadSpoken,
 } from '@/core/helpers/threadUnread';
 import { useAuthStore } from '@/stores/authStore';
+import { applyPhotoFields, clearEditedSuggestions, downscalePhoto, photoAvailable, photoSaveForm, photoSlots } from '@/core/helpers/lessonPlanPhoto';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import ClassNavigation from '@/components/classes/ClassNavigation.vue';
@@ -2991,7 +3013,7 @@ let plansSeq = 0;
 let resyncOwed = false;
 /** The form as syncPlanForm last loaded it, so a reload can tell a draft from an untouched plan. */
 let planSnapshot = '';
-const planDirty = () => JSON.stringify(planForm.value) !== planSnapshot;
+const planDirty = () => JSON.stringify(planForm.value) !== planSnapshot || pendingPhotos.value.length > 0;
 const planSaved = ref(false);
 const planError = ref('');
 
@@ -3075,6 +3097,61 @@ const emptyPlan = () => ({
 });
 
 const planForm = ref<any>(emptyPlan());
+const canPhotoFill = computed(() => photoAvailable(group.value));
+const photoInput = ref<HTMLInputElement | null>(null);
+const photoBusy = ref(false);
+const pendingPhotos = ref<File[]>([]);
+const photoSuggestions = ref<Record<string, string>>({});
+const photoChoices = ref<any[]>([]);
+const photoFilled = ref(false);
+const photoKept = ref(false);
+const photoMessage = ref('');
+watch(planForm, (form) => { photoSuggestions.value = clearEditedSuggestions(photoSuggestions.value, form); }, { deep: true, flush: 'sync' });
+watch(() => [planDate.value, planForm.value.subject, planForm.value.class_subject_id, planForm.value.grade_label], () => { photoChoices.value = []; });
+const fillPhotoDay = (day: any) => {
+    const suggested = day.suggested ?? [];
+    const result = applyPhotoFields(planForm.value, day.fields, suggested, planHidden.value);
+    photoSuggestions.value = { ...photoSuggestions.value, ...result.suggestions };
+    photoKept.value = result.kept;
+    photoFilled.value = true;
+    photoChoices.value = [];
+    for (const sec of planSections) if (sectionFilled(sec)) planOpen.value[sec.key] = true;
+};
+const readPlanPhotos = async (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    const picked = Array.from(input.files ?? []);
+    input.value = '';
+    if (!picked.length || photoBusy.value || planSaving.value) return;
+    if (picked.length > 4) { photoMessage.value = 'Choose between one and four photos.'; return; }
+    if (pendingPhotos.value.length + picked.length > 4) { photoMessage.value = 'Save or remove the current photos before choosing more than four.'; return; }
+    photoBusy.value = true;
+    photoMessage.value = '';
+    const ticket = planForms.current();
+    const identity = JSON.stringify([base.value, planDate.value, planForm.value.subject, planForm.value.class_subject_id, planForm.value.grade_label]);
+    const current = () => planForms.isCurrent(ticket) && identity === JSON.stringify([base.value, planDate.value, planForm.value.subject, planForm.value.class_subject_id, planForm.value.grade_label]);
+    try {
+        const photos = await Promise.all(picked.map(downscalePhoto));
+        if (!current()) return;
+        const form = new FormData();
+        photos.forEach((photo) => form.append('photos[]', photo));
+        form.append('session_date', planDate.value);
+        form.append('subject', planForm.value.subject || '');
+        form.append('grade_label', planForm.value.grade_label || '');
+        if (typeof planForm.value.class_subject_id === 'number') form.append('class_subject_id', String(planForm.value.class_subject_id));
+        if (planId.value) form.append('plan_id', String(planId.value));
+        const res = await TeacherApiService.postForm(`${base.value}/lesson-plans/photo-fill`, form);
+        if (!current()) return;
+        const data = res.data.data;
+        pendingPhotos.value = [...pendingPhotos.value, ...photos];
+        photoMessage.value = data.message;
+        if (Object.keys(data.fields).length) fillPhotoDay({ fields: data.fields, suggested: data.suggested });
+        else photoChoices.value = data.days;
+    } catch (err: any) {
+        if (current()) photoMessage.value = err?.response?.status === 429
+            ? 'You have reached the photo reading limit; please try again later.'
+            : 'The photos could not be read; please try again.';
+    } finally { photoBusy.value = false; }
+};
 
 // The class's permitted subjects, independent of which columns its pacing guide carries.
 const planClassSubjects = computed(() => (group.value?.class_subjects ?? []).filter((s: any) =>
@@ -3792,6 +3869,12 @@ const loadLessonPlans = async (resync: boolean | (() => boolean) = true): Promis
 
 /** The form always shows the SELECTED plan of the selected day — never a stale one. */
 const syncPlanForm = () => {
+    pendingPhotos.value = [];
+    photoSuggestions.value = {};
+    photoChoices.value = [];
+    photoFilled.value = false;
+    photoKept.value = false;
+    photoMessage.value = '';
     const p = selectedPlan.value;
     const blank = emptyPlan();
 
@@ -3894,14 +3977,21 @@ const savePlan = async () => {
         // server refuses it if the day already has that subject.
         const ticket = planForms.current();
         const req = planSaveRequest(base.value, planId.value);
-        const res = req.method === 'post'
-            ? await TeacherApiService.post(req.url, payload)
-            : await TeacherApiService.put(req.url, payload);
+        const res = pendingPhotos.value.length
+            ? await TeacherApiService.postForm(req.url, photoSaveForm(payload, pendingPhotos.value, req.method))
+            : req.method === 'post'
+                ? await TeacherApiService.post(req.url, payload)
+                : await TeacherApiService.put(req.url, payload);
+        const photoSaveMessage = res.data?.data?.photo_message || '';
         // Stay on the saved plan only if it is still the one on screen: a chip
         // clicked while the save was in flight has opened another, and the
         // teacher stays there.
         const savedId = res.data?.data?.id ?? planId.value;
-        if (planForms.isCurrent(ticket)) planId.value = savedId;
+        if (planForms.isCurrent(ticket)) {
+            planId.value = savedId;
+            pendingPhotos.value = [];
+            if (res.data?.data?.attachments) planForm.value.attachments = [...res.data.data.attachments];
+        }
         // Re-sync only a form showing the plan that was saved — asked when the
         // week's answer lands, since the teacher can switch plans during that
         // request too. Another plan opened meanwhile keeps what she is writing.
@@ -3909,6 +3999,7 @@ const savePlan = async () => {
             () => planForms.isCurrent(ticket) || planId.value === savedId);
         // "Saved" belongs beside the plan that was saved, and nowhere else.
         planSaved.value = resynced && planId.value === savedId;
+        if (planSaved.value) photoMessage.value = photoSaveMessage;
     } catch (e: any) {
         planError.value = classSubjects.enabled.value ? apiErrorText(e, 'That plan could not be saved.') : e?.response?.data?.data?.subject?.[0]
             ?? e?.response?.data?.data?.session_date?.[0]

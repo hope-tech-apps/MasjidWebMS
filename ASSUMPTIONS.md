@@ -519,3 +519,6 @@ Assumption: item 2 is the final attendance Keep behavior, retaining saved Absent
 ## French family language — 2026-10-13
 - French labels are a machine draft, not checked by a fluent reader; FR carries the explicit warning and reviewed false. Standard polite vous and preserved school/religious terms follow the brief.
 - Mounted SPA tests verify rendering and handlers but do not verify real-browser geometry, trusted input or accessibility. No browser/reader, real translation-provider purchase, MySQL, CI/staging/production or mail delivery is claimed.
+
+## 2026-10-14 — Lesson-plan photo fill
+Pilot identity remains unspecified; empty allowlist and OFF capability admit nobody. Standard descriptions must be supplied by the school; existing rows remain null. Real provider/handwriting verification belongs to the owner.

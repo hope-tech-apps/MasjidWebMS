@@ -478,7 +478,7 @@ class LessonPlanAttachmentsTest extends TestCase
         $base = 'api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans';
         $expected = [
             "DELETE /{$base}", "DELETE /{$base}/{plan_id}", "POST /{$base}",
-            "PUT /{$base}", "PUT /{$base}/{plan_id}",
+            "PUT /{$base}", "PUT /{$base}/{plan_id}", "POST /{$base}/photo-fill",
         ];
         sort($expected);
 

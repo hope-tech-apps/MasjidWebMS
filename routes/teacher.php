@@ -265,6 +265,7 @@ Route::prefix('teacher')
                         // are the (day, subject) address: an upsert that "copy to
                         // the rest of this week" uses, and the address an older
                         // screen still open in a tab knows. See the controller.
+                        Route::post('/lesson-plans/photo-fill', [\App\Http\Controllers\Teacher\LessonPlanPhotoController::class, 'read']);
                         Route::get('/lesson-plans', [LessonPlanController::class, 'index']);
                         Route::post('/lesson-plans', [LessonPlanController::class, 'store']);
                         Route::put('/lesson-plans', [LessonPlanController::class, 'save']);

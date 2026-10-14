@@ -476,6 +476,10 @@ class LessonPlanController extends TeacherController
      */
     private function write(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
     {
+        if ($request->hasFile('photos') && ! $request->attributes->get('photo_save')) {
+            return $this->writeWithPhotos($request, $masjid_id, $group, $plan);
+        }
+
         if ($this->classSubjectsForGroup((int) $group->id)) {
             return $this->writeWithClassSubjects($request, $masjid_id, $group, $plan);
         }
@@ -556,6 +560,47 @@ class LessonPlanController extends TeacherController
             'status' => 'success',
             'data' => $this->plan($plan),
         ], Response::HTTP_OK);
+    }
+
+    private function writeWithPhotos(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse
+    {
+        abort_unless(\App\Support\LessonPlanPhotoAccess::allowed(SchoolSettings::org($masjid_id), (int) Auth::id()), 403);
+        $stored = [];
+        try {
+            return DB::transaction(function () use ($request, $masjid_id, $group, $plan, &$stored) {
+                $school = \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
+                abort_unless(\App\Support\LessonPlanPhotoAccess::allowed($school, (int) Auth::id()), 403);
+                Group::whereKey($group->id)->lockForUpdate()->firstOrFail();
+                $request->attributes->set('photo_save', true);
+                $response = $this->write($request, $masjid_id, $group, $plan);
+                if ($response->getStatusCode() !== 200) return $response;
+                $ids = $plan->attachments()->orderBy('position')->pluck('group_resource_id')->all();
+                $slots = max(0, (int) config('groups.lessons.max_attachments', 10) - count($ids));
+                $ceiling = (int) config('groups.resources.max_per_class', 200);
+                $classSlots = $ceiling > 0 ? max(0, $ceiling - $group->resources()->count()) : $slots;
+                $photos = $request->file('photos', []);
+                foreach (array_slice($photos, 0, min($slots, $classSlots)) as $i => $photo) {
+                    $resource = \App\Support\GroupResourceFiles::store($group, $photo, [
+                        'title' => 'Lesson-plan photo '.($i + 1), 'visibility' => GroupResource::VISIBILITY_STAFF,
+                        'uploaded_by_user_id' => Auth::id(),
+                    ]);
+                    $stored[] = $resource;
+                    $ids[] = $resource->id;
+                }
+                $this->syncAttachments($plan, $ids);
+                $payload = $response->getData(true);
+                $payload['data'] = $this->classSubjectsForGroup((int) $group->id) ? $this->planWithClassSubjects($plan) : $this->plan($plan);
+                $payload['data']['photo_message'] = count($stored) < count($photos)
+                    ? 'The Files limit was reached; attached '.count($stored).' of '.count($photos).' photos.' : '';
+                $response->setData($payload);
+                return $response;
+            });
+        } catch (\Throwable $e) {
+            foreach ($stored as $resource) \Illuminate\Support\Facades\Storage::disk($resource->disk)->delete($resource->path);
+            throw $e;
+        } finally {
+            $request->attributes->remove('photo_save');
+        }
     }
 
     private function writeWithClassSubjects(SaveLessonPlanRequest $request, $masjid_id, Group $group, LessonPlan $plan): JsonResponse

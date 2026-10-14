@@ -27,6 +27,7 @@ class CurriculumWeek extends Model
         'objective',
         'learning_outcome',
         'standard_code',
+        'standard_description',
         'assessment_note',
         'source_label',
     ];
@@ -42,9 +43,10 @@ class CurriculumWeek extends Model
     /**
      * What prefill puts on a plan.
      *
-     * `standard_description` is absent and must stay absent: the pacing guide
-     * carries codes only, and the companion workbook that holds descriptions has
-     * not been imported. Inventing one would put words in the state's mouth.
+     * `standard_description` is optional school-supplied reference text. Existing
+     * rows carry codes only; the companion workbook has not been imported.
+     * The photo reader may use supplied descriptions; this prefill's legacy shape stays.
+     * Inventing one would put words in the state's mouth.
      * (The school's own Qur'an, Arabic and Islamic Studies codes are imported
      * verbatim from its Quarter 1 plan; they are the school's, never invented.)
      *

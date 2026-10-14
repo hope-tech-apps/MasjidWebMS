@@ -691,6 +691,7 @@ return [
         'app_bottom_tabs.saved_title' => 'Global app feature catalogue display title, retained for unavailable selections; product vocabulary.',
         'mobile_app_features.name' => 'The catalogue of feature tiles in the mobile drawer ("Donate", "Prayer Times"). Product vocabulary.',
         'flyer_templates.name' => 'System flyer template names; `key` is UNIQUE and both are shipped, not tenant-authored.',
+        'curriculum_weeks.standard_description' => 'School-supplied curriculum reference text; never a record about a child.',
         'curriculum_weeks.assessment_note' => 'Curriculum reference data — what a given week of a given subject assesses. Written by the curriculum author, never about a child.',
 
         // --- Roles and permissions. `Permission::count() === 8` is pinned by a

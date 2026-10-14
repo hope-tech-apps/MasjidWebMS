@@ -211,7 +211,7 @@ test('the day view writes, removes and copies through the helpers', () => {
     assert.match(fn('deletePlan'), /TeacherApiService\.delete\(planDeleteUrl\(base\.value, planId\.value\)\)/);
     assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, list, source, iso, subjectMode\)/);
     assert.doesNotMatch(fn('copyAcrossWeek'), /put\(`\$\{base\.value\}\/lesson-plans`/, 'never the by-day PUT');
-    assert.match(view, /:disabled="!canSavePlan\(planSaving, planForm\.body, planClash\)"/);
+    assert.match(view, /:disabled="photoBusy \|\| !canSavePlan\(planSaving, planForm\.body, planClash\)"/);
 });
 
 test('the day view saves the files it shows: resource_ids from the form, never the display objects', () => {
@@ -240,7 +240,7 @@ test('a guide fill or a save that answers after the teacher opened another plan 
 
     const save = fn('savePlan');
     assert.ok(save.indexOf('const ticket = planForms.current();') < save.indexOf('await TeacherApiService.'));
-    assert.match(save, /if \(planForms\.isCurrent\(ticket\)\) planId\.value = savedId;/);
+    assert.match(save, /if \(planForms\.isCurrent\(ticket\)\) \{\s+planId\.value = savedId;/);
 });
 
 test('a jump back into the open day stays on the plan being written', () => {

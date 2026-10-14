@@ -2113,3 +2113,100 @@ test('Timetable OFF class page bytes and requests match literal 30cef6d4 renderi
         assert.deepEqual(actual, expected);
     } finally {screen.unmount();}
 });
+
+async function photoSetup(allowed: boolean, reply?: any) {
+    const helpers = await import('../core/helpers/lessonPlanPhoto.ts');
+    const calls: any[] = [];
+    const date = new Date().toISOString().slice(0, 10);
+    const plan = { id: 17, session_date: date, subject: null, body: 'Existing activities', attachments: [], learning_outcomes: [], teaching_methods: [] };
+    const api = {
+        get: async (url: string) => {
+            calls.push({ method: 'get', url });
+            if (url.endsWith('/groups/2')) return ok({ id: 2, name: 'Invented class', kind: 'class', is_active: true, students: [], lesson_plan_photo_fill: allowed });
+            if (url.includes('/lesson-plans?')) return ok({ plans: [plan], hidden_fields: [], meeting_weekdays: null });
+            if (url.includes('/curriculum')) return ok({ grades: [], subjects: [], weeks: [] });
+            return ok([]);
+        },
+        postForm: async (url: string, body: FormData) => {
+            calls.push({ method: 'postForm', url, body });
+            if (url.endsWith('/photo-fill')) {
+                if (reply instanceof Error) throw reply;
+                return ok(reply ?? { fields: { body: 'Photo activities', objective: '[cut off in the photo]', learning_outcomes: ['Suggested outcome'], differentiation_support: 'Suggested support' }, suggested: ['learning_outcomes', 'differentiation_support'], days: [], message: '' });
+            }
+            return ok({ ...plan, photo_message: '', attachments: [] });
+        },
+    };
+    const r = await setup('teacher', { flag: false, query: { tab: 'lessons' }, modules: {
+        '@/core/services/TeacherApiService': { default: api, rowsOf: (x: any) => Array.isArray(x) ? x : [] },
+        '@/core/helpers/lessonPlanPhoto': { ...helpers, downscalePhoto: async () => new File([new Uint8Array([0])], 'lesson-photo-1.jpg', { type: 'image/jpeg' }) },
+    } });
+    // The OFF class menu uses the Lesson Plans choice in More.
+    if (!r.screen.text().includes('Activities')) {
+        click(exactButton(r.screen, 'More')); await flush(); click(exactButton(r.screen, 'Lesson Plans')); await flush(10);
+    }
+    const read = async () => {
+        const input = r.screen.all((n: Node) => n.tag === 'input' && n.props.accept === 'image/*')[0];
+        assert.ok(input);
+        await input.props.onChange({ target: { value: 'invented', files: [new File([new Uint8Array([0])], 'blank.png', { type: 'image/png' })] } });
+        await flush(10);
+    };
+    return { ...r, calls, read };
+}
+
+for (const allowed of [false, true]) test(`photo: mounted button follows the server pilot decision ${allowed}`, async () => {
+    const r = await photoSetup(allowed);
+    try {
+        assert.equal(r.screen.text().includes('Fill from a photo'), allowed);
+        assert.equal(r.calls.some(c => c.url.endsWith('/photo-fill')), false);
+        if (allowed) assert.match(r.screen.text(), /photos are sent to be read.*Files for staff/);
+    } finally { r.screen.unmount(); }
+});
+
+test('photo: mounted empty-only fill, suggestion edits and deferred staff photo save', async () => {
+    const r = await photoSetup(true);
+    try {
+        await r.read();
+        assert.match(r.screen.text(), /from your photo/);
+        assert.match(r.screen.text(), /Kept what this plan already says/);
+        const activities = r.screen.all((n: Node) => n.tag === 'textarea' && n.value === 'Existing activities')[0];
+        assert.ok(activities);
+        const outcomeLabel = () => r.screen.all((n: Node) => n.tag === 'label' && n.textContent.startsWith('Learning outcomes'))[0];
+        assert.match(outcomeLabel().textContent, /Suggested: check before saving/);
+        const outcome = r.screen.all((n: Node) => n.tag === 'input' && n.value === 'Suggested outcome')[0];
+        assert.ok(outcome); type(outcome, 'Teacher edit'); await flush();
+        assert.doesNotMatch(outcomeLabel().textContent, /Suggested/);
+        const support = r.screen.all((n: Node) => n.tag === 'textarea' && n.value === 'Suggested support')[0];
+        assert.ok(support); type(support, 'My support'); await flush();
+        assert.doesNotMatch(r.screen.text(), /Suggested: check before saving/);
+        assert.equal(r.calls.filter(c => c.method === 'postForm').length, 1, 'no upload before Save');
+        click(exactButton(r.screen, 'Save plan')); await flush(10);
+        const save = r.calls.find(c => c.method === 'postForm' && !c.url.endsWith('/photo-fill'));
+        assert.ok(save); assert.equal(save.body.get('body'), 'Existing activities');
+        assert.equal(save.body.get('learning_outcomes[0]'), 'Teacher edit');
+        assert.equal((save.body.get('photos[]') as File).type, 'image/jpeg');
+        assert.equal(save.body.get('_method'), 'PUT');
+        assert.equal(r.calls.some(c => c.url.endsWith('/resources') && c.method === 'postForm'), false);
+    } finally { r.screen.unmount(); }
+});
+
+test('photo: mounted no-match choice fills cached day without another read', async () => {
+    const r = await photoSetup(true, { fields: {}, suggested: [], message: 'No date matched this plan.', days: [
+        { date: '2026-10-07', date_written: 'Wednesday 7 Oct', fields: { objective: 'Written on other day', learning_outcomes: ['Suggested outcome'] }, suggested: ['learning_outcomes'] },
+    ] });
+    try {
+        await r.read(); assert.match(r.screen.text(), /No date matched/);
+        click(exactButton(r.screen, 'Fill anyway from Wednesday 7 Oct')); await flush();
+        assert.ok(r.screen.all((n: Node) => n.tag === 'textarea' && n.value === 'Written on other day').length);
+        assert.match(r.screen.text(), /Suggested: check before saving/);
+        assert.equal(r.calls.filter(c => c.method === 'postForm').length, 1);
+    } finally { r.screen.unmount(); }
+});
+
+test('photo: mounted failed read keeps the form and never displays provider words', async () => {
+    const r = await photoSetup(true, httpError(503, { message: 'invented sensitive provider details' }));
+    try {
+        await r.read(); assert.match(r.screen.text(), /The photos could not be read; please try again\./);
+        assert.doesNotMatch(r.screen.text(), /invented sensitive provider details|from your photo|waiting for Save/);
+        assert.ok(r.screen.all((n: Node) => n.tag === 'textarea' && n.value === 'Existing activities').length);
+    } finally { r.screen.unmount(); }
+});

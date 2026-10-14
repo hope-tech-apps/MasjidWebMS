@@ -193,6 +193,7 @@ class TeacherRealmTest extends TestCase
             // id. The same authority as the two above — the teacher's own
             // class's plans — and the id is resolved through that class.
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans/photo-fill',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans/{plan_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans/{plan_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments',
