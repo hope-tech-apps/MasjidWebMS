@@ -80,6 +80,9 @@ use Illuminate\Support\Str;
  */
 class RosterImportService
 {
+    /** Row key carrying the source spreadsheet row, set by RosterFileAdapter. */
+    public const SOURCE_LINE = '_source_line';
+
     /**
      * The eight columns, exactly. Matching is on a normalised email; a child
      * usually has none.
@@ -168,13 +171,16 @@ class RosterImportService
         }
 
         $rows = [];
+        $fileRow = 1;   // the header
 
         while (($line = fgetcsv($fh, 0, ',', '"', '')) !== false) {
+            $fileRow++;
             if (count(array_filter($line, fn ($c) => trim((string) $c) !== '')) === 0) {
                 continue;   // a blank line at the end of a spreadsheet export
             }
 
-            $row = [];
+            // The row the office sees in the spreadsheet, kept across skipped blank rows.
+            $row = [self::SOURCE_LINE => $fileRow];
 
             foreach ($header as $i => $name) {
                 // Strip a leading apostrophe: our own export writes one in front
@@ -229,7 +235,8 @@ class RosterImportService
         $refused = [];
 
         foreach ($rows as $n => $row) {
-            $line = $n + 2;   // +1 for the header, +1 for 1-based
+            // The file adapter passes each row's own spreadsheet row; the template path counts as before.
+            $line = (int) ($row[self::SOURCE_LINE] ?? $n + 2);   // +1 for the header, +1 for 1-based
             $className = trim($row['class']);
             $first = trim($row['student_first_name']);
             $last = trim($row['student_last_name']);

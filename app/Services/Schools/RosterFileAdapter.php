@@ -40,8 +40,16 @@ class RosterFileAdapter
         $headers = array_shift($grid);
         $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', (string) ($headers[0] ?? ''));
         if (count(array_filter($headers, fn ($v) => trim($v) !== '')) === 0) throw new InvalidArgumentException('The file has no header row.');
-        $data = array_values(array_filter($grid, fn ($row) => count(array_filter($row, fn ($v) => trim($v) !== '')) > 0));
-        return compact('headers', 'data');
+        // Keep each data row's own row number in the file (header = row 1), so a refusal names the
+        // spreadsheet row the office sees, even after blank rows and second-parent splits.
+        $data = [];
+        $lines = [];
+        foreach ($grid as $i => $row) {
+            if (count(array_filter($row, fn ($v) => trim($v) !== '')) === 0) continue;
+            $data[] = $row;
+            $lines[] = $i + 2;
+        }
+        return compact('headers', 'data', 'lines');
     }
 
     public function validateMapping(array $headers, array $mapping): array
@@ -71,8 +79,9 @@ class RosterFileAdapter
     {
         $mapping = $this->validateMapping($table['headers'], $mapping);
         $rows = [];
-        foreach ($table['data'] as $cells) {
-            $row = [];
+        foreach ($table['data'] as $i => $cells) {
+            // A second parent split from this row reports the same source row.
+            $row = [RosterImportService::SOURCE_LINE => (int) ($table['lines'][$i] ?? $i + 2)];
             foreach (RosterImportService::HEADERS as $field) {
                 $row[$field] = $this->cell($cells, $mapping[$field]);
             }

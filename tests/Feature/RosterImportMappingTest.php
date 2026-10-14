@@ -139,6 +139,26 @@ class RosterImportMappingTest extends TestCase
         } finally { unlink($path); }
     }
 
+    /** Parent 1 / Parent 2 rows used to count as two lines, so a refusal named the wrong spreadsheet row. */
+    #[Test]
+    public function refusals_and_lines_name_the_spreadsheet_row_not_the_split_guardian_rows(): void
+    {
+        $csv = "Homeroom,First Name,Last Name,Parent 1 First,Parent 1 Last,Parent 1 Email,Parent 2 First,Parent 2 Last,Parent 2 Email\n"
+            . "Grade 2,Ilyas,Example,One,Example,one@example.invalid,Two,Example,two@example.invalid\n"
+            . "Level 9,Noor,Example,Three,Example,three@example.invalid,,,\n"
+            . ",,,,,,,,\n"
+            . "Grade 2,Musa,Example,Four,Example,four@example.invalid,Five,Example,five@example.invalid\n"
+            . "Grade 2,Zayd,Example,Six,Example,six@example.invalid,,,\n";
+        $map = $this->post($this->url('/columns'), ['file' => $this->csv($csv)])->assertOk()->json('data.mapping');
+        $preview = $this->post($this->url('/preview'), ['file' => $this->csv($csv), 'mapping' => json_encode($map)])->assertOk()->json('data');
+        $this->assertSame([3], array_column($preview['refused'], 'line') ?: array_map(fn ($r) => $r[0] ?? $r['line'], $preview['refused']));
+        $lines = [];
+        foreach ($preview['students'] as $student) $lines[explode(' ', $student['name'])[0]] = $student['lines'];
+        $this->assertSame([2], array_values(array_unique($lines['Ilyas'])));
+        $this->assertSame([5], array_values(array_unique($lines['Musa'])), 'row 5: the blank row 4 still counts as a spreadsheet row');
+        $this->assertSame([6], array_values(array_unique($lines['Zayd'])));
+    }
+
     #[Test]
     public function missing_required_columns_stop_before_preview_and_mappings_are_remembered_only_for_that_signature(): void
     {
