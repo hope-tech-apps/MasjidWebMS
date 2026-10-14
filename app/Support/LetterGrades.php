@@ -124,12 +124,20 @@ final class LetterGrades
         }
     }
 
+    /** Letters were switched on here at some point: either the grant is on now or the office has saved settings. */
+    private static function everUsed(?Masjid $school): bool
+    {
+        return $school !== null && (self::enabled($school) || ! empty($school->letter_grade_settings));
+    }
+
     private static function readable(ReportCard $card, ?Masjid $school = null): bool
     {
         if ($card->type !== ReportCard::TYPE_REPORT_CARD) return false;
+        $school ??= self::school((int) $card->masjid_id);
         // A sent card shows what it was sent with until it is taken back, whatever the switch says today.
-        if ($card->isPublished()) return $card->marks()->where('kind', ReportCardMark::KIND_TERM_GRADE)->whereNotNull('letter_snapshot_at')->exists();
-        if (! self::enabled($school ?? self::school((int) $card->masjid_id))) return false;
+        // A school that never set letters up cannot have sent any, so it reads nothing extra.
+        if ($card->isPublished()) return self::everUsed($school) && $card->marks()->where('kind', ReportCardMark::KIND_TERM_GRADE)->whereNotNull('letter_snapshot_at')->exists();
+        if (! self::enabled($school)) return false;
         return self::eligible(self::school((int) $card->masjid_id), GroupMembership::find($card->group_membership_id)?->grade_label);
     }
 
@@ -137,13 +145,15 @@ final class LetterGrades
     public static function periodLabel(ReportCard $card, ?Collection $marks = null, ?Masjid $school = null): ?string
     {
         if ($card->type !== ReportCard::TYPE_REPORT_CARD) return null;
+        $school ??= self::school((int) $card->masjid_id);
         // A sent card keeps its frozen dated heading even after letters are switched off.
         if ($card->isPublished()) {
+            if (! self::everUsed($school)) return null;
             $mark = $marks?->first(fn ($row) => $row->kind === ReportCardMark::KIND_TERM_GRADE && $row->letter_snapshot_at !== null)
                 ?? ($marks === null ? $card->marks()->where('kind', ReportCardMark::KIND_TERM_GRADE)->whereNotNull('letter_snapshot_at')->first() : null);
             return $mark?->criterion;
         }
-        if (! self::enabled($school ?? self::school((int) $card->masjid_id))) return null;
+        if (! self::enabled($school)) return null;
         if (! self::eligible($school ?? self::school((int) $card->masjid_id), GroupMembership::find($card->group_membership_id)?->grade_label)) return null;
         $term = self::term($card);
         return $term ? self::datedLabel($card, $term) : null;
