@@ -1239,16 +1239,16 @@ Route::prefix('admin')->group(function () {
                 // `schools:import-roster` has done this correctly since R7 and
                 // needs a shell on the production host, so the school that owns
                 // the roster could not run it. These routes are that
-                // command's two safe verbs with a door on them; every rule about
+                // command's preview and commit plus column matching; every rule about
                 // what a valid roster is stays in
                 // App\Services\Schools\RosterImportService, shared by both
                 // callers so they cannot drift.
                 //
-                // `manage contacts` on both. This is the bulk creation of
+                // `manage contacts` on all three. This is the bulk creation of
                 // children's records, so it takes the roster's own gate, the one
                 // teachers and members genuinely fail.
                 //
-                // TWO ROUTES, NOT THREE: there is no undo endpoint, deliberately.
+                // NO UNDO ENDPOINT: column matching never supplies a reversal.
                 // A `DELETE .../{batch}` was drafted and removed — it reached the
                 // `group_memberships` rows that carry a child's attendance, marks
                 // and report cards, which migration
@@ -1267,7 +1267,9 @@ Route::prefix('admin')->group(function () {
                 // one. A flag that defaults to writing is one typo away from a
                 // silent import, and a flag that defaults to not writing makes
                 // the write the exceptional case in a URL somebody will curl.
-                // Two verbs, one of which cannot write at all.
+                // Preview writes no roster records; it only remembers column choices.
+                Route::post('{masjid_id}/records/roster-import/columns', [RosterImportController::class, 'columns'])
+                    ->middleware('permission:manage contacts');
                 Route::post('{masjid_id}/records/roster-import/preview', [RosterImportController::class, 'preview'])
                     ->middleware('permission:manage contacts');
                 Route::post('{masjid_id}/records/roster-import', [RosterImportController::class, 'commit'])

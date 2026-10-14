@@ -226,6 +226,20 @@ class RosterImportTest extends TestCase
             ->where('role', GroupMembership::ROLE_GUARDIAN)->count());
     }
 
+    /** A blank surname previewed clean, then the commit wrote NULL into a NOT NULL column and answered 500. */
+    #[Test]
+    public function a_blank_surname_that_previews_clean_also_commits(): void
+    {
+        $body = "Grade 2,Aalaa,,2nd,Musa,,musa@example.test,555\n";
+        $preview = $this->previewOf($this->csv($body));
+        $this->assertTrue($preview['can_commit']);
+
+        $this->post($this->url(), ['file' => $this->csv($body), 'receipt' => $preview['receipt']], ['Accept' => 'application/json'])
+            ->assertStatus(201);
+
+        $this->assertSame(['', ''], Contact::withoutGlobalScopes()->orderBy('id')->pluck('last_name')->all());
+    }
+
     /**
      * Every row this writes is `provenance = confirmed` and names the signed-in
      * administrator. The HTTP path is STRONGER than the console's `--actor`

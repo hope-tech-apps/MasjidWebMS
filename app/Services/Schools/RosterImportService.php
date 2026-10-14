@@ -378,7 +378,8 @@ class RosterImportService
 
                 $contact = $existing ?? Contact::create([
                     'first_name' => $s['first'],
-                    'last_name' => $s['last'] ?: null,
+                    // contacts.last_name is NOT NULL: a blank surname is stored blank, not NULL (NULL made commit 500 after a clean preview).
+                    'last_name' => $s['last'],
                     'import_batch' => $batch,
                 ]);
 
@@ -435,7 +436,7 @@ class RosterImportService
 
                 $guardianContacts[$email] = $existing ?? Contact::create([
                     'first_name' => $g['first'],
-                    'last_name' => $g['last'] ?: null,
+                    'last_name' => $g['last'],
                     'email' => $g['email'],
                     'phone' => $g['phone'],
                     'import_batch' => $batch,

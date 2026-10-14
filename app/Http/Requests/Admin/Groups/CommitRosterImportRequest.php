@@ -14,7 +14,7 @@ use App\Http\Requests\BaseFormRequest;
  * The obvious design parks the previewed file somewhere — a temp table, a
  * staged upload row, a cache entry — and commits it by id. That buys nothing and
  * costs a migration, an upload lifecycle, an expiry sweep, and a new place where
- * a list of children sits half-imported with nobody's name on it. A roster CSV
+ * a list of children sits half-imported with nobody's name on it. A roster file
  * is kilobytes and the browser still holds the `File` the office picked, so
  * posting it again is free and the office never re-chooses it.
  *
@@ -41,11 +41,8 @@ class CommitRosterImportRequest extends BaseFormRequest
     public function rules(): array
     {
         return [
-            // Identical to the preview's rule, and identical for the same
-            // reasons — see PreviewRosterImportRequest on `mimes:` vs
-            // `mimetypes:`. Divergence between these two would mean a file the
-            // office previewed could not then be committed.
-            'file' => ['required', 'file', 'mimes:csv,txt', 'max:2048'],
+            // Same size envelope as preview; the receipt supplies the confirmed mapping.
+            'file' => ['required', 'file', 'max:2048'],
             'receipt' => ['required', 'string', 'max:4096'],
         ];
     }
@@ -53,9 +50,8 @@ class CommitRosterImportRequest extends BaseFormRequest
     public function messages(): array
     {
         return [
-            'file.required' => 'Upload the same roster CSV you previewed.',
-            'file.mimes' => 'That does not look like a CSV. Save the spreadsheet as CSV and upload that file.',
-            'file.max' => 'That file is larger than 2 MB. A roster CSV should be a few hundred kilobytes at most.',
+            'file.required' => 'Upload the same roster file you previewed.',
+            'file.max' => 'That file is larger than 2 MB. Upload a smaller CSV or .xlsx file.',
             'receipt.required' => 'Preview this file before importing it. Nothing is written from a file nobody has read.',
         ];
     }

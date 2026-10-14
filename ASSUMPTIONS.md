@@ -522,3 +522,11 @@ Assumption: item 2 is the final attendance Keep behavior, retaining saved Absent
 
 ## 2026-10-14 — Lesson-plan photo fill
 Pilot identity remains unspecified; empty allowlist and OFF capability admit nobody. Standard descriptions must be supplied by the school; existing rows remain null. Real provider/handwriting verification belongs to the owner.
+
+## Import any roster export — 2026-10-14
+
+- No real vendor header is available; no vendor-specific mapping is justified. Named built-in mappings stay empty.
+- Mother and father headers represent two distinct guardian slots (1/2); the office can correct every proposal before preview.
+- Resource caps are deliberate engineering ceilings: the existing 2 MiB upload cap, 8 MiB per ZIP entry/32 MiB total/128 entries, 20,000 source rows/128 columns. They do not claim a measured export size.
+- The explicit unchanged-service instruction wins over fixing the inherited blank-name database failure without added scope. A generated blank guardian last name reproduced a commit 500; the null-writing branches and non-null schema were read. An optional owner question is pending, not treated as approval.
+- Local SQLite tests and mounted Vue checks do not verify MySQL, real browser geometry, a real vendor export, CI or deployed behavior.

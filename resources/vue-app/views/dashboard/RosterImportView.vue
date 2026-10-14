@@ -10,8 +10,8 @@
                             <i class="bi bi-filetype-csv me-2"></i>The file
                         </h6>
                         <p class="text-muted small mb-3">
-                            One row per child <em>and</em> guardian — a child with two guardians is two rows
-                            with the same student columns. Every class named in the file must already be
+                            Choose a CSV or Excel workbook (.xlsx, first worksheet). A child can have two
+                            guardians in separate columns, or repeat on one row per guardian. Every class named in the file must already be
                             one of your {{ groupsTerm.toLowerCase() }}; this will never create one.
                         </p>
 
@@ -20,30 +20,54 @@
                                 ref="fileInput"
                                 type="file"
                                 class="form-control w-auto flex-grow-1"
-                                accept=".csv,text/csv,text/plain"
+                                accept=".csv,.txt,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                                 :disabled="busy"
                                 @change="onFileChosen"
                             >
                             <button class="btn btn-outline-secondary" type="button" @click="downloadTemplate">
                                 <i class="bi bi-download me-1"></i>Blank template
                             </button>
-                            <button
-                                class="btn btn-primary"
-                                type="button"
-                                :disabled="!file || busy"
-                                @click="runPreview"
-                            >
-                                <span v-if="previewing" class="spinner-border spinner-border-sm me-1"></span>
-                                <i v-else class="bi bi-eye me-1"></i>
-                                Preview
-                            </button>
+
                         </div>
 
+                        <p v-if="matching" class="small text-muted" role="status">Reading file columns…</p>
                         <p class="text-muted small mb-0 font-monospace text-break">{{ HEADERS.join(',') }}</p>
                     </div>
                 </div>
 
                 <div v-if="loadError" class="alert alert-danger" role="alert">{{ loadError }}</div>
+
+                <div v-if="columns" class="card border-0 shadow-sm mb-4">
+                    <div class="card-body">
+                        <h6 class="fw-semibold">Match the columns</h6>
+                        <p class="small text-muted">Check each choice against the sample rows below. Unrecognised columns stay unmatched.
+                            Your confirmed choices are remembered for this school and this file shape.</p>
+                        <p v-if="columns.remembered" class="small">Remembered choices for this file shape. Check them before previewing.</p>
+                        <div v-for="field in mappingFields" :key="field" class="row align-items-center mb-2">
+                            <label :for="`roster-column-${field}`" class="col-sm-4 col-form-label">
+                                {{ fieldLabel(field) }}{{ columns.required.includes(field) ? ' (required)' : '' }}
+                            </label>
+                            <div class="col-sm-8">
+                                <select :id="`roster-column-${field}`" v-model="mapping[field]" class="form-select" :disabled="busy" @change="mappingChanged">
+                                    <option :value="null">{{ columns.required.includes(field) ? 'Choose a column' : 'Not in this file' }}</option>
+                                    <option v-for="(header, index) in columns.headers" :key="index" :value="index">{{ index + 1 }}. {{ header || '(blank header)' }}</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p v-if="unmatchedColumns.length" class="small text-muted">Unused file columns: {{ unmatchedColumns.join(', ') }}</p>
+                        <p class="small fw-semibold mt-3 mb-1">First three data rows</p>
+                        <div class="table-responsive mb-3">
+                            <table class="table table-sm table-bordered small">
+                                <thead><tr><th v-for="(header, i) in columns.headers" :key="i">{{ i + 1 }}. {{ header }}</th></tr></thead>
+                                <tbody><tr v-for="(row, r) in columns.samples" :key="r"><td v-for="(_, c) in columns.headers" :key="c">{{ row[c] || '' }}</td></tr></tbody>
+                            </table>
+                        </div>
+                        <p v-if="mappingProblem" class="text-danger small" role="alert">{{ mappingProblem }}</p>
+                        <button class="btn btn-primary" type="button" :disabled="busy || !!mappingProblem" @click="runPreview">
+                            <span v-if="previewing" class="spinner-border spinner-border-sm me-1"></span>Preview
+                        </button>
+                    </div>
+                </div>
 
                 <!--
                     THE SERVER'S PER-LINE REFUSALS, AS LINES. `commit()` ships the
@@ -447,6 +471,40 @@ const masjidStore = useMasjidStore();
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const file = ref<File | null>(null);
+interface FileColumns {
+    headers: string[];
+    samples: string[][];
+    mapping: Record<string, number | null>;
+    required: string[];
+    remembered: boolean;
+}
+const columns = ref<FileColumns | null>(null);
+const mapping = ref<Record<string, number | null>>({});
+const mappingFields = [...HEADERS, 'guardian_2_first_name', 'guardian_2_last_name', 'guardian_2_email', 'guardian_2_phone'];
+const fieldLabel = (field: string) => {
+    const label = field.replace('guardian_2_', 'second guardian ').replaceAll('_', ' ');
+    return label.charAt(0).toUpperCase() + label.slice(1);
+};
+const mappingProblem = computed(() => {
+    if (!columns.value) return 'Choose a file first.';
+    for (const field of columns.value.required) {
+        if (mapping.value[field] == null) return `Choose a column for ${fieldLabel(field)} before previewing.`;
+    }
+    const selected = Object.values(mapping.value).filter((v) => v !== null);
+    return new Set(selected).size !== selected.length ? 'Each file column can fill only one field.' : '';
+});
+const unmatchedColumns = computed(() => columns.value?.headers
+    .map((header, i) => Object.values(mapping.value).includes(i) ? null : `${i + 1}. ${header}`)
+    .filter((header) => header !== null) ?? []);
+const matching = ref(false);
+let fileVersion = 0;
+const mappingChanged = () => {
+    preview.value = null;
+    previewedAt.value = null;
+    result.value = null;
+    commitRefusals.value = [];
+    staleReason.value = '';
+};
 const preview = ref<RosterPreview | null>(null);
 const result = ref<ImportResult | null>(null);
 const loadError = ref('');
@@ -455,7 +513,7 @@ const copied = ref(false);
 
 const previewing = ref(false);
 const committing = ref(false);
-const busy = computed(() => previewing.value || committing.value);
+const busy = computed(() => matching.value || previewing.value || committing.value);
 
 /**
  * The server's own per-line refusals from a REFUSED COMMIT, kept apart from
@@ -542,9 +600,33 @@ const onFileChosen = (event: Event): void => {
     loadError.value = '';
     commitRefusals.value = [];
     staleReason.value = '';
+    columns.value = null;
+    mapping.value = {};
+    const version = ++fileVersion;
+    if (file.value) void readColumns(file.value, version);
+};
+
+const readColumns = async (chosen: File, version: number): Promise<void> => {
+    matching.value = true;
+    try {
+        const body = new FormData();
+        body.append('file', chosen);
+        const response = await ApiService.post(`${base()}/columns` as any, body);
+        if (version !== fileVersion) return;
+        columns.value = response.data.data as FileColumns;
+        mapping.value = { ...columns.value.mapping };
+    } catch (error) {
+        if (version === fileVersion) loadError.value = apiErrorText(error, 'Could not read that file.');
+    } finally {
+        if (version === fileVersion) matching.value = false;
+    }
 };
 
 const startOver = (): void => {
+    ++fileVersion;
+    columns.value = null;
+    mapping.value = {};
+    matching.value = false;
     file.value = null;
     preview.value = null;
     previewedAt.value = null;
@@ -574,7 +656,7 @@ const downloadTemplate = (): void => {
 };
 
 const runPreview = async (): Promise<void> => {
-    if (!file.value || !masjidId()) return;
+    if (!file.value || !masjidId() || !columns.value || mappingProblem.value) return;
 
     previewing.value = true;
     loadError.value = '';
@@ -585,6 +667,7 @@ const runPreview = async (): Promise<void> => {
     try {
         const body = new FormData();
         body.append('file', file.value);
+        body.append('mapping', JSON.stringify(mapping.value));
 
         const res = await ApiService.post(`${base()}/preview` as any, body);
         preview.value = res.data.data as RosterPreview;

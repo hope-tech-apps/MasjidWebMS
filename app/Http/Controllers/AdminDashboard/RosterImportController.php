@@ -5,6 +5,9 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Groups\CommitRosterImportRequest;
 use App\Http\Requests\Admin\Groups\PreviewRosterImportRequest;
+use App\Models\RosterImportMapping;
+use App\Services\Schools\RosterColumnMatcher;
+use App\Services\Schools\RosterFileAdapter;
 use App\Services\Schools\RosterImportService;
 use App\Support\TenantContext;
 use Illuminate\Contracts\Encryption\DecryptException;
@@ -23,7 +26,7 @@ use Symfony\Component\HttpFoundation\Response;
  * the same import with a door on it. Every rule about what a roster CSV is, and
  * every refusal, is `App\Services\Schools\RosterImportService`'s; this class
  * adds the three things HTTP needs and the console did not: a preview that is
- * only a preview, a way to prove the committed file is the previewed one, and a
+ * only a roster preview, a way to prove the committed file and mapping were previewed, and a
  * signed-in confirmer.
  *
  * ---------------------------------------------------------------------------
@@ -137,12 +140,33 @@ class RosterImportController extends Controller
      */
     private const RECEIPT_TTL_MINUTES = 30;
 
+    /** Header matching only. Samples stay in the response, never in saved mappings. */
+    public function columns(PreviewRosterImportRequest $request, RosterFileAdapter $adapter, RosterColumnMatcher $matcher, $masjid_id): JsonResponse
+    {
+        $this->assertTenantBound($masjid_id);
+        try {
+            $file = $request->file('file');
+            $table = $adapter->read($file->getRealPath(), $file->getClientOriginalExtension());
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['status' => 'failed', 'data' => ['file' => [$e->getMessage()]]], 422);
+        }
+        $signature = $matcher->signature($table['headers']);
+        $saved = RosterImportMapping::where('header_signature', $signature)->first();
+        return response()->json(['status' => 'success', 'data' => [
+            'headers' => $table['headers'],
+            'samples' => array_slice($table['data'], 0, 3),
+            'mapping' => $saved?->mapping ?? $matcher->propose($table['headers']),
+            'required' => ['class', 'student_first_name'],
+            'remembered' => $saved !== null,
+        ]]);
+    }
+
     /**
      * POST .../records/roster-import/preview
      *
-     * Reads the file and answers with everything it would do. Writes nothing —
-     * there is no `apply()` call on this path at all, which is the form of that
-     * guarantee that survives future edits.
+     * Reads the file and answers with everything it would do. Writes no roster
+     * records: only confirmed column choices are remembered, never file cells.
+     * There is no `apply()` call on this path.
      */
     public function preview(PreviewRosterImportRequest $request, RosterImportService $importer, $masjid_id): JsonResponse
     {
@@ -152,7 +176,30 @@ class RosterImportController extends Controller
         $file = $request->file('file');
         $path = $file->getRealPath();
 
-        ['rows' => $rows, 'problems' => $problems] = $importer->read($path);
+        $mapping = null;
+        $signature = null;
+        if ($request->has('mapping')) {
+            try {
+                $mapping = json_decode($request->input('mapping'), true, 32, JSON_THROW_ON_ERROR);
+                if (! is_array($mapping)) throw new \InvalidArgumentException('Choose the file columns before previewing.');
+                $adapter = app(RosterFileAdapter::class);
+                $table = $adapter->read($path, $file->getClientOriginalExtension());
+                $mapping = $adapter->validateMapping($table['headers'], $mapping);
+                $rows = $adapter->rows($table, $mapping);
+                $problems = [];
+                $signature = app(RosterColumnMatcher::class)->signature($table['headers']);
+            } catch (\InvalidArgumentException|\JsonException $e) {
+                return response()->json(['status' => 'failed', 'data' => ['mapping' => [
+                    $e instanceof \JsonException ? 'Choose the file columns before previewing.' : $e->getMessage(),
+                ]]], 422);
+            }
+        } else {
+            // Legacy CSV clients retain exactly the existing reader and refusals.
+            if (! in_array(strtolower($file->getClientOriginalExtension()), ['csv', 'txt'], true)) {
+                return response()->json(['status' => 'failed', 'data' => ['file' => ['Match the file columns before previewing.']]], 422);
+            }
+            ['rows' => $rows, 'problems' => $problems] = $importer->read($path);
+        }
 
         // The file as a WHOLE could not be read — no header, or a missing
         // column. Distinct from a refused row: there is nothing to preview, so
@@ -166,9 +213,13 @@ class RosterImportController extends Controller
 
         $plan = $importer->plan($rows);
 
+        if ($mapping !== null) {
+            RosterImportMapping::updateOrCreate(['header_signature' => $signature], ['mapping' => $mapping]);
+        }
+
         return response()->json([
             'status' => 'success',
-            'data' => $this->planPayload($plan, $rows, $file, (int) $masjid_id),
+            'data' => $this->planPayload($plan, $rows, $file, (int) $masjid_id, $mapping),
             'meta' => $this->cautions(),
         ], Response::HTTP_OK);
     }
@@ -194,7 +245,19 @@ class RosterImportController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        ['rows' => $rows, 'problems' => $problems] = $importer->read($path);
+        $claims = json_decode(Crypt::decryptString((string) $request->input('receipt')), true, 512, JSON_THROW_ON_ERROR);
+        if (isset($claims['mapping'])) {
+            try {
+                $adapter = app(RosterFileAdapter::class);
+                $table = $adapter->read($path, $claims['extension']);
+                $rows = $adapter->rows($table, $claims['mapping']);
+                $problems = [];
+            } catch (\InvalidArgumentException $e) {
+                return response()->json(['status' => 'failed', 'data' => ['file' => [$e->getMessage()]]], 422);
+            }
+        } else {
+            ['rows' => $rows, 'problems' => $problems] = $importer->read($path);
+        }
 
         if ($rows === null) {
             return response()->json([
@@ -272,7 +335,7 @@ class RosterImportController extends Controller
      * and Laravel's `Crypt` is authenticated encryption, so tampering fails to
      * decrypt rather than decoding to something attacker-chosen.
      */
-    private function issueReceipt(string $path, int $masjidId, int $rowCount): string
+    private function issueReceipt(string $path, int $masjidId, int $rowCount, ?array $mapping = null, ?string $extension = null): string
     {
         return Crypt::encryptString(json_encode([
             'digest' => hash_file('sha256', $path),
@@ -280,6 +343,8 @@ class RosterImportController extends Controller
             'user' => (int) Auth::id(),
             'rows' => $rowCount,
             'expires' => now()->addMinutes(self::RECEIPT_TTL_MINUTES)->getTimestamp(),
+            'mapping' => $mapping,
+            'extension' => $extension,
         ], JSON_THROW_ON_ERROR));
     }
 
@@ -335,7 +400,7 @@ class RosterImportController extends Controller
      * that the import is about to duplicate a child. The totals alone hide
      * exactly the mistake this file format makes.
      */
-    private function planPayload(array $plan, array $rows, UploadedFile $file, int $masjidId): array
+    private function planPayload(array $plan, array $rows, UploadedFile $file, int $masjidId, ?array $mapping = null): array
     {
         $students = [];
 
@@ -410,7 +475,7 @@ class RosterImportController extends Controller
             // produces a new receipt anyway, and withholding it here would mean
             // the commit's refusal was about the receipt rather than about the
             // rows the office needs to fix.
-            'receipt' => $this->issueReceipt($file->getRealPath(), $masjidId, count($rows)),
+            'receipt' => $this->issueReceipt($file->getRealPath(), $masjidId, count($rows), $mapping, $file->getClientOriginalExtension()),
             'expires_in_minutes' => self::RECEIPT_TTL_MINUTES,
         ];
     }

@@ -96,6 +96,7 @@ return [
     | The value is the reason, printed by `--dry-run`.
     */
     'drop_rows' => [
+        'roster_import_mappings' => 'School-owned header signature and column choices; staging starts with its own mappings.',
         'member_question_helps' => 'Member-selected help choices are private login data.',
         'member_question_answers' => 'Optional adult networking answers, including encrypted free text.',
         'duty_rota_mails' => 'Clear private family duty email history and pending delivery records.',
