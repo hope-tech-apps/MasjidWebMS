@@ -112,6 +112,8 @@
                 </li>
             </ul>
 
+            <FamilyReenrolment v-if="reenrolmentCampaigns.length && group.children?.length" :masjid-id="masjidId" :group-id="groupId" :children="group.children" :campaigns="reenrolmentCampaigns" />
+
             <!-- -------------------------------------------------- handouts -->
             <section v-if="tab === 'attendance'">
                 <FamilyAttendance :masjid-id="masjidId" :group-id="groupId" :children="group.children" />
@@ -1082,7 +1084,7 @@ import { beginClassRun, handOverFor, loadChildRecordsFor, loadGradesFor, loadRep
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import { postTranslationKey } from '@/core/helpers/storyEdit';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { defineAsyncComponent, computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 const route = useRoute();
@@ -1108,6 +1110,7 @@ const chevronIcon = computed(() => (isRtl.value ? 'bi bi-chevron-left' : 'bi bi-
 const rangeArrow = computed(() => (isRtl.value ? '←' : '→'));
 
 const group = ref<any>(null);
+const reenrolmentCampaigns = ref<any[]>([]);
 const posts = ref<any[]>([]);
 const threads = ref<any[]>([]);
 const records = ref<Record<string, any>>({});
@@ -2232,6 +2235,7 @@ onMounted(async () => {
         const res = await FamilyApiService.get(run.base);
         if (run.stale()) return;
         group.value = res.data?.data ?? null;
+        reenrolmentCampaigns.value = res.data?.meta?.reenrolment ?? [];
 
         // Whether this deployment can translate at all. Read from the envelope
         // every family response carries, so the button is never offered where
@@ -2265,6 +2269,9 @@ watch(tab, next => {
     openedThread.value = null;
     openCard.value = null;
 });
+
+// The disabled path never loads the new screen or starts its requests.
+const FamilyReenrolment = defineAsyncComponent(() => import('@/views/family/FamilyReenrolment.vue'));
 </script>
 
 <style scoped>

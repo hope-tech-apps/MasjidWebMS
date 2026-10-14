@@ -51,6 +51,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresAnyCapability: ['app_bottom_tabs','app_volunteer_entry'], pageTitle: 'App tabs' },
                 component: () => import('@/views/dashboard/AppTabsView.vue')
             },
+            { path: 'reenrolment', name: 'masjid.reenrolment', component: () => import('@/views/dashboard/SchoolReenrolmentView.vue'), meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresCapability: 'school_reenrolment', pageTitle: 'Re-enrolment' } },
+            { path: 'applications', name: 'masjid.applications', component: () => import('@/views/dashboard/SchoolApplicationsView.vue'), meta: { auth: true, allowedUsers: ['SuperAdmin', 'MasjidAdmin'], requiresCapability: 'school_applications', pageTitle: 'Applications' } },
             ...announcementsManagementRoutes,
             ...splashAnnouncementsManagementRoutes,
             ...broadcastsManagementRoutes,

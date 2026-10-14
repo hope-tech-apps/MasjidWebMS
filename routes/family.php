@@ -409,6 +409,10 @@ Route::prefix('family')
                 // already states: a class-wide view of marks is the ranking
                 // these modules exist to refuse.
                 Route::get('/grades', [GradesController::class, 'forMember']);
+                Route::prefix('reenrolment/{reenrolment_id}')->middleware('capability:school_reenrolment')
+                    ->controller(\App\Http\Controllers\Family\ReenrolmentController::class)->group(function () {
+                        Route::get('/', 'show'); Route::put('/', 'answer'); Route::get('/deposit', 'deposit'); Route::post('/deposit/quote', 'quote');
+                    });
                 Route::get('/attendance', [\App\Http\Controllers\Family\AttendanceController::class, 'forMember']);
 
                 // Shared subject records use the parent stack only, never the student hand-off stack.

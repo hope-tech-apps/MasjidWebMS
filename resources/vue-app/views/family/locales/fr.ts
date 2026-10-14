@@ -20,6 +20,28 @@
  * family-i18n-keys.test.ts check coverage and placeholders.
  */
 export const FR: Record<string, string> = {
+    // Re-enrolment additions machine-drafted; fluent review pending.
+    reenrol_title: "Réinscription",
+    reenrol_returning: "Reviendra l’année prochaine",
+    reenrol_not_returning: "Ne reviendra pas",
+    reenrol_office: "Enregistré par le secrétariat",
+    reenrol_closed: "La réinscription est fermée.",
+    reenrol_deposit: "Acompte",
+    reenrol_paid: "Payé",
+    reenrol_unpaid: "Pas encore payé",
+    reenrol_error: "Impossible d’enregistrer ou de charger. Réessayez ou contactez le secrétariat de l’école.",
+    reenrol_saved: "Réponse enregistrée",
+    reenrol_next_grade: "Prochain niveau",
+    reenrol_pay: "Ouvrir le formulaire d’acompte",
+    reenrol_payment_method: "Mode de paiement",
+    reenrol_card: "Carte",
+    reenrol_office_payment: "Payer au secrétariat",
+    reenrol_cover_fees: "Prendre en charge les frais de carte",
+    reenrol_total: "Total",
+    reenrol_submit: "Envoyer le formulaire d’acompte",
+    reenrol_check_payment: "Vérifier le paiement",
+    reenrol_back: "Retour à la classe",
+
     term_grade: "Note du trimestre",
     term_no_points: "Aucun travail noté en points pendant ce trimestre",
     switch_lang_title: "Changer de langue",

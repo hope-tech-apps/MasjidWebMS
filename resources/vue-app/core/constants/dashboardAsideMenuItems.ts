@@ -390,6 +390,16 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCapability: 'school_calendar'
     },
     {
+        title: 'Re-enrolment', to: '/masjid/reenrolment',
+        svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="17" rx="2" stroke="white"/><path d="M8 9h8M8 13h8M8 17h5" stroke="white"/></svg>',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'], requiresOrgTypes: ['school'], requiresCapability: 'school_reenrolment'
+    },
+    {
+        title: 'Applications', to: '/masjid/applications',
+        svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="17" rx="2" stroke="white"/><path d="M8 9h8M8 13h8M8 17h5" stroke="white"/></svg>',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'], requiresOrgTypes: ['school'], requiresCapability: 'school_applications'
+    },
+    {
         title: 'Duty rota',
         svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="17" rx="2" stroke="white"/><path d="M3 10h18M9 10v11M15 10v11" stroke="white"/></svg>',
         to: '/masjid/duty-rota',

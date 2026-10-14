@@ -28,6 +28,28 @@
  * extra.
  */
 export const UR: Record<string, string> = {
+    // Re-enrolment additions machine-drafted; fluent review pending.
+    reenrol_title: "دوبارہ داخلہ",
+    reenrol_returning: "اگلے سال واپس آئیں گے",
+    reenrol_not_returning: "واپس نہیں آئیں گے",
+    reenrol_office: "دفتر نے درج کیا",
+    reenrol_closed: "دوبارہ داخلہ بند ہے۔",
+    reenrol_deposit: "پیشگی رقم",
+    reenrol_paid: "ادا ہو گئی",
+    reenrol_unpaid: "ابھی ادا نہیں ہوئی",
+    reenrol_error: "محفوظ یا لوڈ نہیں ہو سکا۔ دوبارہ کوشش کریں یا اسکول کے دفتر سے رابطہ کریں۔",
+    reenrol_saved: "جواب درج ہو گیا",
+    reenrol_next_grade: "اگلی جماعت",
+    reenrol_pay: "پیشگی رقم کا فارم کھولیں",
+    reenrol_payment_method: "ادائیگی کا طریقہ",
+    reenrol_card: "کارڈ",
+    reenrol_office_payment: "دفتر میں ادائیگی",
+    reenrol_cover_fees: "کارڈ کی کارروائی کی فیس ادا کریں",
+    reenrol_total: "کل رقم",
+    reenrol_submit: "پیشگی رقم کا فارم جمع کریں",
+    reenrol_check_payment: "ادائیگی دیکھیں",
+    reenrol_back: "جماعت پر واپس جائیں",
+
     term_grade: "مدت کا گریڈ",
     term_no_points: "اس مدت میں نمبروں سے جانچا گیا کوئی کام نہیں",
     // ------------------------------------------------------ shared

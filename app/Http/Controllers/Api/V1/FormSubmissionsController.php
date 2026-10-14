@@ -481,6 +481,8 @@ class FormSubmissionsController extends Controller
                         ] : [],
                     );
 
+                    if ($request->filled('reenrolment_token')) app(\App\Services\Schools\SchoolReenrolmentDeposits::class)->link($locked, $created, (string) $request->input('reenrolment_token'));
+
                     // Cash its holder owes, in the transaction that wrote the row: the row
                     // never exists unpaid, and use_count moves with it.
                     if ($staffCode !== null && ! $online && ! $created->settleCash($staffCode)) {
@@ -559,6 +561,8 @@ class FormSubmissionsController extends Controller
             FormNotifier::submitted($form, $response);
 
             return $this->accepted($form, $response);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            throw $e;
         } catch (ValidationException $e) {
             return response()->json(['status' => 'failed', 'data' => $e->errors()], 422);
         } catch (\Exception $e) {

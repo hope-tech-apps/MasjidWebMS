@@ -94,6 +94,11 @@ class GroupsController extends FamilyController
             'data' => $this->serialize($group, true),
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
+        if (\App\Support\SchoolAdmissionsMode::enabled(\App\Support\ClassSubjectMode::loadedOrganisation((int) $group->masjid_id), 'school_reenrolment')) {
+            $body = $response->getData(true);
+            $body['meta']['reenrolment'] = \App\Models\SchoolReenrolment::orderByDesc('id')->get()->map(fn ($c) => app(\App\Services\Schools\SchoolReenrolments::class)->campaignPayload($c))->all();
+            $response->setData($body); $response->header('Cache-Control', 'private, no-store');
+        }
         if (\App\Support\ClassSubjectMode::sharingEnabled($group->masjid_id)) $response->header('Cache-Control', 'private, no-store');
         return $response;
     }

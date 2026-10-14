@@ -122,6 +122,9 @@ class MemberAccountDeletion
         'group_memberships' => ['contact_id', 'guardian_of_contact_id'],
         // The office keeps delivery history when a member removes their login.
         'period_attendance_records' => ['student_contact_id'],
+        'school_reenrolment_answers' => ['student_contact_id', 'answered_by_contact_id'],
+        'school_reenrolment_deposits' => ['student_contact_id'],
+        'school_admission_mails' => ['guardian_contact_id'],
         'attendance_absence_mails' => ['guardian_contact_id'],
         'attendance_absence_mail_children' => ['guardian_contact_id', 'student_contact_id'],
         'group_messages' => ['author_contact_id'],
@@ -687,13 +690,19 @@ class MemberAccountDeletion
 
             // These optional logs do not exist in the code-before-migration deployment window.
             // Only a genuinely missing table skips: a failed schema check must stop erasure.
-            if (in_array($table, ['period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
+            if (in_array($table, ['school_reenrolment_answers', 'school_reenrolment_deposits', 'school_admission_mails', 'period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
                 && ! \Illuminate\Support\Facades\Schema::hasTable($table)) continue;
 
             $held = DB::table($table)
-                ->where(function ($query) use ($columns, $contact) {
+                ->where(function ($query) use ($columns, $contact, $table) {
                     foreach ($columns as $column) {
                         $query->orWhere($column, $contact->id);
+                    }
+                    // Reminder snapshots also hold the children after their roster rows are removed.
+                    if ($table === 'school_admission_mails') {
+                        // SQLite's JSON_CONTAINS emulation compares whole objects, unlike MySQL's subset match.
+                        if (DB::connection()->getDriverName() === 'sqlite') $query->orWhereRaw("exists (select 1 from json_each(children) as admission_child where json_extract(admission_child.value, '$.student_contact_id') = ?)", [(int) $contact->id]);
+                        else $query->orWhereJsonContains('children', ['student_contact_id' => (int) $contact->id]);
                     }
                 })
                 // Explicit rather than where([]): what an empty array does to a query is

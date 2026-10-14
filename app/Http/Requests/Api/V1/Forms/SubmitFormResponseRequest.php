@@ -124,6 +124,7 @@ class SubmitFormResponseRequest extends BaseFormRequest
             // On a form that requires the fee it is ignored: every card payer covers it.
             // The return address is checked there too, and only for a card payment,
             // so every other form is untouched by it (App\Support\FormPaymentReturn).
+            'reenrolment_token' => ['nullable', 'string', 'max:4096'],
             'cover_fees' => ['nullable', 'boolean'],
 
             // Card, or pay the office. Whether THIS form offers the choice is the

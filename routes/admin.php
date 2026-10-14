@@ -696,6 +696,22 @@ Route::prefix('admin')->group(function () {
                     });
                 });
 
+            Route::prefix('{masjid_id}/reenrolment')->middleware('capability:school_reenrolment')
+                ->controller(\App\Http\Controllers\AdminDashboard\SchoolReenrolmentController::class)->group(function () {
+                    Route::get('/', 'index'); Route::put('/', 'save');
+                    Route::get('/{reenrolment_id}', 'show');
+                    Route::put('/{reenrolment_id}/children/{student_contact_id}', 'answer');
+                    Route::post('/{reenrolment_id}/reminders', 'reminders');
+                });
+            Route::prefix('{masjid_id}/applications')->middleware('capability:school_applications')
+                ->controller(\App\Http\Controllers\AdminDashboard\SchoolApplicationsController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::get('/settings', 'settings'); Route::put('/settings', 'saveSettings');
+                    Route::get('/forms/{form_id}', 'form'); Route::put('/forms/{form_id}', 'saveForm');
+                    Route::get('/{response_id}', 'show'); Route::put('/{response_id}/status', 'status');
+                    Route::post('/{response_id}/roster', 'roster');
+                });
+
             Route::prefix('{masjid_id}/duty-rotas')->middleware('capability:family_duty_rota')
                 ->controller(\App\Http\Controllers\AdminDashboard\DutyRotaController::class)->group(function () {
                     Route::get('/', 'index');

@@ -1270,6 +1270,7 @@
             </div>
         </template>
 
+        <ApplicationFormSetting v-if="props.formId && masjidStore.masjid?.capabilities?.school_applications" :masjid-id="String(masjidStore.masjid.id)" :form-id="props.formId" />
         <FormStaffCodesModal
             v-if="props.formId"
             :show="showStaffCodes"
@@ -1312,7 +1313,7 @@ import { connectPlace, ConnectPlace, connectPlaceTitle } from '@/core/access/org
 import { CAPABILITY_LABELS } from '@/core/types/data/Capability';
 import { FormsCardAccount, formsCardProblemIsLink, formsCardProblemText } from '@/core/types/data/masjid-related/StripeConnect';
 import { serverFieldErrors, serverMessage } from '@/core/helpers/serverMessage';
-import { computed, ref, shallowRef, toRaw, watch } from 'vue';
+import { defineAsyncComponent, computed, ref, shallowRef, toRaw, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import Swal from 'sweetalert2';
 
@@ -3364,6 +3365,9 @@ const loadCardAccount = async () => {
 watch(() => draft.value.settings.paymentOnline, (online) => {
     if (online) loadCardAccount();
 }, { immediate: true });
+
+// The disabled path never loads the new screen or starts its requests.
+const ApplicationFormSetting = defineAsyncComponent(() => import('@/components/forms/ApplicationFormSetting.vue'));
 </script>
 
 <style scoped>

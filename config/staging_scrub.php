@@ -96,6 +96,13 @@ return [
     | The value is the reason, printed by `--dry-run`.
     */
     'drop_rows' => [
+        'school_admission_mails' => 'Guardian emails, child names and school delivery text; clear pending sends and outcomes before history.',
+        'school_application_histories' => 'Staff notes and actor history for applications.',
+        'school_applications' => 'Application decisions belong to production responses, not staging.',
+        'school_reenrolment_deposits' => 'Child and target-year payment links, not a new money record.',
+        'school_reenrolment_answers' => 'Private family answers and guardian or office attribution.',
+        'school_reenrolments' => 'Clear open production campaigns so staging cannot request their reminders.',
+        'school_admission_settings' => 'Editable family messages may contain personal text; staging starts with defaults.',
         'roster_import_mappings' => 'School-owned header signature and column choices; staging starts with its own mappings.',
         'attendance_absence_mail_children' => 'Frozen child names and classes from attendance emails; delete before the parent mail log.',
         'attendance_absence_mails' => 'Guardian email addresses and attendance delivery history.',

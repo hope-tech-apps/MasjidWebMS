@@ -415,6 +415,15 @@ class MasjidsController extends Controller
             $response->setData($payload);
         }
 
+        foreach (\App\Support\SchoolAdmissionsMode::KEYS as $key) {
+            if (\App\Support\SchoolAdmissionsMode::enabled($org, $key)) continue;
+            $payload = $response->getData(true);
+            foreach ($payload['data']['groups'] as &$group) $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== $key));
+            unset($group);
+            $payload['data']['history'] = array_values(array_filter($payload['data']['history'], fn ($row) => $row['capability'] !== $key));
+            $response->setData($payload);
+        }
+
         if (! \App\Support\AttendanceAbsenceSettings::enabled($org)) {
             $payload = $response->getData(true);
             foreach ($payload['data']['groups'] as &$group) {

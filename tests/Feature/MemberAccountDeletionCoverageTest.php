@@ -98,6 +98,9 @@ class MemberAccountDeletionCoverageTest extends TestCase
             'group_memberships' => ['contact_id', 'guardian_of_contact_id'],
             // The office keeps delivery history when a member removes their login.
             'period_attendance_records' => ['student_contact_id'],
+            'school_reenrolment_answers' => ['student_contact_id', 'answered_by_contact_id'],
+            'school_reenrolment_deposits' => ['student_contact_id'],
+            'school_admission_mails' => ['guardian_contact_id'],
             'attendance_absence_mails' => ['guardian_contact_id'],
             'attendance_absence_mail_children' => ['guardian_contact_id', 'student_contact_id'],
             'group_messages' => ['author_contact_id'],

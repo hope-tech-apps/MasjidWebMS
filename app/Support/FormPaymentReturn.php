@@ -69,6 +69,8 @@ final class FormPaymentReturn
      */
     public static function base(Request $request, int $masjidId, array $context = []): ?string
     {
+        if ($request->filled('reenrolment_token')) return \App\Services\Schools\SchoolReenrolmentDeposits::returnBase($request, $masjidId);
+
         $header = $request->headers->get('Origin');
         $origin = self::allowedOrigin($header, $masjidId);
         $path = $request->input('return_path');

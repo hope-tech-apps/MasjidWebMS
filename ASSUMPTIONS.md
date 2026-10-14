@@ -551,3 +551,9 @@ The rollout grant permits the office's letter-grade settings; the office must en
 - The existing class/day counting unit is retained for class reports and family totals; periods never multiply it. The period status itself is aggregated across each child's scheduled classes.
 - The first scheduled clock controls lateness, including simultaneous first periods; the meeting ID is retained as an audit tie-breaker. Joint classes keep separate child rosters.
 - New non-English Periods labels are machine drafts, not fluent-reader verified. SQLite and mounted SPA checks do not prove MySQL locking/DDL, browser geometry/accessibility, real mail/queues, CI/staging/production or the later demo walk.
+
+## 2026-10-14 — Admissions and re-enrolment
+
+The public website renderer is outside this worktree. An authenticated family deposit screen will render the selected existing form and use the existing public Forms submission/payment API, carrying a server-authenticated child/year link. It must not create a second money path. Unknown/final grades retain the current label until the office chooses a grade, following GradeLevel::next's existing refusal to guess.
+
+Reminders use one current guardian contact/email and list all their unanswered children for the selected target year. Repeated presses while a reminder remains queued must not duplicate that queued message; a later deliberate reminder is allowed after the earlier delivery finishes.

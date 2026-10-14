@@ -131,6 +131,10 @@ class SchoolCalendarController extends Controller
      */
     public function destroyYear($masjid_id, $year_id): JsonResponse
     {
+        if (\App\Support\SchoolAdmissionsMode::recordsHeld($this->masjidId($masjid_id)) && \App\Models\SchoolReenrolment::where('school_year_id', $year_id)->exists()) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['year' => 'This school year has re-enrolment records and must be kept.']);
+        }
+
         if (\App\Support\PeriodAttendanceMode::held($this->masjidId($masjid_id))) {
             return app(SchoolCalendarConfigurationController::class)->destroyYear($masjid_id, $year_id);
         }

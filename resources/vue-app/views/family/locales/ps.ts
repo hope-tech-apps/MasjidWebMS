@@ -28,6 +28,28 @@
  * extra.
  */
 export const PS: Record<string, string> = {
+    // Re-enrolment additions machine-drafted; fluent review pending.
+    reenrol_title: "بیا نوم لیکنه",
+    reenrol_returning: "راتلونکی کال بېرته راځي",
+    reenrol_not_returning: "بېرته نه راځي",
+    reenrol_office: "دفتر ثبت کړی",
+    reenrol_closed: "بیا نوم لیکنه تړل شوې ده.",
+    reenrol_deposit: "مخکینۍ پیسې",
+    reenrol_paid: "ورکړل شوې",
+    reenrol_unpaid: "لا نه دي ورکړل شوې",
+    reenrol_error: "خوندي یا پورته نه شو. بیا هڅه وکړئ یا د ښوونځي له دفتر سره اړیکه ونیسئ.",
+    reenrol_saved: "ځواب ثبت شو",
+    reenrol_next_grade: "راتلونکی ټولګی",
+    reenrol_pay: "د مخکینیو پیسو فورمه پرانیزئ",
+    reenrol_payment_method: "د پیسو ورکولو لاره",
+    reenrol_card: "کارت",
+    reenrol_office_payment: "دفتر ته پیسې ورکړئ",
+    reenrol_cover_fees: "د کارت د پروسس فیس ورکړئ",
+    reenrol_total: "ټول",
+    reenrol_submit: "د مخکینیو پیسو فورمه وسپارئ",
+    reenrol_check_payment: "پیسې وګورئ",
+    reenrol_back: "ټولګي ته بېرته",
+
     term_grade: "د دورې درجه",
     term_no_points: "په دې دوره کې په نمرو ارزول شوی کار نشته",
     // ------------------------------------------------------ shared

@@ -1935,6 +1935,15 @@ class FamilyPortalTest extends TestCase
             }
         }
 
+        // Admissions adds one answer and one read-only quote POST, both behind the independent OFF grant.
+        $admissions = array_values(array_filter($writes, fn ($write) => str_contains($write, '/reenrolment/')));
+        sort($admissions);
+        $this->assertSame([
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/reenrolment/{reenrolment_id}/deposit/quote',
+            'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/reenrolment/{reenrolment_id}',
+        ], $admissions);
+        foreach (\Illuminate\Support\Facades\Route::getRoutes() as $route) if (str_contains($route->uri(), '/reenrolment/')) $this->assertContains('capability:school_reenrolment', $route->gatherMiddleware());
+        $writes = array_values(array_diff($writes, $admissions));
         sort($writes);
 
         $this->assertSame([

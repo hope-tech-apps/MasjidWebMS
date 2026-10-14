@@ -28,6 +28,28 @@
  * extra.
  */
 export const FA_AF: Record<string, string> = {
+    // Re-enrolment additions machine-drafted; fluent review pending.
+    reenrol_title: "ثبت نام دوباره",
+    reenrol_returning: "سال آینده برمی‌گردد",
+    reenrol_not_returning: "برنمی‌گردد",
+    reenrol_office: "توسط دفتر ثبت شده",
+    reenrol_closed: "ثبت نام دوباره بسته است.",
+    reenrol_deposit: "پیش‌پرداخت",
+    reenrol_paid: "پرداخت شده",
+    reenrol_unpaid: "هنوز پرداخت نشده",
+    reenrol_error: "ذخیره یا بارگذاری نشد. دوباره تلاش کنید یا با دفتر مکتب تماس بگیرید.",
+    reenrol_saved: "پاسخ ثبت شد",
+    reenrol_next_grade: "صنف بعدی",
+    reenrol_pay: "باز کردن فورم پیش‌پرداخت",
+    reenrol_payment_method: "روش پرداخت",
+    reenrol_card: "کارت",
+    reenrol_office_payment: "پرداخت به دفتر",
+    reenrol_cover_fees: "پرداخت هزینه پردازش کارت",
+    reenrol_total: "مجموع",
+    reenrol_submit: "ارسال فورم پیش‌پرداخت",
+    reenrol_check_payment: "بررسی پرداخت",
+    reenrol_back: "برگشت به صنف",
+
     term_grade: "درجۀ دوره",
     term_no_points: "در این دوره کاری با نمره ارزیابی نشده است",
     // ------------------------------------------------------ shared

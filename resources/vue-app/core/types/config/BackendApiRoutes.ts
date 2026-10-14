@@ -1,5 +1,7 @@
 // This type used to ensure the validation of back-end API routes
 export type BackendApiRoute =
+    `/api/admin/masjids/${string}/reenrolment${string}` |
+    `/api/admin/masjids/${string}/applications${string}` |
     `/api/admin/masjids/${string}/report-card-criteria` |
     `/api/teacher/masjids/${string}/groups/${string}/report-card-criteria` |
     '/api/admin/login' |

@@ -127,6 +127,10 @@ final class CapabilityWriter
      */
     public static function apply(Masjid $org, array $changes, ?int $actor): array
     {
+        if (array_intersect(array_keys($changes), SchoolAdmissionsMode::KEYS)) {
+            return SchoolAdmissionsMode::apply($org, $changes, $actor);
+        }
+
         if (array_key_exists(PeriodAttendanceMode::CAPABILITY, $changes)) {
             return PeriodAttendanceMode::apply($org, $changes, $actor);
         }

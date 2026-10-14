@@ -28,6 +28,28 @@
  * extra.
  */
 export const ES: Record<string, string> = {
+    // Re-enrolment additions machine-drafted; fluent review pending.
+    reenrol_title: "Reinscripción",
+    reenrol_returning: "Regresará el próximo año",
+    reenrol_not_returning: "No regresará",
+    reenrol_office: "Registrado por la oficina",
+    reenrol_closed: "La reinscripción está cerrada.",
+    reenrol_deposit: "Depósito",
+    reenrol_paid: "Pagado",
+    reenrol_unpaid: "Pendiente de pago",
+    reenrol_error: "No se pudo guardar o cargar. Inténtelo de nuevo o contacte con la oficina de la escuela.",
+    reenrol_saved: "Respuesta registrada",
+    reenrol_next_grade: "Próximo grado",
+    reenrol_pay: "Abrir formulario del depósito",
+    reenrol_payment_method: "Forma de pago",
+    reenrol_card: "Tarjeta",
+    reenrol_office_payment: "Pagar en la oficina",
+    reenrol_cover_fees: "Cubrir la comisión de la tarjeta",
+    reenrol_total: "Total",
+    reenrol_submit: "Enviar formulario del depósito",
+    reenrol_check_payment: "Comprobar pago",
+    reenrol_back: "Volver a la clase",
+
     term_grade: "Calificación del período",
     term_no_points: "No hay trabajos calificados con puntos en este período",
     // ------------------------------------------------------ shared

@@ -301,6 +301,20 @@ return [
         'catalogue_when_off' => false,
     ],
 
+    'school_reenrolment' => [
+        'kind' => 'grant', 'group' => 'school', 'label' => 'Re-enrolment',
+        'description' => 'Families confirm each child for a target school year; the office sends reminders.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false, 'catalogue_when_off' => false,
+    ],
+
+    'school_applications' => [
+        'kind' => 'grant', 'group' => 'school', 'label' => 'School applications',
+        'description' => 'Accept, wait-list or decline applications and add accepted children to a class.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false, 'catalogue_when_off' => false,
+    ],
+
     'attendance_absence_emails' => [
         'kind' => 'grant',
         'group' => 'school',

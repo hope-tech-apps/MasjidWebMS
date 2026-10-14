@@ -76,6 +76,11 @@ const familyRoutes: RouteRecordRaw[] = [
                 meta: { pageTitle: "Weekly Report", family: true, returnAfterSignIn: true },
             },
             {
+                path: 'deposit/:reenrolmentId(\\d+)/:groupId(\\d+)/:membershipId(\\d+)',
+                name: 'familyReenrolmentDeposit', component: () => import('@/views/family/FamilyReenrolmentDeposit.vue'),
+                meta: { pageTitle: 'Deposit', family: true },
+            },
+            {
                 // Read-only, behind the parent guard like every other screen
                 // that calls an authenticated family endpoint.
                 path: 'calendar',

@@ -92,6 +92,12 @@ class EnsureOrgCapability
             return $next($request);
         }
 
+        if (count($capabilities) === 1 && in_array($capabilities[0], \App\Support\SchoolAdmissionsMode::KEYS, true)) {
+            $id = $this->tenant->get() ?? $request->route('masjid_id');
+            abort_unless(\App\Support\SchoolAdmissionsMode::enabled(Masjid::find($id), $capabilities[0]), 403);
+            return $next($request);
+        }
+
         $user = $request->user();
 
         if ($user instanceof User && $user->type === 'SuperAdmin') {

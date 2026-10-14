@@ -552,6 +552,7 @@ class Masjid extends Model implements HasMedia
         if (! \App\Support\SchoolSettings::classSubjectReportSummary($this)) unset($out['class_subject_report_summary']);
         if (! \App\Support\SchoolSettings::timetable($this)) unset($out['school_timetable']);
         if (! \App\Support\SchoolSettings::familyDutyRota($this)) unset($out['family_duty_rota']);
+        foreach (\App\Support\SchoolAdmissionsMode::KEYS as $key) if (! \App\Support\SchoolAdmissionsMode::enabled($this, $key)) unset($out[$key]);
         if (! \App\Support\AttendanceAbsenceSettings::enabled($this)) unset($out['attendance_absence_emails']);
         if (! \App\Support\PeriodAttendanceMode::enabled($this)) unset($out['period_attendance']);
         if (! \App\Support\StudentAllergies::enabled($this)) unset($out['student_allergies']);
@@ -619,6 +620,8 @@ class Masjid extends Model implements HasMedia
         }
         if (! \App\Support\SchoolSettings::timetable($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['school_timetable']);
         if (! \App\Support\SchoolSettings::familyDutyRota($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['family_duty_rota']);
+        if (is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides'][\App\Support\SchoolAdmissionsMode::RECORDS]);
+        foreach (\App\Support\SchoolAdmissionsMode::KEYS as $key) if (! \App\Support\SchoolAdmissionsMode::enabled($this, $key) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides'][$key]);
         if (! \App\Support\AttendanceAbsenceSettings::enabled($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['attendance_absence_emails']);
         if (! \App\Support\AppBottomTabs::enabled($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['app_bottom_tabs']);
         foreach (['app_member_questions','app_volunteer_entry','lesson_plan_photo_fill'] as $key) {

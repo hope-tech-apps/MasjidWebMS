@@ -55,7 +55,17 @@ class App101OffContractTest extends TestCase
             'select exists (select 1 from "main".sqlite_master where name = \'period_attendance_records\' and type = \'table\') as "exists"',
             'select exists(select * from "period_attendance_records" where ("student_contact_id" = ?)) as "exists"',
         ],$period);
-        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'member_question_answers') && !str_contains($q,'attendance_absence_mail') && !str_contains($q,'term_grades') && !str_contains($q,'period_attendance_records')));
+        // Admissions office records are three guarded existence reads; the original fixture remains verbatim.
+        foreach (['school_reenrolment_answers' => ['student_contact_id', 'answered_by_contact_id'], 'school_reenrolment_deposits' => ['student_contact_id'], 'school_admission_mails' => ['guardian_contact_id']] as $table => $columns) {
+            $added = array_values(array_filter($sql, fn ($q) => str_contains($q, $table)));
+            $condition = implode(' or ', array_map(fn ($c) => '"'.$c.'" = ?', $columns));
+            if ($table === 'school_admission_mails') $condition .= " or exists (select 1 from json_each(children) as admission_child where json_extract(admission_child.value, '$.student_contact_id') = ?)";
+            $this->assertSame([
+                'select exists (select 1 from "main".sqlite_master where name = \''.$table.'\' and type = \'table\') as "exists"',
+                'select exists(select * from "'.$table.'" where ('.$condition.')) as "exists"',
+            ], $added);
+        }
+        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'school_reenrolment_') && !str_contains($q,'school_admission_mails') && !str_contains($q,'member_question_answers') && !str_contains($q,'attendance_absence_mail') && !str_contains($q,'term_grades') && !str_contains($q,'period_attendance_records')));
         $this->assertSame(json_decode(file_get_contents(base_path('tests/fixtures/app101-off-109ce744.json')),true),$out);
     }
 }
