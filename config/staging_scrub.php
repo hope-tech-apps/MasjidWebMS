@@ -681,6 +681,7 @@ return [
         'report_card_criteria_drafts.actor_user_id' => 'Staff key; the staff row is scrubbed separately.',
         'report_card_criteria_histories.actor_user_id' => 'Staff key; the staff row is scrubbed separately.',
         'report_card_criteria_histories.action' => 'Fixed action label chosen by the server, not staff-entered text.',
+        'report_card_criteria_histories.bands' => 'Complete school curriculum versions: grade ranges, headings and criteria only; no student data.',
 
         'masjids.letter_grade_settings' => 'School policy only: letter scale, starting grade and boolean. No student text.',
         'report_card_marks.class_subject_id' => 'Reference to the existing class subject; no identifying text.',

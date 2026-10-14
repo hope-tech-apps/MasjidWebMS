@@ -544,5 +544,5 @@ The rollout grant permits the office's letter-grade settings; the office must en
   next term before a deferred draft can be saved; the editor explains the refusal.
 - Grade ranges cover the full supported Pre-K through 12th order, including grades
   not currently enrolled, so a later enrolment cannot introduce a range gap.
-- An unrestricted teacher in a band may edit learning behaviours; a subject-limited
-  teacher may edit only assigned academic subjects. Admins can edit both.
+- Learning behaviours are admin-only (owner decision in DECISIONS.md); every
+  teacher, including an unrestricted class teacher, edits only authorised subjects.

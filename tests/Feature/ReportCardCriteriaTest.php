@@ -182,6 +182,230 @@ class ReportCardCriteriaTest extends TestCase
         foreach ([1=>['2026-08-01','2026-10-31'],2=>['2026-11-01','2027-01-31']] as $position=>$dates) SchoolTerm::create(['masjid_id'=>$school->id,'school_year_id'=>$year->id,'name'=>'Term '.$position,'position'=>$position,'starts_on'=>$dates[0],'ends_on'=>$dates[1]]);
     }
 
+    private function mathCriteria(array $editor, array $criteria): array
+    {
+        $math=array_search('Mathematics',array_column($editor['bands'][2]['subjects'],'name'));
+        $editor['bands'][2]['subjects'][$math]['criteria']=$criteria;
+        return $editor;
+    }
+
+    #[Test]
+    public function a_late_started_prior_term_card_uses_its_period_after_a_draft_applies(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin();
+        $editor=ReportCardCriteria::editor($school,$admin);
+        $earlier=['Quarter one maths','Quarter one reasoning','Quarter one fluency'];
+        $editor=$this->edit($school,$this->mathCriteria($editor,$earlier),$admin);
+        $service=app(ReportCardService::class);
+        $issued=$service->publish($service->prepare($this->member($school),'report_card','2026-2027',1));
+        $inProgress=$service->prepare($this->member($school),'report_card','2026-2027',1);
+        $issuedRows=ReportCardCriteria::marks($issued)->toArray();
+        $unfinishedRows=ReportCardCriteria::marks($inProgress)->toArray();
+        $next=['Quarter two maths','Quarter two reasoning','Quarter two fluency','Quarter two geometry','Quarter two data'];
+        $this->edit($school,$this->mathCriteria($editor,$next),$admin,true);
+        $this->travelTo(now()->setDate(2026,11,1));
+        $this->assertSame($next,ReportCardCriteria::template($school,'1st')['subjects']['Mathematics']);
+        $member=$this->member($school);
+        $late=$service->prepare($member,'report_card','2026-2027',1);
+        $this->assertSame($earlier,$late->marks->where('subject','Mathematics')->pluck('criterion')->all());
+        $new=$service->prepare($member,'report_card','2026-2027',2);
+        $this->assertSame($next,$new->marks->where('subject','Mathematics')->pluck('criterion')->all());
+        $this->assertSame($issuedRows,$service->prepare($issued->membership,'report_card','2026-2027',1)->marks->toArray());
+        $this->assertSame($unfinishedRows,$service->prepare($inProgress->membership,'report_card','2026-2027',1)->marks->toArray());
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function two_applied_drafts_keep_late_q1_and_q2_cards_and_full_band_versions_recoverable(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin();
+        $year=SchoolYear::where('masjid_id',$school->id)->firstOrFail();
+        $q3=SchoolTerm::create(['masjid_id'=>$school->id,'school_year_id'=>$year->id,'name'=>'Term 3','position'=>3,'starts_on'=>'2027-02-01','ends_on'=>'2027-04-30']);
+        SchoolTerm::create(['masjid_id'=>$school->id,'school_year_id'=>$year->id,'name'=>'Term 4','position'=>4,'starts_on'=>'2027-05-01','ends_on'=>'2027-06-30']);
+        $q1=SchoolTerm::where('masjid_id',$school->id)->where('position',1)->firstOrFail();
+        $q2=SchoolTerm::where('masjid_id',$school->id)->where('position',2)->firstOrFail();
+        $editor=ReportCardCriteria::editor($school,$admin);
+        $editor=$this->edit($school,$this->mathCriteria($editor,['Q1 maths']),$admin);
+        $q1Band=$editor['bands'][2]['id'];
+        $editor['bands'][2]['behaviours']=['Q2 behaviour'];
+        $editor['bands'][2]['name']='Q2 upper grades';
+        $editor['bands'][2]['id']=null;
+        $this->edit($school,$this->mathCriteria($editor,['Q2 maths']),$admin,true);
+        $this->travelTo(now()->setDate(2026,11,1));
+        $editor=ReportCardCriteria::editor($school,$admin);
+        $q2Band=$editor['bands'][2]['id'];
+        $this->assertNotSame($q1Band,$q2Band);
+        $editor['bands'][2]['behaviours']=['Q3 behaviour'];
+        $editor['bands'][2]['name']='Q3 upper grades';
+        $this->edit($school,$this->mathCriteria($editor,['Q3 maths']),$admin,true);
+        // The first activation read is late too, after Q3 has already started.
+        $this->travelTo(now()->setDate(2027,2,4));
+        $service=app(ReportCardService::class); $member=$this->member($school);
+        foreach ([1=>['Q1 maths',$q1Band,ReportCardTemplate::LEARNING_BEHAVIOURS],2=>['Q2 maths',$q2Band,['Q2 behaviour']],3=>['Q3 maths',$q2Band,['Q3 behaviour']]] as $term=>$expected) {
+            $card=$service->prepare($member,'progress','2026-2027',$term);
+            $this->assertSame([$expected[0]],$card->marks->where('subject','Mathematics')->pluck('criterion')->all());
+            $this->assertSame($expected[1],$card->criteria_band_id);
+            $this->assertSame($expected[2],$card->marks->where('kind','behaviour')->pluck('criterion')->all());
+        }
+        $later=$service->prepare($member,'progress','2026-2027',4);
+        $this->assertSame(['Q3 maths'],$later->marks->where('subject','Mathematics')->pluck('criterion')->all());
+        foreach ([$q1,$q2,$q3] as $i=>$term) {
+            $version=ReportCardCriteriaHistory::where('masjid_id',$school->id)->where('effective_period','term:'.$term->id)->whereNotNull('bands')->latest('id')->firstOrFail();
+            $this->assertSame($term->starts_on->toDateString(),$version->effective_on->toDateString());
+            $math=collect($version->bands[2]['subjects'])->firstWhere('name','Mathematics');
+            $this->assertSame(['Q'.($i+1).' maths'],$math['criteria']);
+        }
+        $this->assertSame(['Q3 maths'],ReportCardCriteria::template($school,'1st')['subjects']['Mathematics']);
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function without_dated_terms_late_cards_use_their_own_school_year_including_a_named_year(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $school=$this->makeMasjid(); $admin=$this->admin();
+        SchoolYear::create(['masjid_id'=>$school->id,'label'=>'Earlier school year','first_day'=>'2026-08-15','last_day'=>'2027-06-15']);
+        SchoolYear::create(['masjid_id'=>$school->id,'label'=>'Next school year','first_day'=>'2027-08-15','last_day'=>'2028-06-15']);
+        $editor=ReportCardCriteria::editor($school,$admin);
+        $editor=$this->edit($school,$this->mathCriteria($editor,['Earlier year maths']),$admin);
+        $this->edit($school,$this->mathCriteria($editor,['Next year maths']),$admin,true);
+        $this->travelTo(now()->setDate(2027,8,15));
+        ReportCardCriteria::editor($school,$admin);
+        $service=app(ReportCardService::class); $member=$this->member($school);
+        foreach (['2026-2027','Earlier school year'] as $label) {
+            $card=$service->prepare($member,'report_card',$label,4);
+            $this->assertSame(['Earlier year maths'],$card->marks->where('subject','Mathematics')->pluck('criterion')->all());
+            $service->publish($card);
+            $this->assertTrue(ReportCardBandFreeze::where('band_id',$card->criteria_band_id)->where('period_key','year:2026-2027')->exists());
+        }
+        $new=$service->prepare($member,'report_card','2027-2028',1);
+        $this->assertSame(['Next year maths'],$new->marks->where('subject','Mathematics')->pluck('criterion')->all());
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function the_august_rollover_without_calendar_years_keeps_prior_year_criteria(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $school=$this->makeMasjid(); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
+        $editor=$this->edit($school,$this->mathCriteria($editor,['Earlier year']),$admin);
+        $this->edit($school,$this->mathCriteria($editor,['Next year']),$admin,true);
+        $this->travelTo(now()->setDate(2027,8,1));
+        $service=app(ReportCardService::class); $member=$this->member($school);
+        foreach (['2026-2027'=>'Earlier year','2027-2028'=>'Next year'] as $year=>$expected) {
+            $card=$service->prepare($member,'report_card',$year,1);
+            $this->assertSame([$expected],$card->marks->where('subject','Mathematics')->pluck('criterion')->all());
+        }
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function immediate_edits_in_a_later_term_do_not_replace_an_earlier_terms_configuration(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
+        $this->edit($school,$this->mathCriteria($editor,['Earlier maths']),$admin);
+        $this->travelTo(now()->setDate(2026,11,2));
+        $editor=ReportCardCriteria::editor($school,$admin);
+        $this->edit($school,$this->mathCriteria($editor,['Later maths']),$admin);
+        $card=app(ReportCardService::class)->prepare($this->member($school),'report_card','2026-2027',1);
+        $this->assertSame(['Earlier maths'],$card->marks->where('subject','Mathematics')->pluck('criterion')->all());
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function history_times_and_draft_dates_are_formatted_in_the_school_timezone(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-15 01:17:00','UTC'));
+        $school=$this->makeMasjid(); $this->dates($school); $school->update(['timezone'=>'America/Los_Angeles']);
+        $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
+        $draft=$this->edit($school,$editor,$admin,true);
+        $this->assertSame('Oct 14, 2026, 6:17 PM',$draft['history'][0]['at']);
+        $this->assertSame('2026-11-01',$draft['draft_effective_on']);
+        $this->assertSame('Nov 1, 2026',$draft['draft_effective_on_label']);
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function the_existing_unversioned_configuration_is_preserved_before_activating_a_pending_draft(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
+        $editor=$this->edit($school,$this->mathCriteria($editor,['Earlier custom maths']),$admin);
+        $this->edit($school,$this->mathCriteria($editor,['Future maths']),$admin,true);
+        // Simulate the earlier build's action-only history, with a pending draft.
+        ReportCardCriteriaHistory::where('masjid_id',$school->id)->update(['bands'=>null,'effective_period'=>null,'effective_on'=>null]);
+        $this->travelTo(now()->setDate(2026,11,1));
+        ReportCardCriteria::editor($school,$admin);
+        $card=app(ReportCardService::class)->prepare($this->member($school),'report_card','2026-2027',1);
+        $this->assertSame(['Earlier custom maths'],$card->marks->where('subject','Mathematics')->pluck('criterion')->all());
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function period_versions_cannot_be_read_or_overwritten_through_another_tenant(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $one=$this->makeMasjid(); $two=$this->makeMasjid(); $this->dates($one); $this->dates($two); $admin=$this->admin();
+        foreach ([$one,$two] as $school) {
+            $editor=ReportCardCriteria::editor($school,$admin);
+            $editor=$this->edit($school,$this->mathCriteria($editor,['School '.$school->id.' earlier']),$admin);
+            $this->edit($school,$this->mathCriteria($editor,['School '.$school->id.' later']),$admin,true);
+        }
+        $version=ReportCardCriteriaHistory::where('masjid_id',$one->id)->whereNotNull('bands')->latest('id')->firstOrFail();
+        app(TenantContext::class)->set((int)$two->id);
+        $this->assertNull(ReportCardCriteriaHistory::find($version->id));
+        $this->assertSame(0,ReportCardCriteriaHistory::whereKey($version->id)->update(['bands'=>[]]));
+        $this->assertSame(0,ReportCardCriteriaHistory::whereKey($version->id)->delete());
+        app(TenantContext::class)->forgetTenant();
+        $this->travelTo(now()->setDate(2026,11,1));
+        foreach ([$one,$two] as $school) {
+            $member=$this->member($school);
+            foreach ([1=>'earlier',2=>'later'] as $term=>$suffix) {
+                $card=app(ReportCardService::class)->prepare($member,'report_card','2026-2027',$term);
+                $this->assertSame(['School '.$school->id.' '.$suffix],$card->marks->where('subject','Mathematics')->pluck('criterion')->all());
+            }
+        }
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function switching_off_ignores_versions_and_pending_drafts_for_new_cards(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
+        $editor=$this->edit($school,$this->mathCriteria($editor,['Configured maths']),$admin);
+        $this->edit($school,$this->mathCriteria($editor,['Next maths']),$admin,true);
+        $school->forceFill(['capability_overrides'=>['report_card_criteria'=>false]])->save();
+        $this->travelTo(now()->setDate(2026,11,1));
+        $card=app(ReportCardService::class)->prepare($this->member($school),'report_card','2026-2027',1);
+        $this->assertSame(ReportCardTemplate::rowsForGrade('1st'),$card->marks->where('kind','academic')->map->only(['subject','criterion'])->values()->all());
+        $this->assertNull(ReportCardCriteriaDraft::firstOrFail()->applied_at);
+        $this->assertNull($card->criteria_band_id);
+        $this->travelBack();
+    }
+
+    #[Test]
+    public function calendar_terms_without_dates_use_the_school_year_for_both_versions_and_freezes(): void
+    {
+        $this->travelTo(now()->setDate(2026,10,14));
+        $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin();
+        SchoolTerm::where('masjid_id',$school->id)->delete();
+        $editor=ReportCardCriteria::editor($school,$admin);
+        $editor=$this->edit($school,$this->mathCriteria($editor,['Earlier undated year']),$admin);
+        $service=app(ReportCardService::class);
+        $card=$service->publish($service->prepare($this->member($school),'report_card','2026-2027',1));
+        $this->assertTrue(ReportCardBandFreeze::where('band_id',$card->criteria_band_id)->where('period_key','year:2026-2027')->exists());
+        $this->assertTrue(ReportCardCriteria::editor($school,$admin)['bands'][2]['frozen']);
+        $this->edit($school,$this->mathCriteria($editor,['Next undated year']),$admin,true);
+        $this->travelTo(now()->setDate(2027,8,1));
+        $late=$service->prepare($this->member($school),'report_card','2026-2027',4);
+        $this->assertSame(['Earlier undated year'],$late->marks->where('subject','Mathematics')->pluck('criterion')->all());
+        $this->travelBack();
+    }
+
     #[Test]
     public function sending_freezes_band_even_after_takeback_and_draft_applies_on_next_term_start(): void
     {
@@ -421,6 +645,15 @@ class ReportCardCriteriaTest extends TestCase
         }
         $this->expectException(\RuntimeException::class);
         (require database_path('migrations/2026_10_14_210000_add_report_card_criteria.php'))->down();
+    }
+
+    #[Test]
+    public function version_history_rollback_refuses_to_discard_recoverable_period_configurations(): void
+    {
+        $school=$this->makeMasjid(); ReportCardCriteria::editor($school,$this->admin());
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Criteria versions exist');
+        (require database_path('migrations/2026_10_14_220000_version_report_card_criteria_history.php'))->down();
     }
 
     #[Test]

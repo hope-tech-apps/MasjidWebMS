@@ -29,16 +29,16 @@ final class ReportCardCriteria
         return self::markQuery($card)->orderBy('position')->get();
     }
 
-    /** Select current curriculum without seeding; OFF and unopened editors retain the legacy template. */
-    public static function template(?Masjid $school, ?string $grade): array
+    /** Select the card's reporting-period curriculum, or current curriculum for a preview, without seeding. */
+    public static function template(?Masjid $school, ?string $grade, ?ReportCard $card = null): array
     {
         $legacy = ['subjects'=>ReportCardTemplate::forGrade($grade, SchoolSettings::reportCardCoreOnly($school)), 'behaviours'=>ReportCardTemplate::LEARNING_BEHAVIOURS, 'band_id'=>null, 'notice'=>null];
         if (! self::enabled($school)) return $legacy;
-        return DB::transaction(function () use ($school, $grade, $legacy) {
+        return DB::transaction(function () use ($school, $grade, $card, $legacy) {
             $locked = Masjid::whereKey($school->id)->lockForUpdate()->firstOrFail();
             if (! self::enabled($locked)) return $legacy;
             self::activate($locked);
-            $bands = self::configuration($locked);
+            $bands = $card ? self::configurationForCard($locked,$card) : self::configuration($locked);
             $band = self::place($bands, $grade);
             if ($band === null) return $legacy;
             $subjects = [];
@@ -56,7 +56,7 @@ final class ReportCardCriteria
     {
         if (! self::enabled($school) || GradeLevel::position($card->grade_label)!==null) return null;
         $band=$card->criteria_band_id ? ReportCardBand::where('masjid_id',$school->id)->find($card->criteria_band_id) : null;
-        return $band ? 'This student’s grade could not be placed in the school grade order; this card uses the default band “'.$band->name.'”.' : self::template($school,$card->grade_label)['notice'];
+        return $band ? 'This student’s grade could not be placed in the school grade order; this card uses the default band “'.$band->name.'”.' : self::template($school,$card->grade_label,$card)['notice'];
     }
 
     /** Seed once, activate due drafts and describe staff authority under the school mutex. */
@@ -95,7 +95,7 @@ final class ReportCardCriteria
                 $period = self::nextPeriod($locked);
                 $draft = $pending ?? new ReportCardCriteriaDraft(['masjid_id'=>$locked->id]);
                 $draft->fill(['effective_period'=>$period['key'],'effective_on'=>$period['starts_on'],'bands'=>$clean,'actor_user_id'=>$user->id,'applied_at'=>null])->save();
-                self::history($locked,$user,'Saved next-term draft');
+                self::history($locked,$user,'Saved next-term draft',false);
             } else {
                 foreach ($current as $old) {
                     $new = collect($clean)->firstWhere('id',$old['id']);
@@ -117,7 +117,7 @@ final class ReportCardCriteria
         if ($bandId === null) $bandId = self::place(self::configuration($school),$card->grade_label)['id'] ?? null;
         if ($bandId === null) return;
         if ($card->criteria_band_id === null) $card->forceFill(['criteria_band_id'=>$bandId])->save();
-        ReportCardBandFreeze::firstOrCreate(['masjid_id'=>$school->id,'band_id'=>$bandId,'period_key'=>self::cardPeriod($school,$card)]);
+        ReportCardBandFreeze::firstOrCreate(['masjid_id'=>$school->id,'band_id'=>$bandId,'period_key'=>self::cardPeriod($school,$card)['key']]);
     }
 
     /** Sending while the rollout is temporarily off still freezes the band on re-entry. */
@@ -159,6 +159,17 @@ final class ReportCardCriteria
             }
             return ['id'=>(int)$band->id,'name'=>$band->name,'from_grade'=>GradeLevel::LEVELS[$band->from_position],'to_grade'=>GradeLevel::LEVELS[$band->to_position],'is_default'=>$band->is_default,'subjects'=>$subjects,'behaviours'=>$behaviours];
         })->all();
+    }
+
+    /** Later applications must never change the curriculum available to a late-started earlier card. */
+    private static function configurationForCard(Masjid $school, ReportCard $card): array
+    {
+        $period=self::cardPeriod($school,$card);
+        $versions=ReportCardCriteriaHistory::where('masjid_id',$school->id)->whereNotNull('bands');
+        $version=(clone $versions)->where('effective_period',$period['key'])->latest('id')->first();
+        $version ??= $versions->whereDate('effective_on','<=',$period['starts_on'])->orderByDesc('effective_on')->latest('id')->first();
+        // Before this school first configured criteria, cards used the legacy template.
+        return $version?->bands ?? [];
     }
 
     private static function place(array $bands, ?string $grade): ?array
@@ -311,11 +322,18 @@ final class ReportCardCriteria
     }
 
     private static function revision(Masjid $school): int { return (int)ReportCardCriteriaHistory::where('masjid_id',$school->id)->max('id'); }
-    private static function history(Masjid $school, ?User $user, string $action): void { ReportCardCriteriaHistory::create(['masjid_id'=>$school->id,'actor_user_id'=>$user?->id,'action'=>$action]); }
+    private static function history(Masjid $school, ?User $user, string $action, bool $version = true, ?array $period = null): void
+    {
+        $period ??= self::currentPeriod($school);
+        ReportCardCriteriaHistory::create(['masjid_id'=>$school->id,'actor_user_id'=>$user?->id,'action'=>$action,
+            'effective_period'=>$version ? $period['key'] : null,'effective_on'=>$version ? $period['starts_on'] : null,
+            'bands'=>$version ? self::configuration($school) : null]);
+    }
     private static function pending(Masjid $school): ?ReportCardCriteriaDraft { return ReportCardCriteriaDraft::where('masjid_id',$school->id)->whereNull('applied_at')->orderBy('effective_on')->first(); }
 
     private static function activate(Masjid $school): void
     {
+        self::preserveUnversioned($school);
         $today=SchoolDateAuthority::for((int)$school->id)->today();
         foreach (ReportCardCriteriaDraft::where('masjid_id',$school->id)->whereNull('applied_at')->orderBy('effective_on')->get() as $draft) {
             if (str_starts_with($draft->effective_period,'term:')) {
@@ -326,8 +344,23 @@ final class ReportCardCriteria
             }
             if ($draft->effective_on->toDateString()>$today) continue;
             self::apply($school,$draft->bands); $draft->update(['applied_at'=>now()]);
-            ReportCardCriteriaHistory::create(['masjid_id'=>$school->id,'actor_user_id'=>$draft->actor_user_id,'action'=>'Applied next-term draft']);
+            self::history($school,$draft->actor_user_id ? User::withTrashed()->find($draft->actor_user_id) : null,'Applied next-term draft',true,
+                ['key'=>$draft->effective_period,'starts_on'=>$draft->effective_on->toDateString()]);
         }
+    }
+
+    /** The earlier build kept only action labels: preserve what is still available before its first replacement. */
+    private static function preserveUnversioned(Masjid $school): void
+    {
+        if (ReportCardCriteriaHistory::where('masjid_id',$school->id)->whereNotNull('bands')->exists() || self::configuration($school)===[]) return;
+        $last=ReportCardCriteriaHistory::where('masjid_id',$school->id)->whereIn('action',['Seeded criteria','Saved criteria','Applied next-term draft'])->latest('id')->first();
+        $day=$last?->created_at->copy()->setTimezone(SchoolCalendarReaders::for((int)$school->id)->timezone())->toDateString();
+        $period=self::currentPeriod($school,$day);
+        if ($last?->action==='Applied next-term draft') {
+            $draft=ReportCardCriteriaDraft::where('masjid_id',$school->id)->whereNotNull('applied_at')->orderByDesc('applied_at')->latest('id')->first();
+            if ($draft) $period=['key'=>$draft->effective_period,'starts_on'=>$draft->effective_on->toDateString()];
+        }
+        self::history($school,null,'Preserved criteria',true,$period);
     }
 
     private static function payload(Masjid $school, User $user): array
@@ -336,9 +369,11 @@ final class ReportCardCriteria
         $bands=self::describeBands($school,$user,$bands);
         $history=ReportCardCriteriaHistory::where('masjid_id',$school->id)->latest('id')->limit(15)->get();
         $actors=User::whereIn('id',$history->pluck('actor_user_id')->filter())->pluck('name','id');
+        $timezone=SchoolCalendarReaders::for((int)$school->id)->timezone();
         return ['bands'=>$bands,'draft_bands'=>$pending ? self::describeBands($school,$user,$pending->bands) : null,'draft_effective_on'=>$pending?->effective_on->toDateString(),
+            'draft_effective_on_label'=>$pending?->effective_on->format('M j, Y'),
             'grades'=>GradeLevel::LEVELS,'subject_names'=>self::subjectNames($school),'can_manage_bands'=>$user->type!=='Teacher','revision'=>self::revision($school),
-            'history'=>$history->map(fn($row)=>['actor'=>$actors[$row->actor_user_id] ?? 'Former staff','at'=>$row->created_at->toIso8601String(),'action'=>$row->action])->all()];
+            'history'=>$history->map(fn($row)=>['actor'=>$actors[$row->actor_user_id] ?? 'Former staff','at'=>$row->created_at->copy()->setTimezone($timezone)->format('M j, Y, g:i A'),'action'=>$row->action])->all()];
     }
 
     private static function describeBands(Masjid $school, User $user, array $bands): array
@@ -364,9 +399,9 @@ final class ReportCardCriteria
         return collect($periods)->sortBy('starts_on')->values()->all();
     }
 
-    private static function currentPeriod(Masjid $school): array
+    private static function currentPeriod(Masjid $school, ?string $day = null): array
     {
-        $today=SchoolDateAuthority::for((int)$school->id)->today();
+        $today=$day ?? SchoolDateAuthority::for((int)$school->id)->today();
         $periods=self::periods($school);
         $period=collect($periods)->first(fn($p)=>$p['starts_on']<=$today && $p['ends_on']>=$today);
         if ($period) return $period;
@@ -387,17 +422,17 @@ final class ReportCardCriteria
         return ['key'=>'year:'.$start->year.'-'.($start->year+1),'starts_on'=>$start->toDateString()];
     }
 
-    private static function cardPeriod(Masjid $school, ReportCard $card): string
+    /** The same dated term/year identity drives both version selection and publication locks. */
+    private static function cardPeriod(Masjid $school, ReportCard $card): array
     {
+        $year=SchoolYear::where('masjid_id',$school->id)->get()->first(fn($y)=>$y->label===$card->school_year || $y->first_day->format('Y').'-'.$y->last_day->format('Y')===$card->school_year);
         if (SchoolSettings::calendarTerms($school)) {
             $term=$card->school_term_id ? SchoolTerm::where('masjid_id',$school->id)->find($card->school_term_id) : null;
-            if (! $term) {
-                $year=SchoolYear::where('masjid_id',$school->id)->get()->first(fn($y)=>$y->label===$card->school_year || $y->first_day->format('Y').'-'.$y->last_day->format('Y')===$card->school_year);
-                $term=$year ? SchoolTerm::where('masjid_id',$school->id)->where('school_year_id',$year->id)->where('position',$card->term)->first() : null;
-            }
-            if ($term) return 'term:'.$term->id;
+            if (! $term && $year) $term=SchoolTerm::where('masjid_id',$school->id)->where('school_year_id',$year->id)->where('position',$card->term)->first();
+            if ($term?->starts_on && $term->ends_on) return ['key'=>'term:'.$term->id,'starts_on'=>$term->starts_on->toDateString()];
         }
-        return 'year:'.$card->school_year;
+        return ['key'=>'year:'.($year ? $year->first_day->format('Y').'-'.$year->last_day->format('Y') : $card->school_year),
+            'starts_on'=>$year ? $year->first_day->toDateString() : substr($card->school_year,0,4).'-08-01'];
     }
 
     private static function frozen(Masjid $school, int $band): bool

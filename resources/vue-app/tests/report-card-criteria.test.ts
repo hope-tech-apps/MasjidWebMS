@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { mountSfc, click, type, flush } from './support/mountSfc.ts';
 const require = createRequire(import.meta.url);
 const vue = require('vue');
-const configuration = () => ({ revision: 1, grades: ['Pre-K', 'KG', '1st', '12th'], can_manage_bands: true, subject_names: ["Qur'an", 'Mathematics'], draft_effective_on: null, history: [{ actor: 'Example Staff', at: '2026-10-14T12:00:00Z', action: 'Saved criteria' }], bands: [{ id: 1, name: 'All grades', from_grade: 'Pre-K', to_grade: '12th', is_default: true, frozen: false, can_edit_behaviours: true, subjects: [{ name: 'Mathematics', criteria: ['Number Sense'], can_edit: true }], behaviours: ['Works well with others'] }] });
+const configuration = () => ({ revision: 1, grades: ['Pre-K', 'KG', '1st', '12th'], can_manage_bands: true, subject_names: ["Qur'an", 'Mathematics'], draft_effective_on: null, draft_effective_on_label: null, history: [{ actor: 'Example Staff', at: 'Oct 14, 2026, 5:17 PM', action: 'Saved criteria' }], bands: [{ id: 1, name: 'All grades', from_grade: 'Pre-K', to_grade: '12th', is_default: true, frozen: false, can_edit_behaviours: true, subjects: [{ name: 'Mathematics', criteria: ['Number Sense'], can_edit: true }], behaviours: ['Works well with others'] }] });
 
 test('office criteria editor saves ordered curriculum, learning behaviours and band metadata', async () => {
     const writes: any[] = [];
@@ -32,7 +32,7 @@ test('frozen criteria explains the lock and lets staff save a next-term draft', 
     const config = configuration(); config.bands[0].frozen = true;
     const writes: any[] = [];
     const s = await mountSfc('components/classes/ReportCardCriteriaEditor.vue', { schoolId: 1, groupId: 2 }, { vue, '@/core/services/ApiService': { default: {
-        get: async () => ({ data: { data: config } }), put: async (url: string, body: any) => { writes.push({ url, body }); return { data: { data: { ...config, draft_effective_on: '2026-11-01' } } }; },
+        get: async () => ({ data: { data: config } }), put: async (url: string, body: any) => { writes.push({ url, body }); return { data: { data: { ...config, draft_effective_on: '2026-11-01', draft_effective_on_label: 'Nov 1, 2026' } } }; },
     } } });
     try {
         await flush(); assert.match(s.text(), /sent.*read-only/i);
@@ -42,8 +42,14 @@ test('frozen criteria explains the lock and lets staff save a next-term draft', 
         type(s.all(n => n.props['aria-label'] === 'Criterion 1 for Mathematics')[0], 'Next term criterion');
         click(s.button('Save criteria')); await flush();
         assert.equal(writes[0].url, '/api/teacher/masjids/1/groups/2/report-card-criteria');
-        assert.equal(writes[0].body.next_term, true); assert.match(s.text(), /2026-11-01/);
+        assert.equal(writes[0].body.next_term, true); assert.match(s.text(), /Nov 1, 2026/); assert.doesNotMatch(s.text(), /2026-11-01/);
     } finally { s.unmount(); }
+});
+
+test('criteria history renders the server school-local time without browser date conversion', async () => {
+    const s = await mountSfc('components/classes/ReportCardCriteriaEditor.vue', { schoolId: 1 }, { vue, '@/core/services/ApiService': { default: { get: async () => ({ data: { data: configuration() } }) } } });
+    try { await flush(); assert.match(s.text(), /Oct 14, 2026, 5:17 PM/); }
+    finally { s.unmount(); }
 });
 
 test('teacher editor hides band controls and disables subjects outside their assignment', async () => {

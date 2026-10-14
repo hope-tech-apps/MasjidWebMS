@@ -1,11 +1,11 @@
 <template>
     <section class="border rounded p-3 mt-3" aria-label="Report-card criteria">
         <h2 class="h5">Report-card criteria</h2>
-        <p class="small text-muted">Criteria are saved on each card when it is started. Editing here changes new cards. Existing cards keep their saved rows.</p>
+        <p class="small text-muted">Each new card uses the criteria for its reporting period. Existing cards keep their saved rows.</p>
         <p v-if="error" class="text-danger small" role="alert">{{ error }}</p>
         <p v-if="!settings && !error" class="small">Loading criteria…</p>
         <template v-if="settings">
-            <p v-if="settings.draft_effective_on" class="small" role="status">A saved draft applies from {{ settings.draft_effective_on }}. {{ nextTerm ? 'You are editing that draft.' : 'You are editing the current criteria.' }}</p>
+            <p v-if="settings.draft_effective_on" class="small" role="status">A saved draft applies from {{ settings.draft_effective_on_label }}. {{ nextTerm ? 'You are editing that draft.' : 'You are editing the current criteria.' }}</p>
             <button v-if="settings.draft_bands && nextTerm" type="button" class="btn btn-outline-secondary mb-3" :disabled="saving" @click="editCurrent">Edit current criteria</button>
             <p v-if="nextTerm" class="small">Changes apply from next term. Current cards and criteria stay as saved.</p>
             <button v-if="!nextTerm" type="button" class="btn btn-outline-secondary mb-3" :disabled="saving" @click="startDraft">Changes apply from next term</button>

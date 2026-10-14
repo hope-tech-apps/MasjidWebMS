@@ -204,7 +204,7 @@ class ReportCardService
             \App\Models\Group::whereKey($card->group_id)->lockForUpdate()->firstOrFail();
         }
 
-        $template = ReportCardCriteria::template($org, $card->grade_label);
+        $template = ReportCardCriteria::template($org, $card->grade_label, $card);
         if (ReportCardCriteria::enabled($org)) {
             // A started card is a document too: curriculum edits never rewrite its mark rows.
             if ($card->marks()->exists()) return;

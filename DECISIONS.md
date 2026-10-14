@@ -9795,4 +9795,16 @@ the former SuperAdmin-only policy for criteria.
 6. Tenant-owned bands, ordered criterion rows, dated drafts, history and publication
    locks have primary keys. Report cards store a hidden band reference, but their
    subject/criterion mark snapshots are never rewritten by criteria edits. Existing
-   in-progress cards retain their rows; new cards use the current reader.
+   in-progress cards retain their rows; new cards use the reader for their own period.
+
+### Reporting-period correction (2026-10-14)
+
+New cards select criteria by the same dated-term/school-year identity as the
+publication freeze, even when started after a later period begins. Applied
+configurations are retained as complete JSON versions in the existing tenant-owned
+history table (`effective_period`, `effective_on`, `bands`), rather than another
+table. Immediate saves belong to the current period; due drafts belong to their
+effective period, including when activation is late. Later periods inherit the
+latest earlier version until changed. Draft-save audit entries are not applied
+versions. The editor still reads current rows and the pending draft. History time
+is school-local; applies-from is a formatted calendar date without timezone shifting.
