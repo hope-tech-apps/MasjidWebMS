@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as vue from 'vue';
 import { flush, loadTs, mountSfc } from './support/mountSfc.ts';
 
@@ -134,4 +135,14 @@ test('the family layout applies French html lang/dir and restores them on leavin
         assert.equal(attributes.has('dir'), false);
         doc.documentElement = oldHtml;
     }
+});
+
+test('the family bar lets a long school name give way so the page is never wider than the phone', () => {
+    const layout = readFileSync(new URL('../layouts/FamilyLayout.vue', import.meta.url), 'utf8');
+    const style = layout.slice(layout.lastIndexOf('<style'));
+    assert.match(style, /\.navbar > \.container-fluid \{[^}]*flex-wrap: nowrap;[^}]*min-width: 0;/);
+    assert.match(style, /\.navbar-brand \{ min-width: 0; flex: 1 1 auto; \}/);
+    assert.match(style, /\.family-school-name \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+    assert.match(style, /\.push-end \{ flex: 0 0 auto; \}/);
+    assert.match(layout, /class="[^"]*family-school-name[^"]*"[^>]*:title="orgName \|\| undefined"/);
 });

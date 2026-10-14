@@ -15,7 +15,7 @@
                     <!-- The school's own name, in whichever language the school
                          wrote it, so it is fenced with dir="auto" like every
                          other string this portal did not write. -->
-                    <span class="fw-semibold text-dark" dir="auto">{{ orgName || t('layout_portal') }}</span>
+                    <span class="fw-semibold text-dark family-school-name" dir="auto" :title="orgName || undefined">{{ orgName || t('layout_portal') }}</span>
                 </router-link>
 
                 <!-- `push-end`, not `ms-auto`: this app loads the LTR build of
@@ -247,6 +247,21 @@ const signOut = () => {
    sits between the brand and the edge of the bar instead of between the brand
    and what follows it. */
 .navbar-brand { margin-right: 0; margin-inline-end: 1rem; }
+
+/* The bar is never wider than the phone. A school's name can be long and the
+   account block grows with the language ("Se déconnecter"), and Bootstrap's
+   brand does not shrink, so the page used to scroll sideways with Sign out
+   past the edge. The name gives way first: it shrinks and ends in an ellipsis
+   (its full text stays in the title), and the account block keeps its size. */
+.navbar > .container-fluid { flex-wrap: nowrap; min-width: 0; }
+.navbar-brand { min-width: 0; flex: 1 1 auto; }
+.navbar-brand > img { flex: 0 0 auto; }
+.family-school-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.push-end { flex: 0 0 auto; }
+@media (max-width: 430px) {
+    .navbar-brand { margin-inline-end: 0.5rem; }
+    .push-end { gap: 0.5rem !important; }
+}
 
 /* Bootstrap positions `.dropdown-menu` from a physical `left`, which under RTL
    opens the list off the wrong edge of its button. Logical again. */
