@@ -26,7 +26,7 @@ class CapabilityCatalogueEndpointTest extends TestCase
 
     private const URL = '/api/admin/studio/catalogue';
 
-    private const SCHOOL_KEYS = ['lesson_plan_photo_fill', 'school_calendar', 'report_card_core_subjects', 'short_lesson_plan', 'simple_marking', 'points_weekly_report', 'class_subject_sharing', 'class_subject_report_summary', 'period_attendance', 'tuition_ledger', 'school_reenrolment', 'school_applications', 'attendance_absence_emails', 'family_duty_rota', 'school_timetable', 'class_subject_work', 'class_subjects', 'class_store', 'report_card_criteria', 'letter_grades', 'student_allergies'];
+    private const SCHOOL_KEYS = ['lesson_plan_photo_fill', 'school_calendar', 'report_card_core_subjects', 'short_lesson_plan', 'simple_marking', 'points_weekly_report', 'class_subject_sharing', 'class_subject_report_summary', 'period_attendance', 'school_reenrolment', 'school_applications', 'tuition_ledger', 'attendance_absence_emails', 'family_duty_rota', 'school_timetable', 'class_subject_work', 'class_subjects', 'class_store', 'report_card_criteria', 'letter_grades', 'student_allergies'];
 
     protected function setUp(): void
     {
@@ -181,7 +181,7 @@ class CapabilityCatalogueEndpointTest extends TestCase
         $this->assertFalse($school->has('family_duty_rota'));
         $this->assertFalse($school->has('attendance_absence_emails'));
         $this->assertFalse($school->has('student_allergies'));
-        foreach (array_diff(self::SCHOOL_KEYS, ['lesson_plan_photo_fill', 'class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'period_attendance', 'tuition_ledger', 'school_reenrolment', 'school_applications', 'attendance_absence_emails', 'family_duty_rota', 'school_timetable', 'report_card_criteria', 'letter_grades', 'student_allergies']) as $key) {
+        foreach (array_diff(self::SCHOOL_KEYS, ['lesson_plan_photo_fill', 'class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'period_attendance', 'school_reenrolment', 'school_applications', 'tuition_ledger', 'attendance_absence_emails', 'family_duty_rota', 'school_timetable', 'report_card_criteria', 'letter_grades', 'student_allergies']) as $key) {
             $this->assertSame('optional', $school[$key]['visibility'], $key);
             $this->assertFalse($school[$key]['default_at_creation'], $key);
         }
@@ -404,7 +404,7 @@ class CapabilityCatalogueEndpointTest extends TestCase
 
             // Both catalogues omit grants that must remain dark while OFF; Studio also applies D14.
             $this->assertEqualsCanonicalizing(
-                $orgType === Masjid::ORG_TYPE_SCHOOL ? [] : array_values(array_diff(self::SCHOOL_KEYS, ['lesson_plan_photo_fill', 'class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'period_attendance', 'tuition_ledger', 'school_reenrolment', 'school_applications', 'attendance_absence_emails', 'family_duty_rota', 'school_timetable', 'report_card_criteria', 'letter_grades', 'student_allergies'])),
+                $orgType === Masjid::ORG_TYPE_SCHOOL ? [] : array_values(array_diff(self::SCHOOL_KEYS, ['lesson_plan_photo_fill', 'class_subjects', 'class_subject_work', 'class_subject_sharing', 'class_subject_report_summary', 'period_attendance', 'school_reenrolment', 'school_applications', 'tuition_ledger', 'attendance_absence_emails', 'family_duty_rota', 'school_timetable', 'report_card_criteria', 'letter_grades', 'student_allergies'])),
                 $panel->keys()->diff($catalogue->keys())->values()->all(),
                 "what the panel shows a {$orgType} and Studio does not"
             );
