@@ -61,7 +61,7 @@ Writes recheck capability, current class, visibility, assignment and students un
 
 ## Copy, never point
 
-Curriculum and linked lesson plans are listed live without making pieces. A first meaningful level or comment creates a piece and copies its words. Empty first saves create nothing. Later guide imports, plan edits, subject renames and plan deletions do not change copied words. Guide snapshots use focus as title, assessment note as detail, and copy grade label, entry number, quarter and standard code. A plan title is its ISO date, then the plan's grade in brackets when it has one (a combined-grade class plans a subject once per grade on a day), followed by objective, or title, or activities in that order.
+Curriculum and linked lesson plans are listed live without making pieces. A first meaningful level or comment creates a piece and copies its words. Empty first saves create nothing. Later guide imports, plan edits, subject renames and plan deletions do not change copied words. Guide snapshots use focus as title, assessment note as detail, and copy grade label, entry number, quarter and standard code. A plan title is its ISO date, then the plan's grade in brackets when it has one and the title still fits 255 characters with it (a combined-grade class plans a subject once per grade on a day; a plan that could be marked without the grade is never refused because of it), followed by objective, or title, or activities in that order.
 
 The source's required title must fit the specified 255-character snapshot column. Overlong titles, grade labels or standard codes are refused with a readable 422 rather than silently truncating words or relying on SQLite's permissive VARCHAR handling.
 

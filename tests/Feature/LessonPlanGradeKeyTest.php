@@ -100,6 +100,33 @@ class LessonPlanGradeKeyTest extends TestCase
         $this->assertArrayNotHasKey('grade_key', $plan->toArray(), 'the key is index plumbing, not payload');
     }
 
+    /**
+     * The stored key is LessonPlan's own fold, frozen, never GradeLevel::key
+     * called live: a mapping added there for a roster would leave every stored
+     * plan under its old key and the next save of that grade's plan would miss
+     * it. The table pins the fold as the rows were keyed; changing an answer
+     * here needs a migration that re-keys them.
+     */
+    #[Test]
+    public function the_grade_key_is_a_frozen_fold_of_its_own_and_not_the_roster_grade_rule(): void
+    {
+        $pinned = [
+            'Pre-K' => 'prek', 'PreK' => 'prek', 'PK' => 'prek', 'Pre-Kindergarten' => 'prek',
+            'K' => 'kg', 'KG' => 'kg', 'Kindergarten' => 'kg',
+            '1' => '1', '1st' => '1', 'Grade 1' => '1', '1st Grade' => '1', 'grade1st' => '1', 'First' => '1', 'first grade' => '1',
+            '12th' => '12', 'Twelfth' => '12', 'Grade 01' => '1',
+            'JK' => 'jk', 'Nursery' => 'nursery', 'Year 1' => 'year1', 'Grade 1A' => 'grade1a', 'Thirteenth' => 'thirteenth',
+            'الروضة' => 'الروضة', '' => '', '  ' => '',
+        ];
+        foreach ($pinned as $label => $key) {
+            $this->assertSame($key, LessonPlan::gradeKeyFor($label), "'{$label}'");
+        }
+
+        $source = file_get_contents(app_path('Models/LessonPlan.php'));
+        $this->assertDoesNotMatchRegularExpression('/GradeLevel::key\s*\(/', $source, 'the stored key must not follow a rule other screens change');
+        $this->assertStringNotContainsString('use App\Support\GradeLevel;', $source);
+    }
+
     #[Test]
     public function the_index_holds_one_plan_per_subject_per_grade_whatever_the_spelling(): void
     {

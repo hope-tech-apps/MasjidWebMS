@@ -1386,8 +1386,8 @@
                      role="group" aria-label="This day's plans">
                     <button v-for="p in dayPlans" :key="p.id" type="button" class="btn btn-sm"
                             :class="p.id === planId ? 'btn-success' : 'btn-outline-secondary'"
-                            :aria-pressed="p.id === planId" @click="p.id !== planId && selectPlan(p.id)">
-                        {{ planLabel(p, planGrades) }}
+                            :aria-pressed="p.id === planId" @click="p.id !== planId && openPlan(p.id)">
+                        {{ listedPlanLabel(p, planDate) }}
                     </button>
                     <span v-if="planId === null" class="btn btn-sm btn-success disabled" aria-current="true">
                         New plan
@@ -1425,7 +1425,7 @@
                                     </select>
                                     <input v-else v-model="planForm.grade_label" type="text" maxlength="32"
                                            class="form-control form-control-sm" style="width:7rem" placeholder="e.g. Pre-K"
-                                           @change="switchGradePlan()">
+                                           @change="onGradeTyped">
                                 </div>
                                 <div class="col-12 col-sm">
                                     <label class="form-label small text-muted mb-1">Subject</label>
@@ -1503,7 +1503,7 @@
                                     This day already has a plan with no subject{{ planClash.grade_label ? ` for ${planClash.grade_label}` : '' }}. Choose a subject for this one.
                                 </template>
                                 <button type="button" class="btn btn-sm btn-link p-0 align-baseline"
-                                        @click="selectPlan(planClash.id)">Open it</button>
+                                        @click="openPlan(planClash.id)">Open it</button>
                             </div>
 
                             <div v-if="curriculum.grades.length || canPhotoFill" class="d-flex align-items-center gap-2 mb-2 flex-wrap">
@@ -1754,7 +1754,7 @@
                             {{ planSaving ? 'Saving…' : 'Save plan' }}
                         </button>
                         <button v-if="selectedPlan" class="btn btn-sm btn-link text-danger"
-                                :disabled="planDeleting" @click="deletePlan">Remove {{ dayPlans.length > 1 ? `the ${planLabel(selectedPlan, planGrades)} plan` : '' }}</button>
+                                :disabled="planDeleting" @click="deletePlan">Remove {{ dayPlans.length > 1 ? `the ${listedPlanLabel(selectedPlan, planDate)} plan` : '' }}</button>
                         <span v-if="planSaved" class="text-success small">
                             <i class="bi bi-check-circle me-1"></i>Saved
                         </span>
@@ -1791,7 +1791,7 @@
                                         :key="`${d.iso}-${p?.id ?? 'none'}`"
                                         style="cursor:pointer" @click="jumpToDay(d.iso, p?.id ?? null)">
                                         <td class="fw-semibold small">{{ i === 0 ? d.label : '' }}</td>
-                                        <td class="small">{{ p ? planLabel(p, planGrades) : '—' }}</td>
+                                        <td class="small">{{ p ? listedPlanLabel(p, d.iso) : '—' }}</td>
                                         <td v-if="!planHidden.has('standard_code')" class="small">{{ p?.standard_code || '—' }}</td>
                                         <td class="small">{{ p?.objective || '—' }}</td>
                                         <td class="small">
@@ -1818,7 +1818,7 @@
                                 <div class="fw-semibold small">{{ d.label }}</div>
                                 <div v-if="!dayPlansOn(d.iso).length" class="text-muted small">No plan yet</div>
                                 <div v-for="p in dayPlansOn(d.iso)" :key="p.id" class="text-muted small">
-                                    <span v-if="dayPlansOn(d.iso).length > 1 || p.subject" class="fw-semibold">{{ planLabel(p, planGrades) }}:</span>
+                                    <span v-if="dayPlansOn(d.iso).length > 1 || p.subject" class="fw-semibold">{{ listedPlanLabel(p, d.iso) }}:</span>
                                     {{ p.body }}
                                     <span v-if="p.attachments?.length" class="text-nowrap ms-1"><i class="bi bi-paperclip"></i>{{ p.attachments.length }}</span>
                                 </div>
@@ -3037,6 +3037,19 @@ let plansSeq = 0;
 let resyncOwed = false;
 /** The form as syncPlanForm last loaded it, so a reload can tell a draft from an untouched plan. */
 let planSnapshot = '';
+/**
+ * The form as the teacher was handed it: planSnapshot, plus the grade and
+ * subject a new plan starts with. Leaving it with anything else in it asks
+ * first (mayLeavePlan). Apart from planSnapshot so that what counts as a draft
+ * for a reload is unchanged.
+ */
+let planOpened = '';
+/**
+ * The grade the open form was opened with, or last moved to: what the grade
+ * picker's change is a change FROM (v-model has already written the new one by
+ * then), and what declining a switch puts back.
+ */
+let settledGrade = '';
 const planDirty = () => JSON.stringify(planForm.value) !== planSnapshot || pendingPhotos.value.length > 0;
 const planSaved = ref(false);
 const planError = ref('');
@@ -3289,6 +3302,15 @@ const selectedPlan = computed(() =>
     planId.value === null ? null : (plans.value.find((p) => p.id === planId.value) ?? null));
 
 /**
+ * The roster carries two grades: the class is taught as several grades, and a
+ * plan with no grade is a slot of its own beside each grade's plan of its
+ * subject. Otherwise a plan with no grade is the one grade's plan. The rule the
+ * server refuses clashes by (LessonPlanController::taughtAsGrades), read from
+ * the same roster.
+ */
+const rosterGrades = computed(() => severalGrades(students.value.map((s: any) => s.grade_label)));
+
+/**
  * The subjects the day's OTHER plans for the form's grade already hold, so the
  * picker does not offer one twice; and the plan the form's subject and grade
  * would collide with, so the form says so before Save rather than after. Another
@@ -3296,23 +3318,60 @@ const selectedPlan = computed(() =>
  * clash either way.
  */
 const takenSubjects = computed(() =>
-    takenSubjectKeys(plans.value, planDate.value, planId.value, classSubjects.enabled.value, planForm.value.grade_label));
+    takenSubjectKeys(plans.value, planDate.value, planId.value, classSubjects.enabled.value, planForm.value.grade_label, rosterGrades.value));
 const planClash = computed(() =>
     subjectClash(plans.value, planDate.value, planForm.value.subject, planId.value, classSubjects.enabled.value,
-        typeof planForm.value.class_subject_id === 'number' ? planForm.value.class_subject_id : null, planForm.value.grade_label));
+        typeof planForm.value.class_subject_id === 'number' ? planForm.value.class_subject_id : null, planForm.value.grade_label,
+        rosterGrades.value));
 
 /**
- * A class taught as more than one grade at once: its roster, or its week's
- * plans, carry two grades. Its plans name their grade wherever they are listed,
- * and the grade picker on a saved plan opens that grade's plan (switchGradePlan).
+ * A class taught as more than one grade at once, as the screen shows it: its
+ * plans name their grade wherever they are listed, and the grade picker on a
+ * saved plan opens that grade's plan (switchGradePlan). The roster decides
+ * when it records grades at all, so one plan saved under the wrong grade in a
+ * one-grade class leaves the picker able to correct it; the week's plans
+ * decide only for a roster with no grades.
  */
 const planGrades = computed(() =>
-    severalGrades([...students.value.map((s: any) => s.grade_label), ...plans.value.map((p: any) => p.grade_label)]));
+    students.value.some((s: any) => gradeKey(s.grade_label) !== '')
+        ? rosterGrades.value
+        : severalGrades(plans.value.map((p: any) => p.grade_label)));
+
+/**
+ * How one of a day's plans is named in a list: with its grade where the class
+ * shows grades, or where that day's own plans carry two (two plans of one
+ * subject must never read as the same chip).
+ */
+const listedPlanLabel = (p: any, iso: string) =>
+    planLabel(p, planGrades.value || severalGrades(dayPlansOn(iso).map((d: any) => d.grade_label)));
 
 /** Open one plan of the selected day, or NULL for a new one. */
 const selectPlan = (id: number | null) => {
     planId.value = id;
     syncPlanForm();
+};
+
+/** "the Kindergarten Arabic plan", "the new Arabic plan": a plan as the questions below name it. */
+const planNamed = (grade: string | null | undefined, subject: string | null | undefined, isNew = false) =>
+    `the ${isNew ? 'new ' : ''}${grade ? `${grade} ` : ''}${String(subject ?? '').trim() || 'general'} plan`;
+
+/**
+ * Whether the open plan may be left for `next`: at once when it holds nothing
+ * typed since it was opened, else when the teacher says so. `before` is the
+ * grade it had when the grade picker has already written another one.
+ */
+const mayLeavePlan = (next: string, before: string = planForm.value.grade_label || ''): boolean => {
+    const edited = JSON.stringify({ ...planForm.value, grade_label: before }) !== planOpened || pendingPhotos.value.length > 0;
+    const open = selectedPlan.value;
+
+    return !edited || window.confirm(
+        `Your changes to ${planNamed(before, open ? open.subject : planForm.value.subject, !open)} are not saved. Leave them and open ${next}?`);
+};
+
+/** Another of the day's plans, from its chip or the clash notice: never at the cost of unsaved words without asking. */
+const openPlan = (id: number) => {
+    const p = plans.value.find((x) => x.id === id);
+    if (mayLeavePlan(planNamed(p?.grade_label, p?.subject))) selectPlan(id);
 };
 
 /**
@@ -3323,9 +3382,13 @@ const selectPlan = (id: number | null) => {
  */
 const addSubjectPlan = () => {
     const grade = planForm.value.grade_label;
+    if (!mayLeavePlan('a new plan')) return;
     selectPlan(null);
     if (grade) {
         planForm.value.grade_label = grade;
+        // The carried grade is where the new plan starts, not an edit to ask about.
+        planOpened = JSON.stringify(planForm.value);
+        settledGrade = grade;
         loadCurriculum(grade);
     }
 };
@@ -3406,36 +3469,41 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
 };
 
 /**
- * In a combined-grade class a saved plan is ONE grade's lesson. Picking another
- * grade on it opens that grade's plan of this subject for the day, or starts
- * that plan blank with the subject kept, ready for that grade's page of the
- * guide. It never moves this plan to the other grade: saving would write the
- * other grade's lesson over this one, which is the plan the teacher still needs.
+ * In a combined-grade class each grade has its own plan of a subject, and the
+ * grade picker moves between them. On a saved plan, picking another grade
+ * opens that grade's plan of this subject for the day, or starts it blank with
+ * the subject kept, ready for that grade's page of the guide; it never moves
+ * this plan to the other grade, since saving would write the other grade's
+ * lesson over this one. On a NEW plan, picking a grade that already has a plan
+ * of its subject opens that plan (the way back from a blank plan the picker
+ * started); otherwise the new plan simply takes the grade.
  *
- * Unsaved changes on this plan are not dropped without asking; declining puts
- * its grade back. A plan with no grade (written before grades were keyed), or a
+ * Words not yet saved are never dropped without asking; declining puts the
+ * grade back. A plan with no grade (written before grades were keyed), or a
  * class taught as one grade, takes the pick as a correction to the plan, as it
  * always has. True when the pick was handled here.
  */
 const switchGradePlan = (): boolean => {
     const saved = selectedPlan.value;
+    const from = settledGrade;
     const grade = planForm.value.grade_label || '';
-    if (!saved || !planGrades.value || gradeKey(saved.grade_label) === '' || gradeKey(saved.grade_label) === gradeKey(grade)) {
+    if (!planGrades.value || gradeKey(from) === gradeKey(grade) || (saved && gradeKey(saved.grade_label) === '')) {
         return false;
-    }
-
-    const edited = JSON.stringify({ ...planForm.value, grade_label: saved.grade_label }) !== planSnapshot
-        || pendingPhotos.value.length > 0;
-    const name = `${saved.grade_label} ${String(saved.subject ?? '').trim() || 'general'} plan`;
-    const next = grade ? `the ${grade} plan` : 'the plan with no grade';
-    if (edited && !window.confirm(`Your changes to the ${name} are not saved. Leave them and open ${next}?`)) {
-        planForm.value.grade_label = saved.grade_label;
-        return true;
     }
 
     const subject = planForm.value.subject || '';
     const subjectId = typeof planForm.value.class_subject_id === 'number' ? planForm.value.class_subject_id : null;
-    const existing = subjectClash(plans.value, planDate.value, subject, null, classSubjects.enabled.value, subjectId, grade);
+    // A new plan that names no subject yet has no other grade's plan to find.
+    const existing = saved || subject !== '' || subjectId !== null
+        ? subjectClash(plans.value, planDate.value, subject, planId.value, classSubjects.enabled.value, subjectId, grade, rosterGrades.value)
+        : null;
+    if (!saved && !existing) return false;
+
+    if (!mayLeavePlan(grade ? `the ${grade} plan` : 'the plan with no grade', from)) {
+        restoreGrade(from);
+        return true;
+    }
+
     if (existing) {
         selectPlan(existing.id);
         return true;
@@ -3451,13 +3519,37 @@ const switchGradePlan = (): boolean => {
     } else {
         planForm.value.subject = subject;
     }
+    // Where the new plan starts, not an edit: leaving it untouched asks nothing.
+    planOpened = JSON.stringify(planForm.value);
+    settledGrade = grade;
     loadCurriculum(grade || undefined, grade ? (planForm.value.subject || undefined) : undefined);
     return true;
+};
+
+/**
+ * Put the form, and the grade picker showing it, back on `grade` after a
+ * declined switch. Not at once: vModelSelect does not redraw a select from
+ * inside the change event that set it (it marks the element as assigning until
+ * the next tick), so a grade put back now would leave the select showing the
+ * declined grade over a form back on this one, and picking this grade "again"
+ * would change nothing it could see. Its own reset was queued first, so by
+ * this tick the change redraws the select.
+ */
+const restoreGrade = (grade: string) => {
+    nextTick(() => { planForm.value.grade_label = grade; });
+};
+
+/** The free-text grade box (no pacing guide): the same switch, else the typed grade is the plan's. */
+const onGradeTyped = () => {
+    if (!switchGradePlan()) settledGrade = planForm.value.grade_label || '';
 };
 
 const onGradeChange = async () => {
     cancelPrefill();
     if (switchGradePlan()) return;
+    // Nothing to correct when the grade the plan already has is picked again.
+    if ((planForm.value.grade_label || '') === settledGrade) return;
+    settledGrade = planForm.value.grade_label || '';
     if (!classSubjects.enabled.value) planForm.value.subject = '';
     planForm.value.curriculum_week_no = null;
     await loadCurriculum(planForm.value.grade_label, classSubjects.enabled.value ? planForm.value.subject || undefined : undefined);
@@ -3872,6 +3964,7 @@ const copyAcrossWeek = async () => {
     // and none of that may change which days it writes or which plans it finds.
     const sourceDay = planDate.value;
     const subjectMode = classSubjects.enabled.value;
+    const severalTaught = rosterGrades.value;
     const list = plans.value;
     const days = weekdaysOnly.value.map((d) => d.iso);
     const written = new Set<number>();
@@ -3886,11 +3979,11 @@ const copyAcrossWeek = async () => {
             // (lessonPlans.copyRequest): Thursday's Math plan is rewritten by its
             // id, its Science plan and another grade's Math plan are not
             // touched, and a day with no Math plan for this grade gets one.
-            const req = copyRequest(base.value, list, source, iso, subjectMode);
+            const req = copyRequest(base.value, list, source, iso, subjectMode, severalTaught);
             const res = await (req.method === 'put'
                 ? TeacherApiService.put(req.url, req.payload)
                 : TeacherApiService.post(req.url, req.payload));
-            const id = res?.data?.data?.id ?? subjectClash(list, iso, source.subject, null, subjectMode, source.class_subject_id ?? null, source.grade_label ?? null)?.id;
+            const id = res?.data?.data?.id ?? subjectClash(list, iso, source.subject, null, subjectMode, source.class_subject_id ?? null, source.grade_label ?? null, severalTaught)?.id;
             if (id) written.add(id);
         }
     } catch {
@@ -3984,6 +4077,8 @@ const syncPlanForm = () => {
     planForm.value.teaching_methods = planForm.value.teaching_methods ?? [];
     planForm.value.attachments = planForm.value.attachments ?? [];
     planSnapshot = JSON.stringify(planForm.value);
+    planOpened = planSnapshot;
+    settledGrade = planForm.value.grade_label || '';
 
     // A section that already has content opens itself: seven closed rows on a
     // written plan reads as an empty plan. Reflection also opens once the day

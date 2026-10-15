@@ -209,7 +209,7 @@ const fn = (name: string): string => {
 test('the day view writes, removes and copies through the helpers', () => {
     assert.match(fn('savePlan'), /planSaveRequest\(base\.value, planId\.value\)/);
     assert.match(fn('deletePlan'), /TeacherApiService\.delete\(planDeleteUrl\(base\.value, planId\.value\)\)/);
-    assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, list, source, iso, subjectMode\)/);
+    assert.match(fn('copyAcrossWeek'), /copyRequest\(base\.value, list, source, iso, subjectMode, severalTaught\)/);
     assert.doesNotMatch(fn('copyAcrossWeek'), /put\(`\$\{base\.value\}\/lesson-plans`/, 'never the by-day PUT');
     assert.match(view, /:disabled="photoBusy \|\| !canSavePlan\(planSaving, planForm\.body, planClash\)"/);
 });
@@ -254,7 +254,8 @@ test('a jump back into the open day stays on the plan being written', () => {
     assert.equal(jumpTarget(week, '2026-09-14', 4, 7), 9);
 
     assert.match(fn('jumpToDay'), /const next = jumpTarget\(plans\.value, iso, id, planId\.value\);\s+if \(next !== undefined\) selectPlan\(next\);/);
-    assert.match(view, /@click="p\.id !== planId && selectPlan\(p\.id\)"/, 'the open plan\'s chip does nothing');
+    // Another plan's chip opens it (asking first about unsaved words, openPlan); the open plan's does nothing.
+    assert.match(view, /@click="p\.id !== planId && openPlan\(p\.id\)"/, 'the open plan\'s chip does nothing');
 });
 
 test('a save, copy or removal that answers late does not reload over the plan the teacher moved to', () => {
@@ -281,7 +282,8 @@ test('a save, copy or removal that answers late does not reload over the plan th
     const copy = fn('copyAcrossWeek');
     assert.match(copy, /const sourceDay = planDate\.value;/);
     assert.match(copy, /const subjectMode = classSubjects\.enabled\.value;/);
-    assert.match(copy, /copyRequest\(base\.value, list, source, iso, subjectMode\)/, 'the list as it was when the copy began');
+    assert.match(copy, /const severalTaught = rosterGrades\.value;/);
+    assert.match(copy, /copyRequest\(base\.value, list, source, iso, subjectMode, severalTaught\)/, 'the list as it was when the copy began');
     assert.match(copy, /await loadLessonPlans\(\(\) => planId\.value !== null && written\.has\(planId\.value\) && !planDirty\(\)\);/);
     // The reload runs after a failed write too, and the message is set after it.
     assert.match(copy, /catch \{\s+failed = true;\s+\}\s+try \{[\s\S]*?await loadLessonPlans\([\s\S]*?\} finally \{[\s\S]*?if \(failed\) planError\.value = /);

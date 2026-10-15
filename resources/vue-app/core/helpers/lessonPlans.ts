@@ -2,8 +2,9 @@
  * A day's lesson plans: one per class, per day, per subject, PER GRADE
  * (`lesson_plan_class_day_subject_grade_unique`). A combined-grade homeroom
  * plans each subject it teaches that day, once for each of its grades; a plan
- * with no subject is the day's general plan, for a school with no pacing guide,
- * and a plan with no grade is a slot of its own beside the graded ones.
+ * with no subject is the day's general plan, for a school with no pacing guide.
+ * A plan with no grade is a slot of its own beside the graded ones only in a
+ * class taught as several grades (see sameGradePlan).
  *
  * The teacher's day view (views/teacher/TeacherClass.vue) and the office's
  * read-only tab (views/dashboard/groups/GroupLessonPlansTab.vue) both list a
@@ -46,7 +47,7 @@ const GRADE_WORDS = new Map([
 
 /**
  * Two grades are the same grade when their keys match. Mirrors
- * `LessonPlan::gradeKeyFor` on the server, which is `GradeLevel::key`: "Pre-K",
+ * `LessonPlan::gradeKeyFor` on the server, a frozen fold of its own: "Pre-K",
  * "PreK" and "Pre-Kindergarten" are one grade, "K" and "Kindergarten" another,
  * "1st" and "Grade 1" another. A label with no Latin letter or digit (written
  * only in Arabic, say) keys as itself, as subjectKey would key it, so it is
@@ -95,43 +96,68 @@ export function plansOn<T extends DayPlan>(plans: T[], iso: string): T[] {
 }
 
 /**
+ * Of one subject's plans on one day, the one that is this grade's plan, if
+ * any: its own grade's first. In a class taught as several grades
+ * (`severalTaught`: severalGrades of its roster, the server's
+ * taughtAsGrades) only that grade's. In any other class a plan with no grade
+ * and a graded plan are also the one grade's plan, either way round: every
+ * plan written before grades were recorded has none, and it is the same lesson
+ * as the graded plan the form writes today. Mirrors
+ * LessonPlanController::ofGrade.
+ */
+function sameGradePlan<T extends DayPlan>(plans: T[], grade: string | null | undefined, severalTaught: boolean): T | undefined {
+    const level = gradeKey(grade);
+
+    return plans.find((p) => gradeKey(p.grade_label) === level)
+        ?? (severalTaught ? undefined : plans.find((p) => (gradeKey(p.grade_label) === '') !== (level === '')));
+}
+
+/** A plan's subject as the clash check compares it: its class subject's id when that is on, else its words. */
+function subjectSlot(p: DayPlan, classSubjectsEnabled: boolean): string {
+    return classSubjectsEnabled
+        ? (p.class_subject_id != null ? `id:${p.class_subject_id}` : `text:${subjectKey(p.subject)}`)
+        : subjectKey(p.subject);
+}
+
+/**
  * ON linked plans match only their ID; unlinked plans match only other unlinked saved text.
  * OFF retains the legacy text comparison.
  *
  * The OTHER plan on that day that already has this subject for this grade, if
- * any. `exceptId` is the plan being edited: renaming a plan to its own subject
- * is no clash. Another grade's plan of the subject is no clash either: a
- * combined-grade class plans the subject once per grade.
+ * any (sameGradePlan). `exceptId` is the plan being edited: renaming a plan to
+ * its own subject is no clash. Another grade's plan of the subject is no clash
+ * either: a combined-grade class plans the subject once per grade.
  */
 export function subjectClash<T extends DayPlan>(
     plans: T[], iso: string, subject: string | null | undefined, exceptId: number | null,
     classSubjectsEnabled = false, classSubjectId: number | null = null, grade: string | null | undefined = null,
+    severalTaught = false,
 ): T | null {
     const key = subjectKey(subject);
-    const level = gradeKey(grade);
-
-    return plansOn(plans, iso).find((p) => p.id !== exceptId && gradeKey(p.grade_label) === level && (classSubjectsEnabled
+    const same = plansOn(plans, iso).filter((p) => p.id !== exceptId && (classSubjectsEnabled
         ? (classSubjectId != null ? p.class_subject_id === classSubjectId : p.class_subject_id == null && subjectKey(p.subject) === key)
-        : subjectKey(p.subject) === key)) ?? null;
+        : subjectKey(p.subject) === key));
+
+    return sameGradePlan(same, grade, severalTaught) ?? null;
 }
 
 /**
  * The subject keys the day's OTHER plans for this grade hold — what a subject
- * picker for that grade must not offer again. Another grade's plans take
- * nothing from it.
+ * picker for that grade must not offer again (each the subject subjectClash
+ * would refuse). Another grade's plans take nothing from it.
  */
 export function takenSubjectKeys(
     plans: DayPlan[], iso: string, exceptId: number | null, classSubjectsEnabled = false, grade: string | null | undefined = null,
+    severalTaught = false,
 ): Set<string> {
-    const level = gradeKey(grade);
+    const bySubject = new Map<string, DayPlan[]>();
+    for (const p of plansOn(plans, iso)) {
+        if (p.id === exceptId) continue;
+        const slot = subjectSlot(p, classSubjectsEnabled);
+        bySubject.set(slot, [...(bySubject.get(slot) ?? []), p]);
+    }
 
-    return new Set(
-        plansOn(plans, iso)
-            .filter((p) => p.id !== exceptId && gradeKey(p.grade_label) === level)
-            .map((p) => classSubjectsEnabled
-                ? (p.class_subject_id != null ? `id:${p.class_subject_id}` : `text:${subjectKey(p.subject)}`)
-                : subjectKey(p.subject))
-    );
+    return new Set([...bySubject].filter(([, same]) => sameGradePlan(same, grade, severalTaught)).map(([slot]) => slot));
 }
 
 /**
@@ -302,11 +328,12 @@ export function withoutAttachment<T extends PlanAttachment>(list: readonly T[], 
  * a second Math plan.
  */
 export function copyRequest<T extends CopyablePlan>(
-    base: string, plans: T[], source: T, iso: string, classSubjectsEnabled = false,
+    base: string, plans: T[], source: T, iso: string, classSubjectsEnabled = false, severalTaught = false,
 ): { method: 'post' | 'put'; url: string; payload: T & { resource_ids: number[] } } {
     // Another grade's plan of the subject that day is that grade's lesson: it
-    // is never the one rewritten.
-    const same = subjectClash(plans, iso, source.subject, null, classSubjectsEnabled, source.class_subject_id ?? null, source.grade_label ?? null);
+    // is never the one rewritten. In a class taught as one grade, a plan of the
+    // subject with no grade is this grade's, and is (sameGradePlan).
+    const same = subjectClash(plans, iso, source.subject, null, classSubjectsEnabled, source.class_subject_id ?? null, source.grade_label ?? null, severalTaught);
     // The files travel with the activities they sit under (T-004.1, "the
     // Activities rule"): a day that keeps its own activities keeps its own files,
     // and a day that takes the source's activities takes the source's files. Never

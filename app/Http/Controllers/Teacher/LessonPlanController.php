@@ -33,7 +33,8 @@ use Symfony\Component\HttpFoundation\Response;
  * per grade. A plan with no subject is the day's general plan — a school with
  * no pacing guide never picks one, and its teachers work exactly as before. A
  * plan with no grade (every plan written before grades were keyed) is a slot of
- * its own: it neither blocks nor is overwritten by a graded plan of its subject.
+ * its own in a class taught as several grades; in any other class it is the one
+ * grade's plan, as it always was (ofGrade).
  *
  * Wherever "the plan for this day and subject" is looked up, the grade is part
  * of the question (2026-10-15). Without it the by-day address found another
@@ -233,8 +234,9 @@ class LessonPlanController extends TeacherController
      * before per-subject plans, which an older screen still open in a tab sends.
      *
      * Which plan that is:
-     *   1. the day's plan for the subject AND grade sent, when there is one — an
-     *      upsert on the unique key, so saving twice corrects the same plan;
+     *   1. the day's plan for the subject AND grade sent (ofGrade), when there
+     *      is one — an upsert on the unique key, so saving twice corrects the
+     *      same plan;
      *   2. otherwise, when the day holds exactly ONE plan and it is this grade's,
      *      that plan, for a teacher who is not limited to some subjects. The old
      *      screen showed one plan a day and sends the whole form, subject
@@ -295,7 +297,7 @@ class LessonPlanController extends TeacherController
                 $plan = $this->planOnSubject($group, $date, null, $grade);
                 if ($plan === null) {
                     $plans = $this->plansTouchableOnWithClassSubjects($group, $date->toDateString());
-                    $graded = $plans->filter(fn (LessonPlan $p): bool => $p->grade_key === $grade);
+                    $graded = $this->ofGrade($group, $plans, $grade);
                     if ($graded->count() > 1 || ($graded->isEmpty() && $plans->isNotEmpty())) return response()->json(['status' => 'failed', 'data' => ['subject' => ['Choose a plan by id or explicitly choose its subject.']]], Response::HTTP_CONFLICT);
                     $plan = $graded->first();
                 }
@@ -324,12 +326,12 @@ class LessonPlanController extends TeacherController
         });
     }
 
-    /** The day's plan for one class subject (NULL: the general plan) and one grade key. */
+    /** The day's plan for one class subject (NULL: the general plan) that is this grade key's (ofGrade). */
     private function planOnSubject(Group $group, Carbon $date, ?int $id, string $gradeKey): ?LessonPlan
     {
-        $query = $this->plansOnDay($group, $date->toDateString())->where('class_subject_id', $id)->where('grade_key', $gradeKey);
+        $query = $this->plansOnDay($group, $date->toDateString())->where('class_subject_id', $id);
         if ($id === null) $query->where(fn ($q) => $q->whereNull('subject')->orWhere('subject', ''));
-        return $query->first();
+        return $this->ofGrade($group, $query->orderBy('id')->get(), $gradeKey)->first();
     }
 
     /**
@@ -542,8 +544,9 @@ class LessonPlanController extends TeacherController
 
         // Asked before the INSERT so the answer is a sentence naming the
         // subject and grade; the unique index below is what holds when two
-        // saves race. The grade is the one the plan is BECOMING, so moving a
-        // plan by id onto a grade that already has its subject is refused too.
+        // saves of one grade race (ofGrade says what it cannot see). The grade
+        // is the one the plan is BECOMING, so moving a plan by id onto a grade
+        // that already has its subject is refused too.
         $key = LessonPlan::subjectKeyFor($plan->subject);
         $clash = $this->planOn($group, $date, $key, LessonPlan::gradeKeyFor($plan->grade_label));
 
@@ -824,20 +827,63 @@ class LessonPlanController extends TeacherController
             ->whereDate('session_date', $day);
     }
 
-    /** The plan a class already has for (day, subject key, grade key), if any. */
+    /** The plan a class already has for (day, subject key) that is this grade key's (ofGrade), if any. */
     private function planOn(Group $group, Carbon $date, string $subjectKey, string $gradeKey): ?LessonPlan
     {
-        return $this->plansOnDay($group, $date->toDateString())
-            ->where('subject_key', $subjectKey)->where('grade_key', $gradeKey)->first();
+        return $this->ofGrade($group, $this->plansOnDay($group, $date->toDateString())
+            ->where('subject_key', $subjectKey)->orderBy('id')->get(), $gradeKey)->first();
     }
 
     /**
-     * The day's plan when the day holds exactly one AND it is for this grade key; null
-     * otherwise, and ALWAYS null for a teacher limited to some subjects. Renaming "the
-     * day's only plan" is the old screen's meaning of a save, and for a limited teacher
-     * that plan can be the shared general one or, before them, another subject's, which
-     * a save of theirs must never retype or overwrite (review G2). Another grade's lone
-     * plan is never it either: that is the other grade's lesson, not this one renamed.
+     * Which of these plans (one subject's, on one day) are this grade key's, its
+     * own grade's first. The same key always. A plan with no grade is a slot of
+     * its own only in a class taught as several grades: in any other class, a
+     * plan with no grade and a graded plan are the one grade's plan, so either
+     * finds the other. Every plan written before grades were recorded has none,
+     * and in a one-grade class it is the same lesson as the graded plan the
+     * screen now writes; without this, the clash check and the by-day address
+     * passed over it and a second plan of the subject went in beside it.
+     *
+     * Not in the unique index, which cannot see the roster: two saves racing
+     * past this check, one with a grade and one without, would both land. Each
+     * is a plan the teacher sees and can remove; the same grade's race is still
+     * the index's to refuse.
+     *
+     * @param  \Illuminate\Support\Collection<int,LessonPlan>  $plans
+     * @return \Illuminate\Support\Collection<int,LessonPlan>
+     */
+    private function ofGrade(Group $group, \Illuminate\Support\Collection $plans, string $gradeKey): \Illuminate\Support\Collection
+    {
+        $own = $plans->filter(fn (LessonPlan $p): bool => $p->grade_key === $gradeKey);
+        $paired = $plans->filter(fn (LessonPlan $p): bool => ($p->grade_key === '') !== ($gradeKey === ''));
+
+        // The roster is read only when a pairing is possible, so a day holding
+        // only its own grade's plans costs no query.
+        return $paired->isEmpty() || $this->taughtAsGrades($group) ? $own->values() : $own->concat($paired)->values();
+    }
+
+    /**
+     * The class's current roster carries two grades or more: it is taught as a
+     * combined-grade class, and a plan with no grade names neither of them. The
+     * roster the day view lists (TeacherController::classPayload), so the
+     * screen's own check (TeacherClass.vue, `rosterGrades`) agrees with this one.
+     */
+    private function taughtAsGrades(Group $group): bool
+    {
+        return $group->memberships()->participants()->current()->whereNotNull('grade_label')
+            ->distinct()->pluck('grade_label')
+            ->map(fn (string $label): string => LessonPlan::gradeKeyFor($label))
+            ->reject(fn (string $key): bool => $key === '')->unique()->count() > 1;
+    }
+
+    /**
+     * The day's plan when the day holds exactly one AND it is this grade key's
+     * (ofGrade); null otherwise, and ALWAYS null for a teacher limited to some
+     * subjects. Renaming "the day's only plan" is the old screen's meaning of a
+     * save, and for a limited teacher that plan can be the shared general one or,
+     * before them, another subject's, which a save of theirs must never retype
+     * or overwrite (review G2). Another grade's lone plan is never it either:
+     * that is the other grade's lesson, not this one renamed.
      */
     private function onlyPlanOn(Group $group, Carbon $date, string $gradeKey): ?LessonPlan
     {
@@ -847,7 +893,7 @@ class LessonPlanController extends TeacherController
 
         $plans = $this->plansOnDay($group, $date->toDateString())->limit(2)->get();
 
-        return $plans->count() === 1 && $plans->first()->grade_key === $gradeKey ? $plans->first() : null;
+        return $plans->count() === 1 ? $this->ofGrade($group, $plans, $gradeKey)->first() : null;
     }
 
     /**

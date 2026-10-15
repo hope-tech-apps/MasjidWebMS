@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
-use App\Support\GradeLevel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -15,8 +14,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * (`lesson_plan_class_day_subject_grade_unique`): a combined-grade homeroom
  * teaches several subjects a day, and the same subject to each of its grades,
  * and plans each. A plan with no subject is the day's general plan, for a
- * school with no pacing guide; a plan with no grade is its own slot beside the
- * graded plans of its subject.
+ * school with no pacing guide. A plan with no grade is its own key in the
+ * index; whether it is the same lesson as a graded plan of its subject depends
+ * on the class's roster (LessonPlanController::ofGrade).
  *
  * Carries the school's own lesson-plan template (see the
  * add_lesson_plan_template_to_lesson_plans_table migration for what it
@@ -159,10 +159,16 @@ class LessonPlan extends Model
      * grades share a key are the same plan, and the unique index refuses the
      * second. '' is "no grade", NOT NULL for the reason subjectKeyFor gives.
      *
-     * GradeLevel::key, so "Pre-K" and "Pre-Kindergarten" are one grade here as
-     * on every other screen that compares grades. A label it cannot read at all
-     * (one written only in Arabic letters, which it reduces to nothing) keys as
-     * itself, lower-cased one code point at a time, so it is still a grade of
+     * The rules App\Support\GradeLevel::key had on 2026-10-15, so "Pre-K" and
+     * "Pre-Kindergarten" are one grade here as on the screens that compare
+     * grades. COPIED, not called, for the reason SubjectKey's docblock gives for
+     * subjectKeyFor: this key is stored under a unique index, and a mapping
+     * added to GradeLevel for a roster would leave every stored plan under its
+     * old key, so the next save of the same grade's plan would miss it and add a
+     * second. Changing this fold needs a migration that re-keys the rows.
+     *
+     * A label with no Latin letter or digit (written only in Arabic, say) keys
+     * as itself, lower-cased one code point at a time, so it is still a grade of
      * its own and never the ungraded slot. Neither form is longer than the
      * label, so the key fits the column grade_label fits.
      */
@@ -174,8 +180,25 @@ class LessonPlan extends Model
             return '';
         }
 
-        return GradeLevel::key($clean) ?? mb_convert_case($clean, MB_CASE_LOWER_SIMPLE, 'UTF-8');
+        $flat = (string) preg_replace('/[^a-z0-9]+/', '', mb_strtolower($clean));
+
+        return match (true) {
+            $flat === '' => mb_convert_case($clean, MB_CASE_LOWER_SIMPLE, 'UTF-8'),
+            in_array($flat, ['prek', 'prekindergarten', 'pk'], true) => 'prek',
+            in_array($flat, ['kg', 'k', 'kindergarten'], true) => 'kg',
+            // "1st", "1st grade", "grade 1", "grade1st", "1".
+            (bool) preg_match('/^(?:grade)?(\d{1,2})(?:st|nd|rd|th)?(?:grade)?$/', $flat, $m) => (string) (int) $m[1],
+            // "first", "first grade", "grade first".
+            preg_match('/^(?:grade)?([a-z]+?)(?:grade)?$/', $flat, $m) && isset(self::GRADE_WORDS[$m[1]]) => (string) self::GRADE_WORDS[$m[1]],
+            default => $flat,
+        };
     }
+
+    /** gradeKeyFor's ordinal words, frozen with it. */
+    private const GRADE_WORDS = [
+        'first' => 1, 'second' => 2, 'third' => 3, 'fourth' => 4, 'fifth' => 5, 'sixth' => 6,
+        'seventh' => 7, 'eighth' => 8, 'ninth' => 9, 'tenth' => 10, 'eleventh' => 11, 'twelfth' => 12,
+    ];
 
     protected function casts(): array
     {

@@ -128,6 +128,15 @@ it('lists a subject planned for two grades on one day as two plans, each titled 
         ->and(SubjectPiece::count())->toBe(1);
 });
 
+it('marks a graded plan whose words fit a piece title, leaving the grade out of a title it would overfill', function () {
+    $plan = ($this->plan)(); $plan->update(['grade_label' => 'Pre-Kindergarten', 'objective' => str_repeat('o', 230)]);
+
+    expect(collect($this->getJson($this->base.'/work')->assertOk()->json('data.lesson_plans'))->firstWhere('lesson_plan_id', $plan->id)['title'])
+        ->toBe('2026-10-09: '.str_repeat('o', 230));
+    ($this->putMarks)($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $plan->id, 'marks' => [($this->mark)()]])->assertOk();
+    expect(SubjectPiece::where('lesson_plan_id', $plan->id)->value('title'))->toBe('2026-10-09: '.str_repeat('o', 230));
+});
+
 it('walk 17 creates edits and deletes own pieces with an exact mark confirmation count', function () {
     $this->postJson($this->base.'/pieces', ['title' => ''])->assertUnprocessable();
     $piece = $this->postJson($this->base.'/pieces', ['title' => 'Practice piece', 'detail' => 'Practice detail'])->assertCreated()->json('data.id');

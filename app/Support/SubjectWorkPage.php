@@ -13,13 +13,20 @@ final class SubjectWorkPage
      * The ISO date first (the list sorts on it), then the plan's grade when it has
      * one: a combined-grade class plans a subject once per grade on a day, and two
      * plans told apart only by their words read as one lesson listed twice.
+     *
+     * The grade only while the title still fits the 255 characters a marked
+     * plan's piece copies it into (SubjectWorkController::snapshotFits): a plan
+     * whose words fit before grades were shown must not become one that cannot
+     * be marked because of them.
      */
     public static function planTitle(LessonPlan $plan): string
     {
+        $date = $plan->session_date->toDateString();
+        $words = filled($plan->objective) ? $plan->objective : (filled($plan->title) ? $plan->title : $plan->body);
         $grade = LessonPlan::cleanSubject($plan->grade_label);
+        $graded = $grade !== null ? "{$date} ({$grade}): {$words}" : null;
 
-        return $plan->session_date->toDateString().($grade !== null ? " ({$grade})" : '').': '
-            .(filled($plan->objective) ? $plan->objective : (filled($plan->title) ? $plan->title : $plan->body));
+        return $graded !== null && mb_strlen($graded) <= 255 ? $graded : "{$date}: {$words}";
     }
 
     public static function notes(ClassSubject $subject): array

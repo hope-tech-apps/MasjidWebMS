@@ -149,9 +149,10 @@ it('never writes one grade\'s plan over another\'s through the by-day address', 
 
 /**
  * Plans saved before the grade mattered (and a class with no pacing guide)
- * carry no grade. Such a plan is its own slot: it still saves and corrects, a
- * second ungraded plan of its subject is still refused, and a graded plan of
- * that subject is neither blocked by it nor written over it.
+ * carry no grade. In a class taught as several grades, as this one is, such a
+ * plan is its own slot: it still saves and corrects, a second ungraded plan of
+ * its subject is still refused, and a graded plan of that subject is neither
+ * blocked by it nor written over it.
  */
 it('keeps a plan with no grade working and apart from the graded plans', function (bool $on) {
     ($this->inMode)($on);
@@ -351,4 +352,80 @@ it('lists both grades\' plans of a subject to the office', function () {
         ->toBe(['Kindergarten' => 'Count to twenty.', 'Pre-Kindergarten' => 'Count to five.'])
         ->and($plans->pluck('subject')->unique()->values()->all())->toBe(['Mathematics'])
         ->and($plans->first())->not->toHaveKey('grade_key');
+});
+
+/**
+ * Only a class taught as several grades keeps a plan with no grade apart. In
+ * any other class (one grade on the roster, or none recorded) a plan with no
+ * grade, which every plan written before grades were keyed is, and a graded
+ * plan of its subject are the one grade's plan: neither address may put a
+ * second plan of the subject beside it, as none could before grades were keyed.
+ */
+dataset('rosters taught as one grade', ['one grade on the roster' => ['Kindergarten'], 'no grade on the roster' => [null]]);
+
+it('keeps an older plan with no grade the subject\'s plan in a class taught as one grade', function (bool $on, ?string $roster) {
+    GroupMembership::where('group_id', $this->room->id)->update(['grade_label' => $roster]);
+    ($this->inMode)($on);
+
+    $old = ($this->create)('Mathematics', null, 'Older plan.');
+
+    $this->postJson($this->base.'/lesson-plans', ($this->payload)('Mathematics', 'Kindergarten', 'A second Mathematics plan.'))
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'This day already has a Mathematics plan. Open it to change it, or choose another subject.');
+
+    // The by-day address edits that plan, and gives it the grade sent.
+    $this->putJson($this->base.'/lesson-plans', ($this->payload)('Mathematics', 'Kindergarten', 'Older plan, graded.'))
+        ->assertOk()->assertJsonPath('data.id', $old);
+
+    // Now graded, it holds the subject against a save with no grade too.
+    $this->postJson($this->base.'/lesson-plans', ($this->payload)('Mathematics', null, 'Another, with no grade.'))
+        ->assertUnprocessable();
+
+    expect(LessonPlan::count())->toBe(1)
+        ->and(LessonPlan::find($old)->only(['grade_label', 'body']))->toBe(['grade_label' => 'Kindergarten', 'body' => 'Older plan, graded.']);
+})->with('class subject modes')->with('rosters taught as one grade');
+
+it('lets a class taught as one grade still plan two different grades of a subject apart', function (bool $on) {
+    GroupMembership::where('group_id', $this->room->id)->update(['grade_label' => null]);
+    ($this->inMode)($on);
+
+    // No roster grades to go by: the grades the teacher picks still tell plans apart.
+    ($this->create)('Mathematics', 'Pre-Kindergarten', 'Count to five.');
+    ($this->create)('Mathematics', 'Kindergarten', 'Count to twenty.');
+
+    expect(LessonPlan::count())->toBe(2);
+})->with('class subject modes');
+
+it('renames the day\'s lone plan with no grade by day in a class taught as one grade, as before grades were keyed', function (bool $on) {
+    GroupMembership::where('group_id', $this->room->id)->update(['grade_label' => 'Kindergarten']);
+    ($this->inMode)($on);
+
+    $old = ($this->create)('Arabic', null, 'Letter ba.');
+    $saved = $this->putJson($this->base.'/lesson-plans', ($this->payload)('Mathematics', 'Kindergarten', 'Count to ten.'));
+
+    // With class subjects on a by-day rename has always been asked for by id.
+    if ($on) {
+        $saved->assertStatus(409);
+        expect(LessonPlan::find($old)->subject)->toBe('Arabic');
+    } else {
+        $saved->assertOk()->assertJsonPath('data.id', $old);
+        expect(LessonPlan::find($old)->only(['subject', 'grade_label', 'body']))
+            ->toBe(['subject' => 'Mathematics', 'grade_label' => 'Kindergarten', 'body' => 'Count to ten.']);
+    }
+    expect(LessonPlan::count())->toBe(1);
+})->with('class subject modes');
+
+it('holds an older unlinked plan with no grade against a graded plan of its subject in a class taught as one grade', function () {
+    GroupMembership::where('group_id', $this->room->id)->update(['grade_label' => 'Kindergarten']);
+    ($this->inMode)(true);
+
+    // Saved before class subjects: its subject is words, linked to no class subject.
+    $old = LessonPlan::create(['masjid_id' => $this->school->id, 'group_id' => $this->room->id, 'session_date' => $this->day,
+        'subject' => 'Mathematics', 'grade_label' => null, 'body' => 'Older plan.']);
+
+    $this->postJson($this->base.'/lesson-plans', ($this->payload)('Mathematics', 'Kindergarten', 'A second Mathematics plan.'))
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'This day already has a Mathematics plan. Open it to change it, or choose another subject.');
+
+    expect(LessonPlan::count())->toBe(1)->and(LessonPlan::find($old->id)->body)->toBe('Older plan.');
 });

@@ -1405,8 +1405,7 @@ for (const flag of [true, false]) test(`review8: mounted week copy separates cur
     const targetDay = iso(target);
     const plans = [
         { id: 77, session_date: sourceDay, subject: 'Literacy', class_subject_id: 102, grade_label: '1', body: 'Source activities' },
-        // The same grade: a plan with no grade is its own slot, so only this grade's plan is "the same plan".
-        { id: 78, session_date: targetDay, subject: 'Literacy', class_subject_id: null, grade_label: '1', body: 'Historical activities' },
+        { id: 78, session_date: targetDay, subject: 'Literacy', class_subject_id: null, body: 'Historical activities' },
     ];
     const { screen, calls } = await setup('teacher', { flag,
         read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans, hidden_fields: [], meeting_weekdays: null })
@@ -1532,6 +1531,166 @@ test('one grade: the grade picker still corrects the saved plan it is on', async
         assert.equal(save.method, 'put');
         assert.ok(save.url.endsWith('/lesson-plans/81'));
         assert.equal(save.body.grade_label, 'Kindergarten');
+    } finally { screen.unmount(); }
+});
+
+/**
+ * A browser's own pick on a `<select v-model>`: the real options, the picked one
+ * selected, then v-model's listener and the element's own @change, in that
+ * order. What the select SHOWS afterwards is the option vModelSelect leaves
+ * selected (`shownOption`), which is what a teacher reads.
+ */
+const pickOption = (el: Node, value: string) => {
+    el.options = el.children.filter((c: Node) => c.kind === 'el' && c.tag === 'option');
+    el.options.forEach((o: any) => { o.selected = o.value === value; });
+    el.selectedIndex = el.options.findIndex((o: any) => o.selected);
+    const event = { target: el, currentTarget: el };
+    (el.listeners.change ?? []).forEach((h) => h(event));
+    const own = el.props.onChange;
+    (Array.isArray(own) ? own : own ? [own] : []).forEach((h: any) => h(event));
+};
+const shownOption = (el: Node) => el.options[el.selectedIndex]?.value;
+const subjectSelect = (screen: any) => screen.all((n: Node) => n.tag === 'select'
+    && n.children.some((c: Node) => c.tag === 'option' && String(c.textContent).trim().startsWith('Arabic')))[0];
+const writesOf = (calls: any[]) => calls.filter((c: any) => ['post', 'put'].includes(c.method) && c.url.includes('/lesson-plans'));
+const askAs = (answers: { next: boolean }) => {
+    const w = (globalThis as any).window;
+    const asked: string[] = [];
+    w.confirm = (text: string) => { asked.push(text); return answers.next; };
+    return { asked, restore: () => { delete w.confirm; } };
+};
+
+for (const flag of [true, false]) test(`combined grades: declining a switch puts the picker itself back on the plan's grade ${flag ? 'ON' : 'OFF'}`, async () => {
+    const answers = { next: false };
+    const { asked, restore } = askAs(answers);
+    const { screen, calls } = await combinedClass(flag, [{ ...savedArabic(81, 'Pre-Kindergarten', 'Letter ba.'), curriculum_week_no: 3 }]);
+    try {
+        type(activities(screen), 'Letter ba, edited.'); await flush();
+        pickOption(gradeSelect(screen), 'Kindergarten'); await flush(10);
+        assert.equal(asked.length, 1);
+        assert.equal(shownOption(gradeSelect(screen)), 'Pre-Kindergarten', 'the select shows the grade the plan is back on, not the declined one');
+
+        // The plan's own grade picked again corrects nothing.
+        pickOption(gradeSelect(screen), 'Pre-Kindergarten'); await flush(10);
+        click(exactButton(screen, 'Save plan')); await flush(10);
+        const save = writesOf(calls).at(-1);
+        assert.ok(save?.url.endsWith('/lesson-plans/81'));
+        assert.equal(save.body.grade_label, 'Pre-Kindergarten');
+        assert.equal(save.body.curriculum_week_no, 3, 'its guide week is kept');
+        assert.equal(save.body.body, 'Letter ba, edited.');
+        if (!flag) assert.equal(save.body.subject, 'Arabic', 'its subject is kept');
+    } finally { screen.unmount(); restore(); }
+});
+
+for (const flag of [true, false]) test(`combined grades: a new plan's unsaved words are asked about before the picker or a chip leaves them ${flag ? 'ON' : 'OFF'}`, async () => {
+    const answers = { next: false };
+    const { asked, restore } = askAs(answers);
+    const { screen, calls } = await combinedClass(flag, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.')]);
+    try {
+        pickOption(gradeSelect(screen), 'Kindergarten'); await flush(10);
+        assert.ok(screen.text().includes('New plan'));
+        assert.equal(asked.length, 0, 'leaving an untouched plan asks nothing');
+        type(activities(screen), 'Kindergarten draft, unsaved.'); await flush();
+
+        // Back to Pre-K: that grade has its Arabic plan, so the picker would open it.
+        pickOption(gradeSelect(screen), 'Pre-Kindergarten'); await flush(10);
+        assert.deepEqual(asked, ['Your changes to the new Kindergarten Arabic plan are not saved. Leave them and open the Pre-Kindergarten plan?']);
+        assert.ok(screen.text().includes('New plan'));
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Kindergarten draft, unsaved.');
+        assert.equal(shownOption(gradeSelect(screen)), 'Kindergarten');
+
+        // The other grade's chip asks too.
+        click(exactButton(screen, 'Arabic · Pre-Kindergarten')); await flush(10);
+        assert.equal(asked.length, 2);
+        assert.equal(asked[1], 'Your changes to the new Kindergarten Arabic plan are not saved. Leave them and open the Pre-Kindergarten Arabic plan?');
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Kindergarten draft, unsaved.');
+
+        // Kept, it saves as Kindergarten's Arabic plan beside Pre-K's.
+        click(exactButton(screen, 'Save plan')); await flush(10);
+        const save = writesOf(calls).at(-1);
+        assert.equal(save.method, 'post');
+        assert.equal(save.body.grade_label, 'Kindergarten');
+        assert.equal(save.body.body, 'Kindergarten draft, unsaved.');
+        if (flag) assert.equal(save.body.class_subject_id, 102); else assert.equal(save.body.subject, 'Arabic');
+    } finally { screen.unmount(); restore(); }
+});
+
+for (const flag of [true, false]) test(`combined grades: the picker opens the grade's plan from a new plan once its words are let go ${flag ? 'ON' : 'OFF'}`, async () => {
+    const answers = { next: true };
+    const { asked, restore } = askAs(answers);
+    const { screen, calls } = await combinedClass(flag, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.')]);
+    try {
+        pickOption(gradeSelect(screen), 'Kindergarten'); await flush(10);
+        type(activities(screen), 'Kindergarten draft.'); await flush();
+        pickOption(gradeSelect(screen), 'Pre-Kindergarten'); await flush(10);
+        assert.equal(asked.length, 1);
+        assert.ok(!screen.text().includes('New plan'), 'the Pre-K plan, not the draft relabelled');
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Letter ba.');
+        assert.equal(writesOf(calls).length, 0);
+    } finally { screen.unmount(); restore(); }
+});
+
+for (const flag of [true, false]) test(`the clash notice's "Open it" asks before leaving unsaved words ${flag ? 'ON' : 'OFF'}`, async () => {
+    const answers = { next: false };
+    const { asked, restore } = askAs(answers);
+    const { screen } = await combinedClass(flag, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.')]);
+    try {
+        click(screen.button('Add a plan for another')); await flush(10);
+        type(activities(screen), 'Words for a new plan.'); await flush();
+        chooseOption(subjectSelect(screen), flag ? 102 : 'Arabic'); await flush(10);
+        assert.ok(screen.text().includes('This day already has a Arabic plan for Pre-Kindergarten.'), screen.text());
+
+        click(exactButton(screen, 'Open it')); await flush(10);
+        assert.equal(asked.length, 1);
+        assert.ok(screen.text().includes('New plan'));
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Words for a new plan.');
+
+        answers.next = true;
+        click(exactButton(screen, 'Open it')); await flush(10);
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Letter ba.');
+    } finally { screen.unmount(); restore(); }
+});
+
+const kindergartenOnly = [20, 21].map((id) => ({ membership_id: id, grade_label: 'KG', contact: { id: id + 10, first_name: 'Practice', last_name: `${id}` } }));
+
+test('one grade on the roster: a plan saved under another grade is corrected by the picker, whatever the week holds', async () => {
+    // Another day of the loaded week holds the class's real grade.
+    const other = new Date(); other.setDate(other.getDate() + 1);
+    const otherDay = `${other.getFullYear()}-${String(other.getMonth()+1).padStart(2,'0')}-${String(other.getDate()).padStart(2,'0')}`;
+    const plans = [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.'), { ...savedArabic(84, 'Kindergarten', 'Letter ta.'), session_date: otherDay }];
+    const { screen, calls } = await combinedClass(false, plans, kindergartenOnly);
+    try {
+        assert.deepEqual(planChips(screen), ['Arabic'], 'one grade on the roster, and on this day: no grade on the chip');
+        pickOption(gradeSelect(screen), 'Kindergarten'); await flush(10);
+        assert.ok(!screen.text().includes('New plan'), 'the picker corrects the plan it is on');
+        chooseOption(subjectSelect(screen), 'Arabic'); await flush(10);
+        click(exactButton(screen, 'Save plan')); await flush(10);
+        const save = writesOf(calls).at(-1);
+        assert.equal(save.method, 'put');
+        assert.ok(save.url.endsWith('/lesson-plans/81'));
+        assert.equal(save.body.grade_label, 'Kindergarten');
+    } finally { screen.unmount(); }
+});
+
+test('one grade on the roster: two plans of a subject under two grades on one day still read as two chips', async () => {
+    const { screen } = await combinedClass(false, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.'), savedArabic(82, 'Kindergarten', 'Letter ta.')], kindergartenOnly);
+    try {
+        assert.deepEqual(planChips(screen).sort(), ['Arabic · Kindergarten', 'Arabic · Pre-Kindergarten']);
+    } finally { screen.unmount(); }
+});
+
+for (const flag of [true, false]) test(`one grade on the roster: an older plan with no grade holds its subject against a graded new plan ${flag ? 'ON' : 'OFF'}`, async () => {
+    const older = { ...savedArabic(78, '', 'Older Arabic plan.'), grade_label: null };
+    const maths = { ...savedArabic(79, 'Kindergarten', 'Count to ten.'), subject: 'Mathematics', class_subject_id: 103 };
+    const { screen } = await combinedClass(flag, [older, maths], kindergartenOnly);
+    try {
+        click(exactButton(screen, 'Mathematics')); await flush(10);
+        click(screen.button('Add a plan for another')); await flush(10);
+        type(activities(screen), 'A second Arabic plan.'); await flush();
+        // The older Arabic plan is this grade's Arabic plan: picking Arabic is a clash, said before Save.
+        chooseOption(subjectSelect(screen), flag ? 102 : 'Arabic'); await flush(10);
+        assert.ok(screen.text().includes('This day already has a Arabic plan.'), screen.text());
+        assert.equal(Boolean(exactButton(screen, 'Save plan').props.disabled), true, 'no second Arabic plan beside it');
     } finally { screen.unmount(); }
 });
 

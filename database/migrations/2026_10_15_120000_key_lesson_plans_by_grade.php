@@ -23,7 +23,8 @@ use Illuminate\Support\Facades\Schema;
  * "Pre-K" and "Pre-Kindergarten" are one grade, as everywhere else that
  * compares grades (App\Support\GradeLevel). A plan saved before grades
  * mattered, or by a school with no pacing guide, keys as '' and is its own
- * slot beside the graded plans of its subject.
+ * key in the index; in a class taught as one grade the controller still
+ * treats it as that grade's plan (LessonPlanController::ofGrade).
  *
  * ## Order of operations
  *

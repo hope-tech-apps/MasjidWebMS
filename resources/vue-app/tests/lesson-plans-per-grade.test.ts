@@ -4,7 +4,8 @@
  * class teaches is two plans, so the picker must not hide a subject another
  * grade already has, the form must not call it a clash, and copying a grade's
  * plan across the week must land on that grade's plan, never the other's.
- * A plan with no grade is a slot of its own, as on the server.
+ * A plan with no grade is a slot of its own only in a class taught as several
+ * grades, as on the server.
  * Run: npm run test:spa
  */
 import { test } from 'node:test';
@@ -42,11 +43,37 @@ test('the same subject for another grade is no clash; for the same grade it is',
     assert.equal(subjectClash(monday, '2026-10-19', 'Mathematics', null, true, 5, 'Pre-Kindergarten')?.id, 3);
 });
 
-test('a plan with no grade and a graded plan of its subject are two plans', () => {
-    assert.equal(subjectClash(monday, '2026-10-19', 'Arabic', null, false, null, 'Kindergarten'), null);
-    assert.equal(subjectClash(monday, '2026-10-19', 'Arabic', null, false, null, null)?.id, 7);
-    assert.ok(!takenSubjectKeys(monday, '2026-10-19', null, false, null).has('mathematics'),
+test('in a class taught as several grades, a plan with no grade and a graded plan of its subject are two plans', () => {
+    assert.equal(subjectClash(monday, '2026-10-19', 'Arabic', null, false, null, 'Kindergarten', true), null);
+    assert.equal(subjectClash(monday, '2026-10-19', 'Arabic', null, false, null, null, true)?.id, 7);
+    assert.ok(!takenSubjectKeys(monday, '2026-10-19', null, false, null, true).has('mathematics'),
         'a form with no grade is not blocked by a graded plan');
+});
+
+/**
+ * Anywhere else (one grade on the roster, or none) a plan with no grade, which
+ * every plan saved before grades were recorded is, IS the graded plan of its
+ * subject, either way round, as on the server (LessonPlanController::ofGrade).
+ * Two different grades still stay apart.
+ */
+test('in a class taught as one grade, a plan with no grade is that grade\'s plan of its subject', () => {
+    assert.equal(subjectClash(monday, '2026-10-19', 'Arabic', null, false, null, 'Kindergarten')?.id, 7);
+    assert.equal(subjectClash(monday, '2026-10-19', 'Arabic', null, true, 6, 'Kindergarten')?.id, 7);
+    assert.equal(subjectClash(monday, '2026-10-19', 'Mathematics', null, false, null, null)?.id, 3, 'a form with no grade meets the graded plan');
+    assert.ok(takenSubjectKeys(monday, '2026-10-19', null, false, 'Kindergarten').has('arabic'), 'Arabic is not offered again');
+    assert.ok(takenSubjectKeys(monday, '2026-10-19', null, true, 'Kindergarten').has('id:6'));
+    assert.ok(!takenSubjectKeys(monday, '2026-10-19', 7, false, 'Kindergarten').has('arabic'), 'the plan being edited takes nothing');
+    assert.equal(subjectClash(monday, '2026-10-19', 'Mathematics', null, false, null, 'Kindergarten'), null, 'another grade is still another plan');
+
+    // Copying a graded plan across the week rewrites the older ungraded plan of its subject, never adds a second.
+    const week = [
+        { id: 77, session_date: '2026-10-19', subject: 'Literacy', grade_label: '1', body: 'Source activities.' },
+        { id: 78, session_date: '2026-10-20', subject: 'Literacy', grade_label: null, body: 'Historical activities.' },
+    ];
+    const copy = copyRequest(base, week, week[0], '2026-10-20');
+    assert.equal(copy.method, 'put');
+    assert.equal(copy.url, `${base}/lesson-plans/78`);
+    assert.equal(copyRequest(base, week, week[0], '2026-10-20', false, true).method, 'post', 'in a class taught as several grades it is its own slot');
 });
 
 test('copying a grade\'s plan across the week lands on that grade\'s plan, never another grade\'s', () => {
