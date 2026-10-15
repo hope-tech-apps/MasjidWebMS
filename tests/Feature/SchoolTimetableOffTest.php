@@ -25,7 +25,8 @@ it('timetable OFF keeps literal 30cef6d4 office class settings capabilities and 
     fake()->seed(9152);
     $this->travelTo(\Carbon\Carbon::parse('2026-10-10 16:00:00', 'UTC'));
     $school = Masjid::create(['name'=>'Practice School', 'email'=>'practice@example.invalid', 'phone'=>'+15555550100', 'country_id'=>'1', 'city_id'=>'1', 'address'=>'Practice', 'latitude'=>0, 'longitude'=>0, 'org_type'=>'school', 'crm_enabled'=>true]);
-    $group = Group::factory()->create(['masjid_id'=>$school->id, 'kind'=>'class', 'name'=>'Practice Class', 'slug'=>'practice-class']);
+    // The description is pinned: seeded faker text shifted when other tests ran first in the suite.
+    $group = Group::factory()->create(['masjid_id'=>$school->id, 'kind'=>'class', 'name'=>'Practice Class', 'slug'=>'practice-class', 'description'=>'In sed sunt dolor non accusantium quis.']);
     $office = User::factory()->create(['type'=>'SuperAdmin', 'name'=>'Practice Office', 'email'=>'office@example.invalid', 'phone'=>'+15555550101']);
     $teacher = User::factory()->create(['type'=>'Teacher', 'name'=>'Practice Teacher', 'email'=>'teacher@example.invalid', 'phone'=>'+15555550102']);
     MasjidUser::create(['masjid_id'=>$school->id, 'user_id'=>$teacher->id, 'role'=>'teacher', 'is_default'=>true]);
