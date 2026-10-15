@@ -107,6 +107,7 @@ class StripeConnectController extends Controller
                 'forms_card_for' => FormsCardAccountController::forSummary($masjid),
                 ...(\App\Services\Stripe\StripeConnectOAuthService::enabled() ? ['oauth' => [
                     'enabled' => true,
+                    'can_unlink' => \App\Services\Stripe\StripeConnectOAuthService::linkedHere($masjid),
                     'history' => \App\Models\StripeConnectHistory::with('actor:id,name')->where('masjid_id', $masjid->id)->latest('id')->limit(20)->get()->map(fn ($row) => [
                         'action' => $row->action, 'account_last4' => $row->account_last4,
                         'actor' => $row->actor?->name,

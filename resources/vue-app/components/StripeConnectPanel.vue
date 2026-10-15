@@ -151,7 +151,7 @@
                 </div>
 
                 <div v-if="connectStatus.oauth?.enabled" class="border-top pt-3 mt-3">
-                    <button v-if="connectStatus.stripe_account_id" class="btn btn-outline-danger btn-sm"
+                    <button v-if="connectStatus.stripe_account_id && connectStatus.oauth?.can_unlink" class="btn btn-outline-danger btn-sm"
                         :disabled="unlinking" @click="unlinkAccount">Unlink Stripe account</button>
                     <p v-if="unlinkError" class="text-danger small mt-2" role="alert">{{ unlinkError }}</p>
                     <p v-if="unlinkNotice" class="text-success small mt-2" role="status">{{ unlinkNotice }}</p>

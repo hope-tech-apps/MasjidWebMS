@@ -68,7 +68,7 @@ test('enabled Connect offers both doors and opens the OAuth URL immediately', as
 
 test('unlink needs office confirmation and history shows suffix actor and time', async () => {
     const status = { ...empty, stripe_account_id: 'acct_test_existing', charges_enabled: true,
-        oauth: { enabled: true, history: [{ action: 'link', account_last4: '0001', actor: 'Example Staff', at: 'Oct 15, 2026, 1:34 AM' }] } };
+        oauth: { enabled: true, can_unlink: true, history: [{ action: 'link', account_last4: '0001', actor: 'Example Staff', at: 'Oct 15, 2026, 1:34 AM' }] } };
     const canceled = await panel(status, false);
     click(canceled.screen.button('Unlink Stripe account'));
     await flush();
@@ -100,4 +100,9 @@ test('history distinguishes Stripe disconnects from office actions and former st
     assert.ok(!screen.text().includes('by Stripe or removed staff'));
     assert.ok(!screen.text().includes('Invalid Date'));
     screen.unmount();
+});
+
+test('an account connected by onboarding shows no unlink button', async () => {
+    const { screen } = await panel({ ...empty, stripe_account_id: 'acct_onboarded', charges_enabled: true, oauth: { enabled: true, can_unlink: false, history: [] } });
+    assert.ok(!screen.text().includes('Unlink Stripe account'));
 });

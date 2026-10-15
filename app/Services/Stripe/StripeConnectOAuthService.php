@@ -133,6 +133,12 @@ class StripeConnectOAuthService
                 throw new \DomainException('There is no Stripe account to unlink.');
             }
             $account = $org->stripe_account_id;
+            // Only an account this door linked may be unlinked here. Deauthorizing an account the
+            // older create-new onboarding connected would revoke the platform's access to it and
+            // stop that organisation's card payments.
+            if (! self::linkedHere($org)) {
+                throw new \DomainException('This Stripe account was connected through Stripe onboarding, not linked here, so it cannot be unlinked from this screen. Contact Manara support to change it.');
+            }
             $this->deauthorize($account);
             $this->clear($org, $account, 'unlink', $actor->id);
         });
@@ -146,6 +152,14 @@ class StripeConnectOAuthService
             'masjid_id' => $org->id, 'actor_user_id' => $actor, 'account_last4' => substr($account, -4),
             'action' => $action, 'created_at' => now(), 'updated_at' => now(),
         ]);
+    }
+
+    /** The organisation's current account was linked through this OAuth door (its latest history row is that link). */
+    public static function linkedHere(Masjid $org): bool
+    {
+        if (! $org->stripe_account_id) return false;
+        $latest = StripeConnectHistory::withoutMasjidScope()->where('masjid_id', $org->id)->latest('id')->first();
+        return $latest !== null && $latest->action === 'link' && $latest->account_last4 === substr((string) $org->stripe_account_id, -4);
     }
 
     private function available(Masjid $org): void
