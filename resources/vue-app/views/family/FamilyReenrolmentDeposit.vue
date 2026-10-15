@@ -67,7 +67,7 @@ async function submit() {
     const body = new FormData(); appendNested(body, 'data', answers.value); body.append('reenrolment_token', page.value.token); body.append('client_submission_key', clientKey); body.append('pay_with', payWith.value); body.append('cover_fees', coverFees.value ? '1' : '0'); body.append('return_path', location.pathname);
     for (const [key, file] of Object.entries(files.value)) if (file) body.append(`files[${key}]`, file);
     try { const result = await publicCall(`forms/${page.value.form_id}/responses`, body); if (!alive || run !== generation) return; uuid.value = result.uuid ?? ''; saved.value = true; if (result.checkout_url) location.assign(result.checkout_url); else if (uuid.value) await readPayment(); }
-    catch (e: any) { if (alive && run === generation) { error.value = true; issues.value = typeof e.response?.data?.message === 'string' ? e.response.data.message : serverMessage(e, ''); if (e.response?.data?.data?.uuid) { uuid.value = e.response.data.data.uuid; saved.value = true; canPay.value = false; await readPayment(); } } }
+    catch (e: any) { if (alive && run === generation) { error.value = true; issues.value = typeof e.response?.data?.message === 'string' ? e.response.data.message : serverMessage(e, ''); if (e.response?.data?.data?.uuid) { uuid.value = e.response.data.data.uuid; saved.value = true; canPay.value = false; await readPayment(); } else if (e.response?.status === 409) { const reason = issues.value; await load(); if (alive && run === generation) { issues.value = reason; error.value = !page.value; } } } }
     finally { if (alive && run === generation) busy.value = false; }
 }
 function appendNested(body: FormData, key: string, value: any): void {

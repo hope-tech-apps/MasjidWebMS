@@ -88,12 +88,12 @@ final class SchoolReenrolmentDeposits
             || SchoolAdmissionIdentity::name($entries[0]['first_name']) !== SchoolAdmissionIdentity::name($child->contact->first_name)
             || SchoolAdmissionIdentity::name($entries[0]['last_name']) !== SchoolAdmissionIdentity::name($child->contact->last_name)))
             || ! ContactIdentity::sameAddress($response->respondent_email, $guardian->email)) throw ValidationException::withMessages(['deposit' => 'Keep this deposit for the selected child and guardian. Reopen it from the family portal to change children.']);
-        if (SchoolReenrolmentDeposit::where('masjid_id', $form->masjid_id)->where('reenrolment_id', $campaign->id)->where('student_contact_id', $child->contact_id)->exists()) abort(409, self::DUPLICATE);
+        if (SchoolReenrolmentDeposit::where('masjid_id', $form->masjid_id)->where('reenrolment_id', $campaign->id)->where('student_contact_id', $child->contact_id)->exists()) throw new \App\Support\DepositAlreadyLinked(self::DUPLICATE);
         try {
             SchoolReenrolmentDeposit::create(['masjid_id' => $form->masjid_id, 'reenrolment_id' => $campaign->id, 'student_contact_id' => $child->contact_id, 'form_response_id' => $response->id]);
         } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
             // The unique child/campaign key also covers races across different deposit forms.
-            abort(409, self::DUPLICATE);
+            throw new \App\Support\DepositAlreadyLinked(self::DUPLICATE);
         }
     }
 }

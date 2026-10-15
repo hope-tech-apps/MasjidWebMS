@@ -499,6 +499,9 @@ class FormSubmissionsController extends Controller
                 });
             } catch (FormDateTaken) {
                 return $this->dateTaken($form);
+            } catch (\App\Support\DepositAlreadyLinked $e) {
+                // abort(409) would reach the family as "Request failed." with debug off.
+                return response()->api(409, $e->getMessage(), null);
             } catch (UniqueConstraintViolationException $e) {
                 // A double-tap that raced past the lookup: the other request's row is
                 // committed, and it is the answer.
