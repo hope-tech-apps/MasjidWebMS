@@ -39,9 +39,9 @@ final class AuthController extends Controller
             $window=(int)config('student.login.window_seconds',900);
             $byName='student-name:'.hash('sha256',$masjid_id.':'.$username);
             $byIp='student-ip:'.hash('sha256',(string)$request->ip());
-            $nameCount=RateLimiter::hit($byName,$window); $ipCount=RateLimiter::hit($byIp,$window);
+            // Only failed attempts count: a computer lab signs a whole class in from one address (walk finding).
             $outcome='failed'; $status=401; $sentence='The username or password is incorrect.';
-            if ($nameCount > config('student.login.per_username',5) || $ipCount > config('student.login.per_ip',50)) {
+            if (RateLimiter::tooManyAttempts($byName,(int)config('student.login.per_username',5)) || RateLimiter::tooManyAttempts($byIp,(int)config('student.login.per_ip',50))) {
                 $outcome='locked'; $status=429; $sentence='Too many sign-in attempts. Try again in 15 minutes.';
             } else {
                 $hash=$account?->password ?? \Illuminate\Support\Facades\Cache::remember('student-password-dummy',3600,fn()=>Hash::make(\Illuminate\Support\Str::random(64)));
@@ -54,6 +54,8 @@ final class AuthController extends Controller
                     }
                 }
             }
+            if ($outcome === 'failed') { RateLimiter::hit($byName,$window); RateLimiter::hit($byIp,$window); }
+            if ($outcome === 'success') RateLimiter::clear($byName);
             StudentSignInLog::create(['masjid_id'=>$masjid_id,'contact_id'=>$account?->contact_id,'username'=>$username,
                 'ip_address'=>$request->ip(),'user_agent'=>mb_substr((string)$request->userAgent(),0,2000),'outcome'=>$outcome,'attempted_at'=>now()]);
             if ($outcome === 'success') return response()->api(200,'',self::session($account),['Cache-Control'=>'private, no-store']);

@@ -93,6 +93,21 @@ class StudentSignInTest extends StudentTestCase
         $this->putJson($this->officeBase().'/accounts/'.$this->child->id,['username'=>'practice6'])->assertNotFound();
     }
 
+    /** Walk finding: successes counted toward the limits, so a lab on one address and a child signing in often were locked out. */
+    #[Test]
+    public function only_failed_attempts_count_toward_the_sign_in_limits(): void
+    {
+        $this->account();
+        for($i=0;$i<8;$i++) $this->login()->assertOk();              // signing in again and again never locks
+        $this->login('practice6','WRONG_SECRET')->assertUnauthorized();
+        $this->login()->assertOk();                                 // a success after a typo still works
+        for($i=0;$i<60;$i++) $this->login()->assertOk();             // more than the per-address limit of successes
+        for($i=0;$i<4;$i++) $this->login('practice6','WRONG_SECRET')->assertUnauthorized();
+        $this->login()->assertOk();                                 // four typos then the right password: allowed, and the count clears
+        for($i=0;$i<5;$i++) $this->login('practice6','WRONG_SECRET')->assertUnauthorized();
+        $this->login()->assertStatus(429);                          // five failures in a row lock as before
+    }
+
     #[Test]
     public function limits_each_username_and_ip_logs_every_attempt_without_password_and_prunes_after_ninety_days(): void
     {
@@ -102,7 +117,7 @@ class StudentSignInTest extends StudentTestCase
         $this->assertSame(6,StudentSignInLog::count());
         $this->assertStringNotContainsString('WRONG_SECRET',StudentSignInLog::all()->toJson());
         $this->travel(16)->minutes(); $this->login()->assertOk();
-        for($i=0;$i<49;$i++) $this->login('unknown'.$i,'wrong')->assertUnauthorized();
+        for($i=0;$i<50;$i++) $this->login('unknown'.$i,'wrong')->assertUnauthorized();
         $this->login('another','wrong')->assertStatus(429);
         StudentSignInLog::query()->first()->update(['attempted_at'=>now()->subDays(91)]);
         $count=StudentSignInLog::count();
