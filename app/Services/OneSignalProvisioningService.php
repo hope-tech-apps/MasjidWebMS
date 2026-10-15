@@ -68,6 +68,14 @@ class OneSignalProvisioningService
                 'error' => 'OneSignal org auth key (ONESIGNAL_USER_AUTH_KEY) is not configured; cannot provision an app.',
             ];
         }
+        // OneSignal's Apps API needs the account's User Auth key; an organisation API key
+        // (os_v2_org_...) is refused with 400 (seen on production 2026-10-15). Say so before calling.
+        if (str_starts_with((string) $authKey, 'os_v2_org_')) {
+            return [
+                'ok' => false,
+                'error' => 'ONESIGNAL_USER_AUTH_KEY holds an organisation API key (os_v2_org_...). Creating an app needs the account\'s User Auth key from OneSignal account settings; no app was created.',
+            ];
+        }
 
         if (trim($bundleId) === '') {
             return [
@@ -131,14 +139,21 @@ class OneSignalProvisioningService
         }
         if (!$response->successful() || !is_string($appId) || !preg_match('/\A[A-Za-z0-9_-]{1,128}\z/', $appId)
             || !is_string($restKey) || trim($restKey) === '') {
+            // OneSignal's own error text may echo what was sent, so it is never logged or returned.
+            // A known cause is classified instead (production 2026-10-15: an organisation key).
+            $needsUserAuthKey = is_array($body) && is_array($body['errors'] ?? null)
+                && collect($body['errors'])->contains(fn ($e) => is_string($e) && stripos($e, 'user-auth-key') !== false || is_string($e) && stripos($e, 'user auth key') !== false);
             Log::error('OneSignal app provisioning failed', [
                 'masjid_id' => $masjid->id,
                 'status' => $response->status(),
+                'cause' => $needsUserAuthKey ? 'needs_user_auth_key' : null,
             ]);
 
             return [
                 'ok' => false,
-                'error' => 'OneSignal did not return a new app id + key (HTTP ' . $response->status() . ').',
+                'error' => $needsUserAuthKey
+                    ? 'OneSignal refused the key: creating an app needs the account\'s User Auth key (OneSignal account settings), not an organisation or app key. No app was created.'
+                    : 'OneSignal did not return a new app id + key (HTTP ' . $response->status() . ').',
             ];
         }
 

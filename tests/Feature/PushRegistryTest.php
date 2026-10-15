@@ -85,6 +85,27 @@ class PushRegistryTest extends TestCase
         $this->assertStringNotContainsString('invented-secret',json_encode($result));
     }
 
+    /** Production 2026-10-15: an organisation key (os_v2_org_...) cannot create apps; refuse before calling. */
+    #[Test]
+    public function an_organisation_key_is_refused_before_any_call_and_a_user_auth_refusal_is_named(): void
+    {
+        config(['services.onesignal.user_auth_key' => 'os_v2_org_inventedvalue']);
+        Http::fake();
+        $result = (new OneSignalProvisioningService)->provisionApp($this->org(), 'test.example.phone');
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('User Auth key', $result['error']);
+        $this->assertStringNotContainsString('inventedvalue', json_encode($result));
+        Http::assertNothingSent();
+
+        config(['services.onesignal.user_auth_key' => 'invented-other-credential']);
+        Log::spy();
+        Http::swap(new \Illuminate\Http\Client\Factory());
+        Http::fake(['*' => Http::response(['errors' => ['Please include a case-sensitive header of Authorization: Basic <YOUR-USER-AUTH-KEY-HERE> with a valid User Auth key.']], 400)]);
+        $result = (new OneSignalProvisioningService)->provisionApp($this->org(), 'test.example.phone');
+        $this->assertStringContainsString('needs the account\'s User Auth key', $result['error']);
+        Log::shouldHaveReceived('error')->withArgs(fn ($message, $context) => ($context['cause'] ?? null) === 'needs_user_auth_key');
+    }
+
     #[Test]
     public function staging_scrub_removes_registry_ledgers_and_all_device_routing_identity(): void
     {
