@@ -195,4 +195,23 @@ class StudentPortalTest extends StudentTestCase
         $this->put($base.'/student-hand-in',['students_hand_in'=>'1','due_on'=>'2026-10-16'],['Accept'=>'application/json'])->assertOk();
         $this->getJson($base.'/hand-ins')->assertOk()->assertJsonPath('data.due_on','2026-10-16');
     }
+
+    /** Walk finding: a class that carries on year to year showed a new student the previous children's work. */
+    #[Test]
+    public function work_lists_only_this_school_year_and_since_the_student_joined(): void
+    {
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-15 16:00:00','UTC'));
+        \App\Models\SchoolYear::create(['masjid_id'=>$this->school->id,'label'=>'Last year','first_day'=>'2025-08-25','last_day'=>'2026-06-05']);
+        \App\Models\SchoolYear::create(['masjid_id'=>$this->school->id,'label'=>'This year','first_day'=>'2026-08-24','last_day'=>'2027-06-04']);
+        $this->school->forceFill(['capability_overrides'=>array_merge((array)$this->school->capability_overrides,['school_calendar'=>true])])->save();
+        \App\Support\SchoolCalendarReaders::forget((int)$this->school->id);
+        $this->member->forceFill(['joined_at'=>'2026-09-01'])->save();
+        $make=fn($title,$on)=>ClassAssignment::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'created_by_user_id'=>$this->office->id,'title'=>$title,'points_possible'=>10,'scale'=>'points','assigned_on'=>$on]);
+        $old=$make('Last year quiz','2026-03-10'); $beforeJoin=$make('Opening week','2026-08-26'); $now=$make('This term work','2026-10-12');
+        $token=$this->account()->createToken('student',['student'])->plainTextToken;
+        $titles=collect($this->bearer($token)->getJson($this->base().'/classes/'.$this->member->id.'/work')->assertOk()->json('data'))->pluck('title')->all();
+        $this->assertSame(['This term work'],$titles);
+        $this->bearer($token)->getJson($this->base().'/classes/'.$this->member->id.'/work/'.$old->id.'/hand-ins')->assertNotFound();
+        $this->bearer($token)->getJson($this->base().'/classes/'.$this->member->id.'/work/'.$now->id.'/hand-ins')->assertOk();
+    }
 }
