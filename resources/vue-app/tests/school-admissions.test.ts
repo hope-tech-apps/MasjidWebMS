@@ -72,7 +72,7 @@ test('family deposit submits the stored form through public Forms with the signe
         const inputs = s.all((n: any) => n.tag === 'input'); assert.ok(inputs.some((n: any) => n.props.value === 'Sample'));
         const form = s.all((n: any) => n.tag === 'form')[0]; await form.props.onSubmit({ preventDefault() {}, stopPropagation() {} }); await flush();
         assert.equal(calls[0][0], '/api/v1/forms/11/responses'); assert.equal(calls[0][1].credentials, 'omit'); assert.equal(calls[0][1].headers['masjid-id'], '1'); assert.equal(calls[0][1].headers.Authorization, undefined);
-        assert.equal(calls[0][1].body.get('reenrolment_token'), 'signed-practice-token'); assert.equal(JSON.parse(calls[0][1].body.get('data')).children[0].firstName, 'Sample');
+        assert.equal(calls[0][1].body.get('reenrolment_token'), 'signed-practice-token'); assert.equal(calls[0][1].body.get('data[children][0][firstName]'), 'Sample'); assert.equal(calls[0][1].body.get('data'), null, 'a JSON string in data is refused by the server');
         assert.match(s.text(), /Response recorded/); assert.match(s.text(), /Not paid yet/);
     } finally { s.unmount(); globalThis.fetch = previousFetch; (globalThis as any).location = previousLocation; }
 });
