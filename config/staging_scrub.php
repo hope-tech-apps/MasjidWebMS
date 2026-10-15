@@ -806,7 +806,7 @@ return [
         'group_staff.class_subjects_translated_from' => 'Audit-only copy of legacy subject enum restrictions translated at activation; never an authorization source.',
         'school_subjects.name' => 'A subject on the school\'s own list ("Qur\'an", "Mathematics"), typed by the office and offered to teachers. A category of work, not a person. UNIQUE(masjid_id, name_key).',
         'school_subjects.name_key' => 'The same name lower-cased with apostrophes dropped, for the per-school unique index. Derived from school_subjects.name on every save.',
-        'lesson_plans.body' => 'Curriculum content for a lesson, UNIQUE(group_id, session_date, subject_key). The two columns on this table that name children — reflection_worked and reflection_improve — ARE anonymised.',
+        'lesson_plans.body' => 'Curriculum content for a lesson, UNIQUE(group_id, session_date, subject_key, grade_key). The two columns on this table that name children — reflection_worked and reflection_improve — ARE anonymised.',
         'contact_credentials.issuing_body' => 'Who issued a professional credential ("State of North Carolina"). An institution, not a person; the licence NUMBER beside it is an encrypted column that is nulled.',
 
         // --- Spatie media library. This is the logo and app-icon estate on the

@@ -112,6 +112,22 @@ it('walk 16 shows only linked plans newest first with date and objective fallbac
     expect(SubjectPiece::count())->toBe(0);
 });
 
+it('lists a subject planned for two grades on one day as two plans, each titled with its grade', function () {
+    $first = ($this->plan)(); $first->update(['grade_label' => '1st']);
+    $second = ($this->plan)(); $second->update(['grade_label' => 'Grade 2', 'objective' => 'Second grade objective']);
+
+    $plans = collect($this->getJson($this->base.'/work')->assertOk()->json('data.lesson_plans'));
+    expect($plans->pluck('title', 'lesson_plan_id')->sortKeys()->all())->toBe([
+        $first->id => '2026-10-09 (1st): Practice objective',
+        $second->id => '2026-10-09 (Grade 2): Second grade objective',
+    ]);
+
+    // A marked plan keeps the grade in the title its piece copies.
+    ($this->putMarks)($this->base.'/marks', ['source' => 'plan', 'lesson_plan_id' => $second->id, 'marks' => [($this->mark)($this->two)]])->assertOk();
+    expect(SubjectPiece::where('lesson_plan_id', $second->id)->value('title'))->toBe('2026-10-09 (Grade 2): Second grade objective')
+        ->and(SubjectPiece::count())->toBe(1);
+});
+
 it('walk 17 creates edits and deletes own pieces with an exact mark confirmation count', function () {
     $this->postJson($this->base.'/pieces', ['title' => ''])->assertUnprocessable();
     $piece = $this->postJson($this->base.'/pieces', ['title' => 'Practice piece', 'detail' => 'Practice detail'])->assertCreated()->json('data.id');

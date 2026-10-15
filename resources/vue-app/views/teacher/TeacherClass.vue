@@ -1377,21 +1377,23 @@
                     </button>
                 </div>
 
-                <!-- The day's plans, one per subject. Shown once a day has one:
-                     before that the form below IS the new plan, and a lone
-                     "add" button would only duplicate it. -->
+                <!-- The day's plans, one per subject (per grade, in a class
+                     taught as more than one grade, where each chip names its
+                     grade). Shown once a day has one: before that the form
+                     below IS the new plan, and a lone "add" button would only
+                     duplicate it. -->
                 <div v-if="planView === 'day' && dayPlans.length" class="d-flex gap-1 mb-3 flex-wrap align-items-center"
                      role="group" aria-label="This day's plans">
                     <button v-for="p in dayPlans" :key="p.id" type="button" class="btn btn-sm"
                             :class="p.id === planId ? 'btn-success' : 'btn-outline-secondary'"
                             :aria-pressed="p.id === planId" @click="p.id !== planId && selectPlan(p.id)">
-                        {{ planLabel(p) }}
+                        {{ planLabel(p, planGrades) }}
                     </button>
                     <span v-if="planId === null" class="btn btn-sm btn-success disabled" aria-current="true">
                         New plan
                     </span>
                     <button v-else type="button" class="btn btn-sm btn-link px-1" @click="addSubjectPlan">
-                        <i class="bi bi-plus-lg me-1"></i>Add a plan for another subject
+                        <i class="bi bi-plus-lg me-1"></i>Add a plan for another {{ planGrades ? 'subject or grade' : 'subject' }}
                     </button>
                 </div>
 
@@ -1422,7 +1424,8 @@
                                         <option v-for="g in curriculum.grades" :key="g" :value="g">{{ g }}</option>
                                     </select>
                                     <input v-else v-model="planForm.grade_label" type="text" maxlength="32"
-                                           class="form-control form-control-sm" style="width:7rem" placeholder="e.g. Pre-K">
+                                           class="form-control form-control-sm" style="width:7rem" placeholder="e.g. Pre-K"
+                                           @change="switchGradePlan()">
                                 </div>
                                 <div class="col-12 col-sm">
                                     <label class="form-label small text-muted mb-1">Subject</label>
@@ -1494,10 +1497,10 @@
                                  away. The server refuses the clash regardless. -->
                             <div v-if="planClash" class="alert alert-warning py-1 px-2 small mb-2" role="alert">
                                 <template v-if="planClash.subject">
-                                    This day already has a {{ planClash.subject }} plan.
+                                    This day already has a {{ planClash.subject }} plan{{ planClash.grade_label ? ` for ${planClash.grade_label}` : '' }}.
                                 </template>
                                 <template v-else>
-                                    This day already has a plan with no subject. Choose a subject for this one.
+                                    This day already has a plan with no subject{{ planClash.grade_label ? ` for ${planClash.grade_label}` : '' }}. Choose a subject for this one.
                                 </template>
                                 <button type="button" class="btn btn-sm btn-link p-0 align-baseline"
                                         @click="selectPlan(planClash.id)">Open it</button>
@@ -1527,7 +1530,7 @@
                                 </span>
                                 <button v-if="selectedPlan && weekdaysOnly.length > 1" class="btn btn-sm btn-link px-0"
                                         :disabled="copying" @click="copyAcrossWeek">
-                                    {{ copying ? 'Copying…' : (selectedPlan.subject ? `Copy this ${selectedPlan.subject} plan to the rest of this week` : 'Copy to the rest of this week') }}
+                                    {{ copying ? 'Copying…' : (selectedPlan.subject ? `Copy this ${selectedPlan.subject} plan${planGrades && selectedPlan.grade_label ? ` for ${selectedPlan.grade_label}` : ''} to the rest of this week` : 'Copy to the rest of this week') }}
                                 </button>
                             </div>
 
@@ -1751,7 +1754,7 @@
                             {{ planSaving ? 'Saving…' : 'Save plan' }}
                         </button>
                         <button v-if="selectedPlan" class="btn btn-sm btn-link text-danger"
-                                :disabled="planDeleting" @click="deletePlan">Remove {{ dayPlans.length > 1 ? `the ${planLabel(selectedPlan)} plan` : '' }}</button>
+                                :disabled="planDeleting" @click="deletePlan">Remove {{ dayPlans.length > 1 ? `the ${planLabel(selectedPlan, planGrades)} plan` : '' }}</button>
                         <span v-if="planSaved" class="text-success small">
                             <i class="bi bi-check-circle me-1"></i>Saved
                         </span>
@@ -1788,7 +1791,7 @@
                                         :key="`${d.iso}-${p?.id ?? 'none'}`"
                                         style="cursor:pointer" @click="jumpToDay(d.iso, p?.id ?? null)">
                                         <td class="fw-semibold small">{{ i === 0 ? d.label : '' }}</td>
-                                        <td class="small">{{ p ? planLabel(p) : '—' }}</td>
+                                        <td class="small">{{ p ? planLabel(p, planGrades) : '—' }}</td>
                                         <td v-if="!planHidden.has('standard_code')" class="small">{{ p?.standard_code || '—' }}</td>
                                         <td class="small">{{ p?.objective || '—' }}</td>
                                         <td class="small">
@@ -1815,7 +1818,7 @@
                                 <div class="fw-semibold small">{{ d.label }}</div>
                                 <div v-if="!dayPlansOn(d.iso).length" class="text-muted small">No plan yet</div>
                                 <div v-for="p in dayPlansOn(d.iso)" :key="p.id" class="text-muted small">
-                                    <span v-if="dayPlansOn(d.iso).length > 1 || p.subject" class="fw-semibold">{{ planLabel(p) }}:</span>
+                                    <span v-if="dayPlansOn(d.iso).length > 1 || p.subject" class="fw-semibold">{{ planLabel(p, planGrades) }}:</span>
                                     {{ p.body }}
                                     <span v-if="p.attachments?.length" class="text-nowrap ms-1"><i class="bi bi-paperclip"></i>{{ p.attachments.length }}</span>
                                 </div>
@@ -2707,7 +2710,7 @@ import {
 } from '@/core/helpers/gradebook';
 import {
     MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planAlreadyGone, planDeleteUrl, planFilesFull as planFilesFullOf,
-    planLabel, plansOn, planSaveRequest, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
+    gradeKey, planLabel, plansOn, planSaveRequest, severalGrades, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
 } from '@/core/helpers/lessonPlans';
 import {
     FOCUS_REFRESH_GAP_MS, MESSAGE_PAGE_SIZE, afterOpening, focusRefreshDue, newChip, openWholeThread,
@@ -3286,14 +3289,25 @@ const selectedPlan = computed(() =>
     planId.value === null ? null : (plans.value.find((p) => p.id === planId.value) ?? null));
 
 /**
- * The subjects the day's OTHER plans already hold, so the picker does not offer
- * one twice; and the plan the form's subject would collide with, so the form
- * says so before Save rather than after. The server refuses a clash either way.
+ * The subjects the day's OTHER plans for the form's grade already hold, so the
+ * picker does not offer one twice; and the plan the form's subject and grade
+ * would collide with, so the form says so before Save rather than after. Another
+ * grade's plan of a subject takes nothing from this grade. The server refuses a
+ * clash either way.
  */
-const takenSubjects = computed(() => takenSubjectKeys(plans.value, planDate.value, planId.value, classSubjects.enabled.value));
+const takenSubjects = computed(() =>
+    takenSubjectKeys(plans.value, planDate.value, planId.value, classSubjects.enabled.value, planForm.value.grade_label));
 const planClash = computed(() =>
     subjectClash(plans.value, planDate.value, planForm.value.subject, planId.value, classSubjects.enabled.value,
-        typeof planForm.value.class_subject_id === 'number' ? planForm.value.class_subject_id : null));
+        typeof planForm.value.class_subject_id === 'number' ? planForm.value.class_subject_id : null, planForm.value.grade_label));
+
+/**
+ * A class taught as more than one grade at once: its roster, or its week's
+ * plans, carry two grades. Its plans name their grade wherever they are listed,
+ * and the grade picker on a saved plan opens that grade's plan (switchGradePlan).
+ */
+const planGrades = computed(() =>
+    severalGrades([...students.value.map((s: any) => s.grade_label), ...plans.value.map((p: any) => p.grade_label)]));
 
 /** Open one plan of the selected day, or NULL for a new one. */
 const selectPlan = (id: number | null) => {
@@ -3302,9 +3316,10 @@ const selectPlan = (id: number | null) => {
 };
 
 /**
- * A plan for another subject on the same day. The grade carries over — a
- * teacher writing Science after Math is usually still teaching the same grade —
- * and nothing else does: the subject is the one thing that must differ.
+ * A plan for another subject (or, in a combined-grade class, another grade) on
+ * the same day. The grade carries over — a teacher writing Science after Math is
+ * usually still teaching the same grade — and nothing else does: the subject or
+ * the grade must differ, and the pickers below grey out what this grade has.
  */
 const addSubjectPlan = () => {
     const grade = planForm.value.grade_label;
@@ -3390,8 +3405,59 @@ const loadCurriculum = async (grade?: string, subject?: string) => {
     }
 };
 
+/**
+ * In a combined-grade class a saved plan is ONE grade's lesson. Picking another
+ * grade on it opens that grade's plan of this subject for the day, or starts
+ * that plan blank with the subject kept, ready for that grade's page of the
+ * guide. It never moves this plan to the other grade: saving would write the
+ * other grade's lesson over this one, which is the plan the teacher still needs.
+ *
+ * Unsaved changes on this plan are not dropped without asking; declining puts
+ * its grade back. A plan with no grade (written before grades were keyed), or a
+ * class taught as one grade, takes the pick as a correction to the plan, as it
+ * always has. True when the pick was handled here.
+ */
+const switchGradePlan = (): boolean => {
+    const saved = selectedPlan.value;
+    const grade = planForm.value.grade_label || '';
+    if (!saved || !planGrades.value || gradeKey(saved.grade_label) === '' || gradeKey(saved.grade_label) === gradeKey(grade)) {
+        return false;
+    }
+
+    const edited = JSON.stringify({ ...planForm.value, grade_label: saved.grade_label }) !== planSnapshot
+        || pendingPhotos.value.length > 0;
+    const name = `${saved.grade_label} ${String(saved.subject ?? '').trim() || 'general'} plan`;
+    const next = grade ? `the ${grade} plan` : 'the plan with no grade';
+    if (edited && !window.confirm(`Your changes to the ${name} are not saved. Leave them and open ${next}?`)) {
+        planForm.value.grade_label = saved.grade_label;
+        return true;
+    }
+
+    const subject = planForm.value.subject || '';
+    const subjectId = typeof planForm.value.class_subject_id === 'number' ? planForm.value.class_subject_id : null;
+    const existing = subjectClash(plans.value, planDate.value, subject, null, classSubjects.enabled.value, subjectId, grade);
+    if (existing) {
+        selectPlan(existing.id);
+        return true;
+    }
+
+    selectPlan(null);
+    planForm.value.grade_label = grade;
+    // With class subjects on, the subject travels by its id; saved text that
+    // links to no class subject does not, and the teacher picks one.
+    if (classSubjects.enabled.value) {
+        planForm.value.class_subject_id = subjectId;
+        planForm.value.subject = subjectId === null ? '' : subject;
+    } else {
+        planForm.value.subject = subject;
+    }
+    loadCurriculum(grade || undefined, grade ? (planForm.value.subject || undefined) : undefined);
+    return true;
+};
+
 const onGradeChange = async () => {
     cancelPrefill();
+    if (switchGradePlan()) return;
     if (!classSubjects.enabled.value) planForm.value.subject = '';
     planForm.value.curriculum_week_no = null;
     await loadCurriculum(planForm.value.grade_label, classSubjects.enabled.value ? planForm.value.subject || undefined : undefined);
@@ -3816,14 +3882,15 @@ const copyAcrossWeek = async () => {
     try {
         for (const iso of days) {
             if (iso === sourceDay) continue;
-            // THIS subject's plan on each other day (lessonPlans.copyRequest):
-            // Thursday's Math plan is rewritten by its id, its Science plan is
-            // not touched, and a day with no Math plan gets one.
+            // THIS subject's plan for THIS grade on each other day
+            // (lessonPlans.copyRequest): Thursday's Math plan is rewritten by its
+            // id, its Science plan and another grade's Math plan are not
+            // touched, and a day with no Math plan for this grade gets one.
             const req = copyRequest(base.value, list, source, iso, subjectMode);
             const res = await (req.method === 'put'
                 ? TeacherApiService.put(req.url, req.payload)
                 : TeacherApiService.post(req.url, req.payload));
-            const id = res?.data?.data?.id ?? subjectClash(list, iso, source.subject, null, subjectMode, source.class_subject_id ?? null)?.id;
+            const id = res?.data?.data?.id ?? subjectClash(list, iso, source.subject, null, subjectMode, source.class_subject_id ?? null, source.grade_label ?? null)?.id;
             if (id) written.add(id);
         }
     } catch {

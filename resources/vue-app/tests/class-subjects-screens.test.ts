@@ -1405,7 +1405,8 @@ for (const flag of [true, false]) test(`review8: mounted week copy separates cur
     const targetDay = iso(target);
     const plans = [
         { id: 77, session_date: sourceDay, subject: 'Literacy', class_subject_id: 102, grade_label: '1', body: 'Source activities' },
-        { id: 78, session_date: targetDay, subject: 'Literacy', class_subject_id: null, body: 'Historical activities' },
+        // The same grade: a plan with no grade is its own slot, so only this grade's plan is "the same plan".
+        { id: 78, session_date: targetDay, subject: 'Literacy', class_subject_id: null, grade_label: '1', body: 'Historical activities' },
     ];
     const { screen, calls } = await setup('teacher', { flag,
         read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans, hidden_fields: [], meeting_weekdays: null })
@@ -1421,6 +1422,116 @@ for (const flag of [true, false]) test(`review8: mounted week copy separates cur
         assert.ok(copy); assert.equal(copy.method, flag ? 'post' : 'put');
         assert.equal(copy.url.endsWith('/lesson-plans/78'), !flag);
         assert.equal(copy.body.body, flag ? 'Source activities' : 'Historical activities');
+    } finally { screen.unmount(); }
+});
+
+/**
+ * A combined-grade class plans a subject once per grade (one class taught as
+ * Pre-K with Kindergarten, say). On the day view, picking the other grade on a
+ * saved plan opens that grade's plan, or a new blank one with the subject kept,
+ * and never moves the saved plan to the other grade: saving that would write the
+ * other grade's lesson over it. Each chip names its grade.
+ */
+const combinedDay = () => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+};
+const combinedStudents = ['Pre-K', 'KG'].map((grade, i) => ({ membership_id: 20 + i, grade_label: grade, contact: { id: 30 + i, first_name: `Practice ${grade}`, last_name: '' } }));
+async function combinedClass(flag: boolean, plans: any[], students: any[] = combinedStudents) {
+    const setupResult = await setup('teacher', { flag, data: { students },
+        read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans, hidden_fields: [], meeting_weekdays: null })
+            : url.includes('/curriculum') ? ok({ grades: ['Pre-Kindergarten', 'Kindergarten'], subjects: ['Arabic'], weeks: [] }) : undefined,
+        write: (method: string, url: string, body: any) => url.includes('/lesson-plans') ? ok({ id: method === 'post' ? 99 : Number(url.split('/').pop()), ...body }) : undefined,
+    });
+    const { screen } = setupResult;
+    if (flag) await pick(screen, 'Lesson Plans');
+    else { click(exactButton(screen, 'More')); await flush(); click(exactButton(screen, 'Lesson Plans')); await flush(10); }
+    return setupResult;
+}
+const gradeSelect = (screen: any) => {
+    const found = screen.all((n: Node) => n.tag === 'select' && n.children.some((c: Node) => c.tag === 'option' && c.textContent === 'Kindergarten'));
+    assert.equal(found.length, 1, 'the grade picker'); return found[0];
+};
+const planChips = (screen: any) => (screen.all((n: Node) => n.props['aria-label'] === "This day's plans")[0]?.children ?? [])
+    .filter((n: Node) => n.tag === 'button' && !String(n.textContent).startsWith('Add a plan')).map((n: Node) => n.textContent);
+const activities = (screen: any) => screen.all((n: Node) => n.tag === 'textarea' && n.props.placeholder === 'What will this class actually do?')[0];
+const savedArabic = (id: number, grade: string, body: string) => ({ id, session_date: combinedDay(), subject: 'Arabic', class_subject_id: 102, grade_label: grade, body, teaching_methods: [], learning_outcomes: [], attachments: [] });
+
+for (const flag of [true, false]) test(`combined grades: picking the other grade on a saved plan starts that grade's plan and leaves this one ${flag ? 'ON' : 'OFF'}`, async () => {
+    const { screen, calls } = await combinedClass(flag, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.')]);
+    try {
+        assert.deepEqual(planChips(screen), ['Arabic · Pre-Kindergarten'], 'the chip names its grade in a combined-grade class');
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Letter ba.');
+
+        chooseOption(gradeSelect(screen), 'Kindergarten'); await flush(10);
+        assert.ok(screen.text().includes('New plan'), 'a new plan for Kindergarten, not the Pre-K plan moved');
+        assert.ok(!screen.text().includes('This day already has'), 'another grade\'s Arabic plan is no clash');
+        if (!flag) {
+            const arabic = screen.all((n: Node) => n.tag === 'option' && String(n.textContent).trim().startsWith('Arabic'))[0];
+            assert.ok(arabic && !arabic.props.disabled && !String(arabic.textContent).includes('already planned'), 'Arabic is still offered for Kindergarten');
+        }
+
+        type(activities(screen), 'Letter ta.'); await flush();
+        click(exactButton(screen, 'Save plan')); await flush(10);
+        const writes = calls.filter((c: any) => ['post', 'put'].includes(c.method) && c.url.includes('/lesson-plans'));
+        assert.equal(writes.length, 1);
+        assert.equal(writes[0].method, 'post');
+        assert.ok(writes[0].url.endsWith('/lesson-plans'));
+        assert.equal(writes[0].body.grade_label, 'Kindergarten');
+        assert.equal(writes[0].body.body, 'Letter ta.');
+        if (flag) assert.equal(writes[0].body.class_subject_id, 102);
+        else assert.equal(writes[0].body.subject, 'Arabic');
+    } finally { screen.unmount(); }
+});
+
+for (const flag of [true, false]) test(`combined grades: picking a grade that has its plan opens it, and an unsaved change is asked about first ${flag ? 'ON' : 'OFF'}`, async () => {
+    const w = (globalThis as any).window;
+    const asked: string[] = [];
+    let answer = false;
+    w.confirm = (text: string) => { asked.push(text); return answer; };
+    const { screen, calls } = await combinedClass(flag, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.'), savedArabic(82, 'Kindergarten', 'Letter ta.')]);
+    try {
+        assert.deepEqual(planChips(screen).sort(), ['Arabic · Kindergarten', 'Arabic · Pre-Kindergarten']);
+        // Clean form: no question, straight to the Kindergarten plan.
+        chooseOption(gradeSelect(screen), 'Kindergarten'); await flush(10);
+        assert.equal(asked.length, 0);
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Letter ta.');
+
+        // An edit, then the other grade: declining keeps the edit on this plan and its grade.
+        type(activities(screen), 'Letter ta, edited.'); await flush();
+        chooseOption(gradeSelect(screen), 'Pre-Kindergarten'); await flush(10);
+        assert.equal(asked.length, 1);
+        assert.equal(asked[0], 'Your changes to the Kindergarten Arabic plan are not saved. Leave them and open the Pre-Kindergarten plan?');
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Letter ta, edited.');
+        click(exactButton(screen, 'Save plan')); await flush(10);
+        const save = calls.findLast((c: any) => c.method === 'put' && c.url.includes('/lesson-plans/'));
+        assert.ok(save?.url.endsWith('/lesson-plans/82'), 'the Kindergarten plan, saved where it was');
+        assert.equal(save.body.grade_label, 'Kindergarten');
+        assert.ok(!calls.some((c: any) => c.url.endsWith('/lesson-plans/81') && c.method === 'put'), 'the Pre-K plan is never written');
+
+        // Accepting opens the Pre-K plan.
+        type(activities(screen), 'Another edit.'); await flush();
+        answer = true;
+        chooseOption(gradeSelect(screen), 'Pre-Kindergarten'); await flush(10);
+        assert.equal(asked.length, 2);
+        assert.equal(activities(screen).value ?? activities(screen).props.value, 'Letter ba.');
+    } finally { screen.unmount(); delete w.confirm; }
+});
+
+test('one grade: the grade picker still corrects the saved plan it is on', async () => {
+    const single = [{ membership_id: 20, grade_label: 'Pre-K', contact: { id: 30, first_name: 'Practice', last_name: '' } }];
+    const { screen, calls } = await combinedClass(false, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.')], single);
+    try {
+        // Neither the roster nor the week holds a second grade: no grade on the chip.
+        assert.deepEqual(planChips(screen), ['Arabic']);
+        chooseOption(gradeSelect(screen), 'Kindergarten'); await flush(10);
+        assert.ok(!screen.text().includes('New plan'));
+        chooseOption(screen.all((n: Node) => n.tag === 'select' && n.children.some((c: Node) => c.tag === 'option' && String(c.textContent).trim().startsWith('Arabic')))[0], 'Arabic'); await flush(10);
+        click(exactButton(screen, 'Save plan')); await flush(10);
+        const save = calls.findLast((c: any) => ['post', 'put'].includes(c.method) && c.url.includes('/lesson-plans'));
+        assert.equal(save.method, 'put');
+        assert.ok(save.url.endsWith('/lesson-plans/81'));
+        assert.equal(save.body.grade_label, 'Kindergarten');
     } finally { screen.unmount(); }
 });
 

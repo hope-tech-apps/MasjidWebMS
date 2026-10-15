@@ -23,20 +23,29 @@ use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * What a class is planned to cover: one row per class, per day, per subject.
+ * What a class is planned to cover: one row per class, per day, per subject,
+ * per grade.
  *
- * A combined-grade homeroom teaches several subjects a day, so a day holds a
- * LIST of plans, each addressed by its id (`/lesson-plans/{plan_id}`), and
- * `lesson_plan_class_day_subject_unique` keeps it to one plan per subject. A
- * plan with no subject is the day's single general plan — a school with no
- * pacing guide never picks one, and its teachers work exactly as before.
+ * A combined-grade homeroom teaches several subjects a day, and the same
+ * subject to each of its grades, so a day holds a LIST of plans, each addressed
+ * by its id (`/lesson-plans/{plan_id}`), and
+ * `lesson_plan_class_day_subject_grade_unique` keeps it to one plan per subject
+ * per grade. A plan with no subject is the day's general plan — a school with
+ * no pacing guide never picks one, and its teachers work exactly as before. A
+ * plan with no grade (every plan written before grades were keyed) is a slot of
+ * its own: it neither blocks nor is overwritten by a graded plan of its subject.
+ *
+ * Wherever "the plan for this day and subject" is looked up, the grade is part
+ * of the question (2026-10-15). Without it the by-day address found another
+ * grade's plan of the subject and wrote over it with a 200.
  *
  * Two addresses, on purpose:
  *
  *   - BY ID (POST to create, PUT/DELETE `/{plan_id}`) is what the day view uses.
- *     Creating REFUSES a subject that day already has, with a sentence naming
- *     it, rather than overwriting the plan a teacher could not see.
- *   - BY DAY (PUT `/lesson-plans`, an upsert on day and subject) is the address
+ *     Creating REFUSES a subject that day already has for that grade, with a
+ *     sentence naming both, rather than overwriting the plan a teacher could not
+ *     see. Editing may move a plan to another grade, onto a free slot only.
+ *   - BY DAY (PUT `/lesson-plans`, an upsert on day, subject and grade) is the address
  *     every route had before per-subject plans, kept so a teacher with the old
  *     screen still open saves where they expect to (see save()). The day view
  *     does not use it: "copy to the rest of this week" writes each day's plan
@@ -224,22 +233,24 @@ class LessonPlanController extends TeacherController
      * before per-subject plans, which an older screen still open in a tab sends.
      *
      * Which plan that is:
-     *   1. the day's plan for the subject sent, when there is one — an upsert on
-     *      the per-subject unique key, so saving twice corrects the same plan;
-     *   2. otherwise, when the day holds exactly ONE plan, that plan, for a
-     *      teacher who is not limited to some subjects. The old screen showed one
-     *      plan a day and sends the whole form, subject included, so a teacher
-     *      who changed the subject there meant to rename THAT plan. Upserting on
-     *      the new subject instead would leave the old plan behind and add a
-     *      second one she never asked for. A LIMITED teacher never renames by day
-     *      (review G2): the only plan they can see on a day may be the class's
-     *      shared general plan, and retyping it to their subject would overwrite
-     *      what every teacher of the class reads. Their save is a new plan of
-     *      their own beside whatever is there, never a 403 and never a rewrite of
-     *      the general plan or another subject's;
+     *   1. the day's plan for the subject AND grade sent, when there is one — an
+     *      upsert on the unique key, so saving twice corrects the same plan;
+     *   2. otherwise, when the day holds exactly ONE plan and it is this grade's,
+     *      that plan, for a teacher who is not limited to some subjects. The old
+     *      screen showed one plan a day and sends the whole form, subject
+     *      included, so a teacher who changed the subject there meant to rename
+     *      THAT plan. Upserting on the new subject instead would leave the old
+     *      plan behind and add a second one she never asked for. A LIMITED
+     *      teacher never renames by day (review G2): the only plan they can see
+     *      on a day may be the class's shared general plan, and retyping it to
+     *      their subject would overwrite what every teacher of the class reads.
+     *      Their save is a new plan of their own beside whatever is there, never
+     *      a 403 and never a rewrite of the general plan or another subject's;
      *   3. otherwise a new plan: the day is empty, or it already holds several
      *      subjects' plans and none for this one, so "the day's plan" names none
-     *      of them and replacing one would lose work she did not point at.
+     *      of them and replacing one would lose work she did not point at. A
+     *      lone plan for ANOTHER grade is never renamed: it is that grade's
+     *      lesson, and a second grade's plan is written beside it.
      *
      * write()'s clash check governs every one of these, so a rename onto a
      * subject the day already has is refused as it is everywhere else.
@@ -262,8 +273,9 @@ class LessonPlanController extends TeacherController
         //
         // whereDate() compares the DATE PART on both MySQL and SQLite, so this
         // is right whichever the column ends up holding.
-        $plan = $this->planOn($group, $date, LessonPlan::subjectKeyFor($request->validated('subject')))
-            ?? $this->onlyPlanOn($group, $date)
+        $grade = LessonPlan::gradeKeyFor($request->validated('grade_label'));
+        $plan = $this->planOn($group, $date, LessonPlan::subjectKeyFor($request->validated('subject')), $grade)
+            ?? $this->onlyPlanOn($group, $date, $grade)
             ?? new LessonPlan(['group_id' => $group->id]);
 
         return $this->write($request, $masjid_id, $group, $plan);
@@ -275,13 +287,17 @@ class LessonPlanController extends TeacherController
             \App\Models\Masjid::whereKey($masjid_id)->lockForUpdate()->firstOrFail();
             $group = Group::whereKey($group_id)->lockForUpdate()->firstOrFail();
             $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
+            $grade = LessonPlan::gradeKeyFor($request->validated('grade_label'));
             // An old by-day edit with no subject choice must not publish named work as General.
+            // Only this grade's plans are "the day's": a lone plan for another grade is that
+            // grade's lesson, and is neither renamed nor moved to this one.
             if (! $request->has('subject') && ! $request->has('class_subject_id')) {
-                $plan = $this->planOnSubject($group, $date, null);
+                $plan = $this->planOnSubject($group, $date, null, $grade);
                 if ($plan === null) {
                     $plans = $this->plansTouchableOnWithClassSubjects($group, $date->toDateString());
-                    if ($plans->count() > 1) return response()->json(['status' => 'failed', 'data' => ['subject' => ['Choose a plan by id or explicitly choose its subject.']]], Response::HTTP_CONFLICT);
-                    $plan = $plans->first();
+                    $graded = $plans->filter(fn (LessonPlan $p): bool => $p->grade_key === $grade);
+                    if ($graded->count() > 1 || ($graded->isEmpty() && $plans->isNotEmpty())) return response()->json(['status' => 'failed', 'data' => ['subject' => ['Choose a plan by id or explicitly choose its subject.']]], Response::HTTP_CONFLICT);
+                    $plan = $graded->first();
                 }
                 return $this->write($request, $masjid_id, $group, $plan ?? new LessonPlan(['group_id' => $group->id]));
             }
@@ -291,7 +307,7 @@ class LessonPlanController extends TeacherController
                 $id = (int) $request->validated('class_subject_id');
                 $subject = \App\Support\ClassSubjectInitializer::currentSubjects($group)->firstWhere('id', $id);
                 if ($subject !== null && SubjectFence::allowsWork($this->limits($group), $id)) {
-                    $plan = $this->planOnSubject($group, $date, $id);
+                    $plan = $this->planOnSubject($group, $date, $id, $grade);
                     if ($plan !== null) return $this->write($request, $masjid_id, $group, $plan);
                 }
             }
@@ -299,8 +315,8 @@ class LessonPlanController extends TeacherController
             if (SubjectKey::clean($request->validated('subject')) !== null || $request->validated('class_subject_id') !== null) {
                 $chosen = SubjectFence::resolveChoice($group, $request->validated('subject'), $request->validated('class_subject_id'), $request->has('class_subject_id'), $this->limits($group));
             }
-            $plan = $this->planOnSubject($group, $date, $chosen?->id);
-            if ($plan === null && $this->onlyPlanOn($group, $date) !== null) {
+            $plan = $this->planOnSubject($group, $date, $chosen?->id, $grade);
+            if ($plan === null && $this->onlyPlanOn($group, $date, $grade) !== null) {
                 return response()->json(['status' => 'failed', 'data' => ['subject' => ['Choose the existing plan by id to change its subject.']]], Response::HTTP_CONFLICT);
             }
             $plan ??= new LessonPlan(['group_id' => $group->id]);
@@ -308,9 +324,10 @@ class LessonPlanController extends TeacherController
         });
     }
 
-    private function planOnSubject(Group $group, Carbon $date, ?int $id): ?LessonPlan
+    /** The day's plan for one class subject (NULL: the general plan) and one grade key. */
+    private function planOnSubject(Group $group, Carbon $date, ?int $id, string $gradeKey): ?LessonPlan
     {
-        $query = $this->plansOnDay($group, $date->toDateString())->where('class_subject_id', $id);
+        $query = $this->plansOnDay($group, $date->toDateString())->where('class_subject_id', $id)->where('grade_key', $gradeKey);
         if ($id === null) $query->where(fn ($q) => $q->whereNull('subject')->orWhere('subject', ''));
         return $query->first();
     }
@@ -364,10 +381,11 @@ class LessonPlanController extends TeacherController
      * Remove a day's plan by its date — the address from before per-subject
      * plans, kept so an older screen still works.
      *
-     * It removes the day's plan only while there is exactly one. With several,
-     * "remove the plan for Tuesday" no longer names one, and deleting every
-     * subject's plan because one was meant would erase work the teacher did not
-     * point at; it answers 409 and the teacher removes them one at a time.
+     * It removes the day's plan only while there is exactly one. With several
+     * (other subjects, or one subject for several grades), "remove the plan for
+     * Tuesday" no longer names one, and deleting every plan because one was
+     * meant would erase work the teacher did not point at; it answers 409 and
+     * the teacher removes them one at a time.
      *
      * "The day's plans" are the ones THIS teacher may touch. For a limited teacher
      * that is the plans filed under THEIR subjects, and only those (review G2): the
@@ -411,7 +429,7 @@ class LessonPlanController extends TeacherController
         if ($plans->count() > 1) {
             return response()->json([
                 'status' => 'failed',
-                'data' => ['date' => ['This day has a plan for more than one subject. Remove them one at a time.']],
+                'data' => ['date' => ['This day has more than one plan. Remove them one at a time.']],
             ], Response::HTTP_CONFLICT);
         }
 
@@ -457,7 +475,7 @@ class LessonPlanController extends TeacherController
         if ($plans->count() > 1) {
             return response()->json([
                 'status' => 'failed',
-                'data' => ['date' => ['This day has a plan for more than one subject. Remove them one at a time.']],
+                'data' => ['date' => ['This day has more than one plan. Remove them one at a time.']],
             ], Response::HTTP_CONFLICT);
         }
 
@@ -523,14 +541,16 @@ class LessonPlanController extends TeacherController
         ]);
 
         // Asked before the INSERT so the answer is a sentence naming the
-        // subject; the unique index below is what holds when two saves race.
+        // subject and grade; the unique index below is what holds when two
+        // saves race. The grade is the one the plan is BECOMING, so moving a
+        // plan by id onto a grade that already has its subject is refused too.
         $key = LessonPlan::subjectKeyFor($plan->subject);
-        $clash = $this->planOn($group, $date, $key);
+        $clash = $this->planOn($group, $date, $key, LessonPlan::gradeKeyFor($plan->grade_label));
 
         // Named as the EXISTING plan spells it: the teacher typed "math", but
         // the plan they are being sent to open is the one called "Math".
         if ($clash && $clash->id !== $plan->id) {
-            return $this->clash($clash->subject);
+            return $this->clash($clash->subject, $clash->grade_label, $date);
         }
 
         // Resolved BEFORE the plan is written, like every other refusal here: a
@@ -553,7 +573,7 @@ class LessonPlanController extends TeacherController
                 });
             }
         } catch (UniqueConstraintViolationException) {
-            return $this->clash(LessonPlan::cleanSubject($plan->subject));
+            return $this->clash(LessonPlan::cleanSubject($plan->subject), $plan->grade_label, $date);
         }
 
         return response()->json([
@@ -670,14 +690,15 @@ class LessonPlanController extends TeacherController
         // Asked before the INSERT so the answer is a sentence naming the
         // subject; the unique index below is what holds when two saves race.
         $subjectId = $chosen?->id ?? $plan->class_subject_id;
-        $clash = $this->planOnSubject($group, $date, $subjectId);
+        $grade = LessonPlan::gradeKeyFor($plan->grade_label);
+        $clash = $this->planOnSubject($group, $date, $subjectId, $grade);
         // Keep the old physical key's collision response for unlinked historical rows.
-        if ($clash === null) $clash = $this->planOn($group, $date, LessonPlan::subjectKeyFor($plan->subject));
+        if ($clash === null) $clash = $this->planOn($group, $date, LessonPlan::subjectKeyFor($plan->subject), $grade);
 
         // Named as the EXISTING plan spells it: the teacher typed "math", but
         // the plan they are being sent to open is the one called "Math".
         if ($clash && $clash->id !== $plan->id) {
-            return $this->clash($clash->subject);
+            return $this->clash($clash->subject, $clash->grade_label, $date);
         }
 
         // Resolved BEFORE the plan is written, like every other refusal here: a
@@ -700,7 +721,7 @@ class LessonPlanController extends TeacherController
                 });
             }
         } catch (UniqueConstraintViolationException) {
-            return $this->clash(LessonPlan::cleanSubject($plan->subject));
+            return $this->clash(LessonPlan::cleanSubject($plan->subject), $plan->grade_label, $date);
         }
 
         return response()->json([
@@ -803,20 +824,22 @@ class LessonPlanController extends TeacherController
             ->whereDate('session_date', $day);
     }
 
-    /** The plan a class already has for (day, subject key), if any. */
-    private function planOn(Group $group, Carbon $date, string $subjectKey): ?LessonPlan
+    /** The plan a class already has for (day, subject key, grade key), if any. */
+    private function planOn(Group $group, Carbon $date, string $subjectKey, string $gradeKey): ?LessonPlan
     {
-        return $this->plansOnDay($group, $date->toDateString())->where('subject_key', $subjectKey)->first();
+        return $this->plansOnDay($group, $date->toDateString())
+            ->where('subject_key', $subjectKey)->where('grade_key', $gradeKey)->first();
     }
 
     /**
-     * The day's plan when the day holds exactly one; null when it holds none or several,
-     * and ALWAYS null for a teacher limited to some subjects. Renaming "the day's only
-     * plan" is the old screen's meaning of a save, and for a limited teacher that plan
-     * can be the shared general one or, before them, another subject's, which a save
-     * of theirs must never retype or overwrite (review G2).
+     * The day's plan when the day holds exactly one AND it is for this grade key; null
+     * otherwise, and ALWAYS null for a teacher limited to some subjects. Renaming "the
+     * day's only plan" is the old screen's meaning of a save, and for a limited teacher
+     * that plan can be the shared general one or, before them, another subject's, which
+     * a save of theirs must never retype or overwrite (review G2). Another grade's lone
+     * plan is never it either: that is the other grade's lesson, not this one renamed.
      */
-    private function onlyPlanOn(Group $group, Carbon $date): ?LessonPlan
+    private function onlyPlanOn(Group $group, Carbon $date, string $gradeKey): ?LessonPlan
     {
         if ($this->limits($group) !== null) {
             return null;
@@ -824,7 +847,7 @@ class LessonPlanController extends TeacherController
 
         $plans = $this->plansOnDay($group, $date->toDateString())->limit(2)->get();
 
-        return $plans->count() === 1 ? $plans->first() : null;
+        return $plans->count() === 1 && $plans->first()->grade_key === $gradeKey ? $plans->first() : null;
     }
 
     /**
@@ -924,15 +947,28 @@ class LessonPlanController extends TeacherController
     }
 
     /**
-     * A second plan for a subject the day already has. 422 under `subject`, the
-     * shape every validation failure in this realm has, so the form shows it
-     * beside the field that caused it.
+     * A second plan for a subject (and grade) the day already has. 422 under
+     * `subject`, the shape every validation failure in this realm has, so the
+     * form shows it beside the field that caused it.
+     *
+     * A graded clash names the grade and the day: in a combined-grade class
+     * "this day already has a Mathematics plan" is true of the other grade's
+     * plan too, and would read as a refusal to plan the subject at all. An
+     * ungraded clash keeps the sentence it has always had.
      */
-    private function clash(?string $subject): JsonResponse
+    private function clash(?string $subject, ?string $grade = null, ?Carbon $date = null): JsonResponse
     {
-        $message = $subject === null
-            ? 'This day already has a plan with no subject. Choose a subject for this one, or open that plan to change it.'
-            : "This day already has a {$subject} plan. Open it to change it, or choose another subject.";
+        $grade = LessonPlan::cleanSubject($grade);
+
+        if ($grade !== null && $date !== null) {
+            $plan = $subject === null ? 'plan with no subject' : "{$subject} plan";
+            $article = preg_match('/^[aeiou]/i', $plan) ? 'an' : 'a';
+            $message = "There is already {$article} {$plan} for {$grade} on ".SchoolCalendar::label($date->toDateString()).'. Open it to change it.';
+        } else {
+            $message = $subject === null
+                ? 'This day already has a plan with no subject. Choose a subject for this one, or open that plan to change it.'
+                : "This day already has a {$subject} plan. Open it to change it, or choose another subject.";
+        }
 
         return response()->json([
             'status' => 'failed',

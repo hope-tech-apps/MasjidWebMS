@@ -3,16 +3,20 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use App\Support\GradeLevel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * What a class is going to cover on one day, in one subject. One per class, per
- * day, per subject (`lesson_plan_class_day_subject_unique`): a combined-grade
- * homeroom teaches several subjects a day and plans each. A plan with no subject
- * is the day's single general plan, for a school with no pacing guide.
+ * What a class is going to cover on one day, in one subject, for one grade. One
+ * per class, per day, per subject, per grade
+ * (`lesson_plan_class_day_subject_grade_unique`): a combined-grade homeroom
+ * teaches several subjects a day, and the same subject to each of its grades,
+ * and plans each. A plan with no subject is the day's general plan, for a
+ * school with no pacing guide; a plan with no grade is its own slot beside the
+ * graded plans of its subject.
  *
  * Carries the school's own lesson-plan template (see the
  * add_lesson_plan_template_to_lesson_plans_table migration for what it
@@ -101,11 +105,13 @@ class LessonPlan extends Model
     ];
 
     /**
-     * `subject_key` is plumbing for the unique index — derived from `subject` on
-     * every save — and not something a screen should read or a client send.
+     * `subject_key` and `grade_key` are plumbing for the unique index — derived
+     * from `subject` and `grade_label` on every save — and not something a
+     * screen should read or a client send.
      */
     protected $hidden = [
         'subject_key',
+        'grade_key',
         'class_subject_id',
         'class_subject_link_checked_at',
     ];
@@ -119,6 +125,7 @@ class LessonPlan extends Model
         static::saving(function (LessonPlan $plan): void {
             $plan->subject = self::cleanSubject($plan->subject);
             $plan->subject_key = self::subjectKeyFor($plan->subject);
+            $plan->grade_key = self::gradeKeyFor($plan->grade_label);
         });
     }
 
@@ -145,6 +152,29 @@ class LessonPlan extends Model
     public static function subjectKeyFor(?string $subject): string
     {
         return mb_convert_case((string) self::cleanSubject($subject), MB_CASE_LOWER_SIMPLE, 'UTF-8');
+    }
+
+    /**
+     * The grade's comparison key: two plans of one subject on one day whose
+     * grades share a key are the same plan, and the unique index refuses the
+     * second. '' is "no grade", NOT NULL for the reason subjectKeyFor gives.
+     *
+     * GradeLevel::key, so "Pre-K" and "Pre-Kindergarten" are one grade here as
+     * on every other screen that compares grades. A label it cannot read at all
+     * (one written only in Arabic letters, which it reduces to nothing) keys as
+     * itself, lower-cased one code point at a time, so it is still a grade of
+     * its own and never the ungraded slot. Neither form is longer than the
+     * label, so the key fits the column grade_label fits.
+     */
+    public static function gradeKeyFor(?string $grade): string
+    {
+        $clean = self::cleanSubject($grade);
+
+        if ($clean === null) {
+            return '';
+        }
+
+        return GradeLevel::key($clean) ?? mb_convert_case($clean, MB_CASE_LOWER_SIMPLE, 'UTF-8');
     }
 
     protected function casts(): array

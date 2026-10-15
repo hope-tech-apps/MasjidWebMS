@@ -58,12 +58,13 @@
                     </p>
 
                     <!-- One block per plan: a combined-grade homeroom plans each
-                         subject it teaches that day, and each block leads with
-                         the subject so two plans are never read as one. -->
+                         subject it teaches that day, once per grade, and each
+                         block leads with the subject and the grade so two plans
+                         are never read as one. -->
                     <div v-for="(entry, i) in day.plans" :key="entry.plan.id"
                          :class="{ 'border-top pt-2 mt-2': i > 0 }">
                         <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
-                            <span v-if="day.plans.length > 1 || entry.plan.subject"
+                            <span v-if="day.plans.length > 1 || entry.plan.subject || entry.plan.grade_label"
                                   class="badge bg-light text-dark border fw-semibold">{{ planLabel(entry.plan) }}</span>
                             <span v-if="entry.plan.prefill_source"
                                   class="badge bg-success-subtle text-success-emphasis fw-normal">
@@ -317,9 +318,9 @@ const rowsFor = (plan: any): { key: string; label: string; text?: string; list?:
 
     for (const field of FIELD_LABELS) {
         if (hiddenFields.value.has(field.key)) continue;
-        // The subject heads its plan's block already; a row repeating it
-        // would be the first thing read and the least informative.
-        if (field.key === 'subject') continue;
+        // The subject and the grade head their plan's block already; a row
+        // repeating them would be the first thing read and the least informative.
+        if (field.key === 'subject' || field.key === 'grade_label') continue;
 
         const value = plan?.[field.key];
         if (value === null || value === undefined) continue;

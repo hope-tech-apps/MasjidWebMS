@@ -263,12 +263,12 @@ Route::prefix('teacher')
                         Route::put('/attendance', [StudentAllergyAttendanceController::class, 'save']);
                         Route::get('/members/{membership_id}/attendance', [AttendanceController::class, 'forMember']);
 
-                        // Lesson plans: one per class, per day, per subject.
-                        // The day view addresses a plan by its id — POST refuses
-                        // a subject the day already has. The two id-less writes
-                        // are the (day, subject) address: an upsert that "copy to
-                        // the rest of this week" uses, and the address an older
-                        // screen still open in a tab knows. See the controller.
+                        // Lesson plans: one per class, per day, per subject, per
+                        // grade. The day view addresses a plan by its id — POST
+                        // refuses a subject the day already has for that grade.
+                        // The two id-less writes are the (day, subject, grade)
+                        // address an older screen still open in a tab knows.
+                        // See the controller.
                         Route::post('/lesson-plans/photo-fill', [\App\Http\Controllers\Teacher\LessonPlanPhotoController::class, 'read']);
                         Route::get('/lesson-plans', [LessonPlanController::class, 'index']);
                         Route::post('/lesson-plans', [LessonPlanController::class, 'store']);

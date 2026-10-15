@@ -9,9 +9,17 @@ use Illuminate\Validation\ValidationException;
 /** Bulk reads only: class size and the number of guide entries do not add queries. */
 final class SubjectWorkPage
 {
+    /**
+     * The ISO date first (the list sorts on it), then the plan's grade when it has
+     * one: a combined-grade class plans a subject once per grade on a day, and two
+     * plans told apart only by their words read as one lesson listed twice.
+     */
     public static function planTitle(LessonPlan $plan): string
     {
-        return $plan->session_date->toDateString().': '.(filled($plan->objective) ? $plan->objective : (filled($plan->title) ? $plan->title : $plan->body));
+        $grade = LessonPlan::cleanSubject($plan->grade_label);
+
+        return $plan->session_date->toDateString().($grade !== null ? " ({$grade})" : '').': '
+            .(filled($plan->objective) ? $plan->objective : (filled($plan->title) ? $plan->title : $plan->body));
     }
 
     public static function notes(ClassSubject $subject): array

@@ -27,6 +27,9 @@ class LessonPlanSubjectKeyTest extends TestCase
 
     private const MIGRATION = '2026_09_27_120000_key_lesson_plans_by_subject.php';
 
+    /** Keys the grade on top of the subject; it is rolled back first to reach this one. */
+    private const GRADE_MIGRATION = '2026_10_15_120000_key_lesson_plans_by_grade.php';
+
     private Masjid $school;
     private Group $class;
 
@@ -60,9 +63,11 @@ class LessonPlanSubjectKeyTest extends TestCase
     {
         $indexes = collect(Schema::getIndexes('lesson_plans'))->keyBy('name');
 
-        $this->assertTrue($indexes->has('lesson_plan_class_day_subject_unique'));
-        $this->assertTrue($indexes['lesson_plan_class_day_subject_unique']['unique']);
-        $this->assertSame(['group_id', 'session_date', 'subject_key'], $indexes['lesson_plan_class_day_subject_unique']['columns']);
+        // The subject key is still part of the unique key; the grade key now
+        // follows it (LessonPlanGradeKeyTest).
+        $this->assertTrue($indexes->has('lesson_plan_class_day_subject_grade_unique'));
+        $this->assertTrue($indexes['lesson_plan_class_day_subject_grade_unique']['unique']);
+        $this->assertSame(['group_id', 'session_date', 'subject_key', 'grade_key'], $indexes['lesson_plan_class_day_subject_grade_unique']['columns']);
         $this->assertFalse($indexes->has('lesson_plan_class_day_unique'),
             'the one-plan-per-day index would refuse the second subject');
 
@@ -130,6 +135,7 @@ class LessonPlanSubjectKeyTest extends TestCase
     {
         $math = $this->plan('2026-09-14', 'Math');
         $science = $this->plan('2026-09-14', 'Science');
+        $this->gradeMigration()->down();
 
         try {
             $this->migration()->down();
@@ -148,6 +154,7 @@ class LessonPlanSubjectKeyTest extends TestCase
     public function rolling_back_and_forward_again_backfills_the_key_from_the_subject(): void
     {
         $this->plan('2026-09-14', 'Math');
+        $this->gradeMigration()->down();
 
         $migration = $this->migration();
         $migration->down();
@@ -180,5 +187,10 @@ class LessonPlanSubjectKeyTest extends TestCase
     private function migration(): object
     {
         return include database_path('migrations/' . self::MIGRATION);
+    }
+
+    private function gradeMigration(): object
+    {
+        return include database_path('migrations/' . self::GRADE_MIGRATION);
     }
 }

@@ -402,6 +402,30 @@ class SchoolRecordsExportTest extends TestCase
     }
 
     #[Test]
+    public function the_lesson_plans_file_says_which_grade_each_plan_of_a_subject_is(): void
+    {
+        // A combined-grade class plans one subject once per grade on a day.
+        foreach (['Pre-Kindergarten' => 'Count to five.', 'Kindergarten' => 'Count to twenty.', null => 'An older plan.'] as $grade => $body) {
+            LessonPlan::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+                'session_date' => '2026-09-14', 'subject' => 'Math', 'grade_label' => $grade === '' ? null : $grade, 'body' => $body,
+            ]);
+        }
+
+        $rows = array_map('str_getcsv', array_filter(explode("\n", $this->body('lesson_plans'))));
+        $header = array_shift($rows);
+
+        $this->assertSame(['Session date', 'Subject', 'Grade', 'Title', 'Body'], array_slice($header, 2), 'the grade beside the subject');
+        $grade = array_search('Grade', $header, true);
+        $body = array_search('Body', $header, true);
+        $this->assertEqualsCanonicalizing(
+            ['Pre-Kindergarten' => 'Count to five.', 'Kindergarten' => 'Count to twenty.', '' => 'An older plan.'],
+            array_combine(array_column($rows, $grade), array_column($rows, $body)),
+            'three plans of one subject on one day are told apart by their grade, none merged or dropped'
+        );
+    }
+
+    #[Test]
     public function an_unknown_dataset_is_refused(): void
     {
         $this->getJson("/api/admin/masjids/{$this->school->id}/records/export?dataset=everything")

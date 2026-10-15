@@ -593,15 +593,16 @@ class SchoolRecordsExportController extends Controller
     }
 
     /**
-     * A day can hold one plan per subject, so the subject travels with each row:
-     * without it, two rows for the same class and date read as a duplicate.
-     * ON linked names are current; OFF and unlinked cells retain saved text.
+     * A day can hold one plan per subject per grade, so the subject and the grade
+     * travel with each row: without them, two rows for the same class and date
+     * read as a duplicate. ON linked names are current; OFF and unlinked cells
+     * retain saved text.
      *
      * @param resource $out
      */
     private function writeLessonPlans($out, bool $classSubjects = false): void
     {
-        Csv::row($out, ['Plan id', 'Class id', 'Session date', 'Subject', 'Title', 'Body']);
+        Csv::row($out, ['Plan id', 'Class id', 'Session date', 'Subject', 'Grade', 'Title', 'Body']);
 
         Csv::each(
             LessonPlan::whereIn('group_id', $this->schoolGroupIds())->when($classSubjects, fn ($q) => $q->with('classSubject')),
@@ -609,6 +610,7 @@ class SchoolRecordsExportController extends Controller
                 Csv::num($p->id), Csv::num($p->group_id),
                 Csv::num($p->session_date?->toDateString()),
                 Csv::text($classSubjects ? $p->currentSubjectName() : $p->subject),
+                Csv::text($p->grade_label),
                 Csv::text($p->title), Csv::text($p->body),
             ])
         );
