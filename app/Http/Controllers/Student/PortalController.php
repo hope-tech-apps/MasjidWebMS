@@ -29,12 +29,30 @@ final class PortalController extends Controller
     }
     private function workFor($member, int $id): ClassAssignment
     {
-        return ClassAssignment::where('masjid_id',$member->masjid_id)->where('group_id',$member->group_id)->findOrFail($id);
+        return $this->visibleWork($member)->findOrFail($id);
+    }
+    /**
+     * Work a student may see: set for their class on or after they joined it, and within the school
+     * year containing today when the school keeps a calendar. A class that carries on from year to
+     * year must not show a new student the work set for the children before them (walk finding).
+     */
+    private function visibleWork($member)
+    {
+        $query=ClassAssignment::where('masjid_id',$member->masjid_id)->where('group_id',$member->group_id);
+        $from=[];
+        if ($member->joined_at) $from[]=$member->joined_at->toDateString();
+        $calendar=\App\Support\SchoolCalendarReaders::for((int)$member->masjid_id);
+        $today=$calendar->today();
+        $year=$calendar->years()->first(fn ($y) => $y->first_day?->toDateString() <= $today && $y->last_day?->toDateString() >= $today)
+            ?? $calendar->years()->filter(fn ($y) => $y->first_day?->toDateString() <= $today)->sortByDesc(fn ($y) => $y->first_day?->toDateString())->first();
+        if ($year?->first_day) $from[]=$year->first_day->toDateString();
+        if ($from !== []) $query->whereDate('assigned_on','>=',max($from));
+        return $query;
     }
     public function work(Request $request, int $masjid_id, int $membership_id)
     {
         $m=$this->member($request,$membership_id);
-        $work=ClassAssignment::where('masjid_id',$m->masjid_id)->where('group_id',$m->group_id)->orderByDesc('assigned_on')->orderByDesc('id')->get();
+        $work=$this->visibleWork($m)->orderByDesc('assigned_on')->orderByDesc('id')->get();
         $handedIn=StudentHandIn::where('masjid_id',$m->masjid_id)->where('group_membership_id',$m->id)->whereIn('class_assignment_id',$work->pluck('id'))->distinct()->pluck('class_assignment_id')->all();
         $settings=StudentWorkSetting::where('masjid_id',$m->masjid_id)->whereIn('class_assignment_id',$work->pluck('id'))->get()->keyBy('class_assignment_id');
         return response()->api(200,'',$work->map(fn ($a) => ['id'=>(int)$a->id,'title'=>$a->title,'subject'=>$a->subject,'assigned_on'=>$a->assigned_on?->toDateString(),
