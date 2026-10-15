@@ -28,6 +28,20 @@ use Illuminate\Support\Str;
  */
 class GroupResourceFiles
 {
+    /** Same private school upload policy and sanitized names as class attachments. */
+    public static function studentUpload(Group $group, UploadedFile $file): array
+    {
+        $diskName=(string) config('groups.resources.disk','local');
+        if (in_array($diskName,['public','s3-public'],true) || config('filesystems.disks.'.$diskName.'.visibility') === 'public' || config('filesystems.disks.'.$diskName.'.url')) {
+            throw new \RuntimeException('Student uploads require private school storage.');
+        }
+        $directory=trim((string)config('groups.resources.directory','group-resources'),'/').'/'.$group->masjid_id.'/'.$group->id.'/hand-ins';
+        $path=Storage::disk($diskName)->putFileAs($directory,$file,Str::random(40).'.'.($file->extension() ?: 'bin'));
+        if ($path === false) throw new \RuntimeException('The uploaded file could not be saved.');
+        return ['disk'=>$diskName,'path'=>$path,'original_name'=>self::safeOriginalName($file),
+            'mime_type'=>Str::limit((string)$file->getMimeType(),190,''),'size_bytes'=>(int)$file->getSize()];
+    }
+
     public static function store(Group $group, UploadedFile $file, array $attributes): GroupResource
     {
         $diskName = (string) config('groups.resources.disk', 'local');

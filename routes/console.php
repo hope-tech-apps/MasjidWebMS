@@ -929,3 +929,9 @@ Schedule::command('attendance:absence-emails')->everyFiveMinutes()->withoutOverl
 // Local calendar dates, including non-meeting due dates. Unique ledger/mail keys survive overlapping runs.
 Schedule::command('tuition:charges')->everyFifteenMinutes()->withoutOverlapping(10);
 Schedule::command('tuition:remind')->hourly()->withoutOverlapping(50);
+
+Artisan::command('students:prune-sign-ins', function () {
+    $count=\App\Models\StudentSignInLog::withoutMasjidScope()->where('attempted_at','<',now()->subDays(config('student.login.retention_days',90)))->delete();
+    $this->info('Pruned '.$count.' student sign-in records.');
+});
+\Illuminate\Support\Facades\Schedule::command('students:prune-sign-ins')->daily();

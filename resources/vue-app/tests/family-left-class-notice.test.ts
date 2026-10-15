@@ -158,6 +158,7 @@ async function mountClass(api: any, groupId: number): Promise<Mounted> {
         '@/components/common/AvatarPicker.vue': { default: stub },
         '@/core/services/StudentApiService': { default: {} },
         '@/views/family/FamilyAttachment.vue': { default: stub },
+        '@/components/classes/FamilyStudentAccount.vue': { default: stub },
         '@/views/family/FamilyBucks.vue': { default: stub },
         '@/views/family/FamilyAttendance.vue': { default: stub },
         '@/views/family/FamilySubjects.vue': { default: { render: () => null } },

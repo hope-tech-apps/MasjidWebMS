@@ -53,6 +53,7 @@
                         <span v-if="group.description" class="text-muted small ms-2">{{ group.description }}</span>
                     </div>
 
+                    <StudentAccounts v-if="group.kind === 'class' && masjidStore.masjid?.capabilities?.student_sign_in === true" :school-id="Number(masjidStore.masjid?.id)" :group-id="Number(groupId)" />
                     <!-- Tabs -->
                     <ul v-if="!classSubjects.enabled.value" class="nav nav-tabs mb-4">
                         <li v-for="tab in tabs" :key="tab.key" class="nav-item">
@@ -202,6 +203,7 @@ import GroupLettersTab from './groups/GroupLettersTab.vue';
 import GroupLessonPlansTab from './groups/GroupLessonPlansTab.vue';
 import { classTeacherLines } from '@/core/helpers/classTeachers';
 import GroupReportsTab from './groups/GroupReportsTab.vue';
+import StudentAccounts from '@/components/classes/StudentAccounts.vue';
 import GroupGradesTab from './groups/GroupGradesTab.vue';
 import GroupHifzTab from './groups/GroupHifzTab.vue';
 import GroupThreadsTab from './groups/GroupThreadsTab.vue';

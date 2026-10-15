@@ -141,6 +141,7 @@ class TeacherRealmTest extends TestCase
         }
 
         $this->assertEqualsCanonicalizing([
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}/student-hand-in',
             'POST /api/teacher/logout',
             // Annual final letters are class/subject-fenced and behind the default-off transcript grant.
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/transcript-finals',

@@ -220,6 +220,7 @@
             <button class="btn btn-link px-0 text-decoration-none mb-2" @click="openAssignment = null">
                 &larr; All work
             </button>
+            <StudentHandIns v-if="studentSignInSchool.masjid?.capabilities?.student_sign_in === true" :base="base" :assignment-id="openAssignment.id" :revision="openAssignment" />
             <div class="fw-semibold mb-1">{{ openAssignment.title }}</div>
             <div class="text-muted small mb-1">
                 {{ openAssignment.assigned_on }} · {{ scaleLabel(openAssignment) }}
@@ -274,6 +275,8 @@
 </template>
 
 <script setup lang="ts">
+import StudentHandIns from '@/components/classes/StudentHandIns.vue';
+import { useMasjidStore } from '@/stores/masjidStore';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import ApiService from '@/core/services/ApiService';
 import {
@@ -298,6 +301,7 @@ import { computed, onMounted, ref } from 'vue';
  * "Not marked", missing work reads "Missing" and excused work reads "Excused" —
  * three different facts that a single dash would flatten into one.
  */
+const studentSignInSchool=useMasjidStore();
 const props = defineProps<{ groupId: number; masjidId: number; subjectsEnabled?: boolean }>();
 
 const base = computed(() => `/api/admin/masjids/${props.masjidId}/groups/${props.groupId}`);

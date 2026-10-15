@@ -57,6 +57,7 @@ class GroupsController extends TeacherController
     private function classPayloadWithAllergies(Group $group, ?int $unreadMessages = null): array
     {
         $payload = $this->classPayload($group, $unreadMessages);
+        if (\App\Services\Student\StudentAccess::enabled(\App\Support\ClassSubjectMode::loadedOrganisation((int)$group->masjid_id))) $payload['student_sign_in_enabled']=true;
         if (! $group->teachesStudents()) return $payload;
         $payload['students'] = \App\Support\StudentAllergies::decorateTeacherRoster(
             (int) $group->masjid_id, (int) $group->id, $payload['students']->all()

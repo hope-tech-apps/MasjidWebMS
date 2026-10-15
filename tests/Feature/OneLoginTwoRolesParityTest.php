@@ -66,6 +66,7 @@ class OneLoginTwoRolesParityTest extends TestCase
         parent::setUp();
         // Each view stamps last_read_at; a second boundary between two reads made the bodies differ (CI 2026-10-15).
         $this->freezeSecond();
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-15 16:00:00 UTC'));
 
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
         config(['tenancy.roles_per_organisation' => true]);
@@ -96,7 +97,7 @@ class OneLoginTwoRolesParityTest extends TestCase
         ClassSubjectInitializer::run($this->school, false, true);
         $on = $this->school->fresh();
         $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, [
-            'class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true,
+            'student_sign_in' => true, 'class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true,
         ])])->save();
         MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $this->school->id, 'paper_bucks_enabled' => true]);
 

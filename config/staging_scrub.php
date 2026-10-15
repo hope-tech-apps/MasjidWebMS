@@ -103,6 +103,7 @@ return [
         'transcript_finals' => 'Staff-only reasons and override attribution are academic PII.',
         'transcript_courses' => 'School course configuration is reset with transcripts on staging.',
         'transcript_settings' => 'Reset the complete transcript policy with its dependent academic records.',
+        'student_sign_in_logs' => 'Child usernames, sign-in IPs and user agents; no copies of authentication history.',
         'school_admission_mails' => 'Guardian emails, child names and school delivery text; clear pending sends and outcomes before history.',
         'school_application_histories' => 'Staff notes and actor history for applications.',
         'school_applications' => 'Application decisions belong to production responses, not staging.',
@@ -254,6 +255,8 @@ return [
     | into a failed transaction half way through the run.
     */
     'null_columns' => [
+        'student_accounts' => ['password','last_sign_in_at'],
+        'student_hand_ins' => ['link','path','original_name'],
         'tuition_lines' => ['reference', 'stripe_payment_intent_id'],
         'tuition_checkouts' => ['stripe_session_id', 'checkout_url'],
         'push_send_groups' => ['subscription_ids'], // frozen handset audience; also covered by drop_rows
@@ -470,6 +473,7 @@ return [
     | unconditionally because it exists to FORCE a state, not to mask a value.
     */
     'anonymise' => [
+        'student_accounts' => ['username'=>'label:student', 'enabled'=>'fixed:0'],
         'tuition_lines' => ['description' => 'label:Financial entry', 'reason' => 'label:Financial entry', 'recorded_by_label' => 'label:Staff'],
         'tuition_checkouts' => ['stripe_account_id' => 'label:Disconnected account'],
         'timetable_period_sets' => ['name' => 'label:Period set'],

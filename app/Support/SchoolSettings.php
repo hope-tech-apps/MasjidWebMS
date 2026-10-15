@@ -168,6 +168,9 @@ final class SchoolSettings
     public static function assertSubjectWorkChange(Masjid $school, array $changes): void
     {
         TranscriptMode::assertChanges($school, $changes);
+        if (($changes['student_sign_in'] ?? false) === true && $school->orgType() !== 'school') {
+            throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>['Student sign-in is available to school organisations only.']]);
+        }
         if (($changes['report_card_criteria'] ?? false) === true && $school->orgType() !== 'school') {
             throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>['Report-card criteria are available to school organisations only.']]);
         }

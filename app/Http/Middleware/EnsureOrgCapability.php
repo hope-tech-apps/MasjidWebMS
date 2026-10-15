@@ -45,6 +45,12 @@ class EnsureOrgCapability
 
     public function handle(Request $request, Closure $next, string ...$capabilities): Response
     {
+        if (in_array('student_sign_in',$capabilities,true)) {
+            $id=(int)($this->tenant->get() ?? $request->route('masjid_id'));
+            $org=\App\Support\ClassSubjectMode::loadedOrganisation($id) ?? Masjid::find($id);
+            if (! \App\Services\Student\StudentAccess::enabled($org)) return response()->api(404,'Student sign-in is not available.');
+            return $next($request);
+        }
         foreach (['app_member_questions','app_volunteer_entry'] as $key) {
             if (!in_array($key,$capabilities,true)) continue;
             $id=(int)($this->tenant->get() ?? $request->route('masjid_id'));

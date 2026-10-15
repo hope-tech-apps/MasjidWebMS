@@ -36,6 +36,7 @@ return Application::configure(basePath: dirname(__DIR__))
         channels: __DIR__ . '/../routes/channels.php',
         health: '/up',
         then: function () {
+            Route::prefix('api')->middleware('api')->group(base_path('routes/student.php'));
             Route::prefix('api')
                 ->middleware('api')
                 ->group(base_path('routes/admin.php'));
@@ -72,6 +73,7 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware) {
+        $middleware->prepend(\App\Http\Middleware\StudentRealmFence::class);
         $middleware->prepend(\App\Http\Middleware\SchoolCalendarHttpRequest::class);
         // API realms use the 401 renderer below, regardless of Accept. Resolving
         // Laravel's default route('login') first throws before that renderer runs.
@@ -160,6 +162,7 @@ return Application::configure(basePath: dirname(__DIR__))
             // authenticated contact and aborts rather than ever passing an
             // authenticated request through UNBOUND — unbound means unfiltered
             // for every BelongsToMasjid model (.claude/rules/tenant-scoping.md).
+            'student.active' => \App\Http\Middleware\EnsureStudentAccess::class,
             'family.active' => EnsureFamilyLoginActive::class,
 
             // The member realm's liveness check. Gates on `verified_at` where
@@ -256,6 +259,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Don't include sensitive context in default reports.
         $exceptions->dontFlash([
+            'one_time_password',
             'question', // Guide questions must never be flashed into a session.
             'current_password',
             'password',

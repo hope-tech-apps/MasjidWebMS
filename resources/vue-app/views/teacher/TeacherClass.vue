@@ -2129,6 +2129,7 @@
                          these are the school's own words and a teacher choosing
                          between a 2 and a 3 for a real child can read what each
                          one actually means without leaving the screen. -->
+                    <StudentHandIns v-if="group?.student_sign_in_enabled === true" :key="openAssignment.id" :base="base" :assignment-id="openAssignment.id" :revision="openAssignment" teacher />
                     <PerformanceLevelHelp v-if="openAssignment.scale === 'levels'" :levels="levelKey" />
 
                     <div class="list-group mb-3">
@@ -2662,6 +2663,7 @@
 
 <script setup lang="ts">
 import TeacherTranscriptFinals from '@/components/classes/TeacherTranscriptFinals.vue';
+import StudentHandIns from '@/components/classes/StudentHandIns.vue';
 import GroupAttendanceTab from '@/views/dashboard/groups/GroupAttendanceTab.vue';
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText, uploadErrorText } from '@/core/services/ApiErrors';

@@ -103,6 +103,7 @@ class MemberAccountDeletion
      * keeps the contact. `table => [columns holding a contacts.id]`.
      */
     public const OFFICE_RECORDS = [
+        'student_hand_ins' => ['student_contact_id'],
         'tuition_children' => ['contact_id'],
         'tuition_guardians' => ['contact_id'],
         'tuition_lines' => ['child_contact_id', 'payer_contact_id'],
@@ -188,6 +189,8 @@ class MemberAccountDeletion
     ];
 
     public const LOGIN_RECORDS = [
+        'student_accounts' => ['contact_id'],
+        'student_sign_in_logs' => ['contact_id'],
         // 2026-09-27: an UNPAID basket. Not a sale — nothing in it is reserved,
         // and once paid, the real office records (donations, form responses,
         // meal orders) are created by their own services and listed above. What
@@ -351,6 +354,10 @@ class MemberAccountDeletion
             $endsFamilyLogin = ! $hadFamilyLogin
                 || $provenAddress === null
                 || ($proven !== null && $proven === $address);
+
+            // Children's own credentials are login plumbing, even when academic records keep the contact.
+            // Guarded for the code-before-migration window; the account mutex also serializes sign-in/reset.
+            if ($keptBecause !== []) \App\Services\Student\StudentCredentials::erase($contact);
 
             // MobileAppUser is not tenant-scoped; the contact id is the filter.
             $devices = MobileAppUser::query()
@@ -700,7 +707,7 @@ class MemberAccountDeletion
 
             // These optional logs do not exist in the code-before-migration deployment window.
             // Only a genuinely missing table skips: a failed schema check must stop erasure.
-            if (in_array($table, ['transcript_finals', 'transcript_prior_years', 'transcript_issues', 'transcript_share_requests', 'transcript_received', 'tuition_children', 'tuition_guardians', 'tuition_lines', 'tuition_checkouts', 'tuition_mails', 'school_reenrolment_answers', 'school_reenrolment_deposits', 'school_admission_mails', 'period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
+            if (in_array($table, ['student_hand_ins', 'transcript_finals', 'transcript_prior_years', 'transcript_issues', 'transcript_share_requests', 'transcript_received', 'tuition_children', 'tuition_guardians', 'tuition_lines', 'tuition_checkouts', 'tuition_mails', 'school_reenrolment_answers', 'school_reenrolment_deposits', 'school_admission_mails', 'period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
                 && ! \Illuminate\Support\Facades\Schema::hasTable($table)) continue;
 
             $held = DB::table($table)

@@ -315,6 +315,13 @@ return [
         'listed_when_off' => false, 'catalogue_when_off' => false,
     ],
 
+    'student_sign_in' => [
+        'kind'=>'grant', 'group'=>'school', 'label'=>'Student sign-in',
+        'description'=>'Office-issued student accounts, private academic reads and hand-ins.',
+        'defaults'=>['masjid'=>false,'school'=>false,'community'=>false],
+        'listed_when_off'=>false, 'catalogue_when_off'=>false,
+    ],
+
     'tuition_ledger' => [
         'kind' => 'grant',
         'group' => 'school',

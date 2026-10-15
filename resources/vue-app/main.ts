@@ -46,8 +46,10 @@ app.use(pinia);
 // Check Authentication then Mount the App
 (async () => {
 
+    const STUDENT_PAGE = window.location.pathname.startsWith('/student/');
+
     // Constants
-    const TOKEN = localStorage.getItem(LOCAL_STORAGE_KEYS.token);
+    const TOKEN = STUDENT_PAGE ? null : localStorage.getItem(LOCAL_STORAGE_KEYS.token);
     const DASHBOARD_MASJID_ID = localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
     // Read BEFORE the session is re-identified: fetchAuthUser() rewrites it, and
     // the last step below needs to know what it was when this page began to load.
@@ -58,6 +60,7 @@ app.use(pinia);
     const masjidStore = useMasjidStore();
 
     try {
+        if (!STUDENT_PAGE) {
         if (TOKEN) {
             ApiService.setHeader(TOKEN);
             await authStore.fetchAuthUser()
@@ -97,6 +100,7 @@ app.use(pinia);
         } else {
             throw (new Error('Authentication Failed at Begining.'));
         }
+        }
     } catch (error: any) {
         console.log('Error: \n', error);
         ApiService.setHeader();
@@ -111,7 +115,7 @@ app.use(pinia);
         // it is a navigation and why it has to finish first. It does nothing for
         // every login that was not in a two-area session on this browser: they
         // start where the address bar says, as they always did.
-        await startInAreaThatAnswered(router, STAFF_AREA, window.location.pathname, authStore.user?.type, console.log);
+        if (!STUDENT_PAGE) await startInAreaThatAnswered(router, STAFF_AREA, window.location.pathname, authStore.user?.type, console.log);
 
         // Use Router
         app.use(router);

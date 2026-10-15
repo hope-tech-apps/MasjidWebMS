@@ -1356,6 +1356,21 @@ Route::prefix('admin')->group(function () {
                         Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
                     });
 
+                Route::prefix('{masjid_id}/groups/{group_id}/assignments/{assignment_id}')->middleware(['capability:student_sign_in','permission:view contacts'])->group(function () {
+                    Route::get('/hand-ins',[\App\Http\Controllers\Teacher\StudentHandInsController::class,'index']);
+                    Route::get('/hand-ins/{hand_in_id}/download',[\App\Http\Controllers\Teacher\StudentHandInsController::class,'download']);
+                });
+
+                Route::prefix('{masjid_id}/student-sign-in')->middleware('capability:student_sign_in')->controller(\App\Http\Controllers\AdminDashboard\StudentAccountsController::class)->group(function () {
+                    Route::get('/settings','settings')->middleware('permission:view contacts');
+                    Route::put('/settings','saveSettings')->middleware('permission:manage contacts');
+                    Route::get('/groups/{group_id}/accounts','index')->middleware('permission:view contacts');
+                    Route::post('/groups/{group_id}/slips','slips')->middleware('permission:manage contacts');
+                    Route::put('/accounts/{contact_id}','reset')->middleware('permission:manage contacts');
+                    Route::delete('/accounts/{contact_id}','disable')->middleware('permission:manage contacts');
+                    Route::get('/sign-ins','logs')->middleware('permission:view contacts');
+                });
+
                 // The Arabic letter tracker. Same CONTACTS gate as the roster,
                 // the behaviour points and the hifz diary beside it — the same
                 // kind of record about the same children.

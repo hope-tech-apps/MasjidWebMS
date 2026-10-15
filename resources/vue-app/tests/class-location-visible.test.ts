@@ -66,6 +66,9 @@ test('location OFF literal 52daab37 mounted bytes and request lists for all four
     const attendance = '<li class="nav-item"><button class="nav-link" type="button"><i class="bi bi-calendar-check me-1"></i> Attendance <!--v-if--></button></li>';
     assert.equal(expected['office-page'].html.split(story).length, 2);
     expected['office-page'].html = expected['office-page'].html.replace(story, attendance + story);
+    // The default-off student account mount contributes one inert Vue anchor, no request or visible node.
+    assert.equal(expected['office-page'].html.split('<!-- Tabs -->').length, 2);
+    expected['office-page'].html = expected['office-page'].html.replace('<!-- Tabs -->', '<!--v-if--><!-- Tabs -->');
     assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected);
 });
 for (const surface of Object.keys(paths) as Surface[]) for (const location of ['Room 3', null]) {

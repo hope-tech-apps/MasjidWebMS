@@ -101,12 +101,12 @@ class RosterMoveRosterTest extends TestCase
 
         // A twelfth key fails here: say what it is before a roster row holding it is moved or removed.
         $this->assertSame($inSchema, $listed);
-        $this->assertCount(14, AcademicRecordsHeld::KEYS);
+        $this->assertCount(15, AcademicRecordsHeld::KEYS);
 
         // What a delete would destroy: the seven RESTRICT kinds and Arabic daily notes.
         $destroyed = array_keys(array_filter(AcademicRecordsHeld::KEYS, fn (array $key): bool => $key[3]));
         $this->assertSame([
-            'period_attendance_records', 'attendance_records', 'assignment_scores', 'report_cards', 'hifz_entries', 'behavior_awards',
+            'student_hand_ins', 'period_attendance_records', 'attendance_records', 'assignment_scores', 'report_cards', 'hifz_entries', 'behavior_awards',
             'arabic_letter_progress', 'prize_ledger_entries', 'arabic_daily_notes',
             'subject_piece_marks', 'subject_notes',
         ], $destroyed);
@@ -142,7 +142,7 @@ class RosterMoveRosterTest extends TestCase
         $this->assertSame(1, $held['ḥifẓ entries']);
         $this->assertSame(1, $held['behaviour points']);
         $this->assertSame(1, $held['conversations']);
-        $this->assertCount(14, $held);
+        $this->assertCount(15, $held);
         $this->assertTrue(AcademicRecordsHeld::onlyDeleted($student));
 
         $this->assertSame('1 ḥifẓ entry, 1 behaviour point, 1 conversation', AcademicRecordsHeld::describeForPeople($held));

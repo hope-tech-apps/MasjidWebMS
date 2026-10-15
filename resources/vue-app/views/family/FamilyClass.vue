@@ -445,6 +445,7 @@
                         <!-- MANARA BUCKS (T-003.4): only where this school runs the class store
                              (the payload carries `class_store: true` then and no key otherwise).
                              This child's balance and history, read-only, from their own endpoint. -->
+                        <FamilyStudentAccount v-if="group.student_sign_in_enabled === true" :school-id="masjidId" :membership-id="child.membership_id" />
                         <FamilyBucks v-if="group.class_store === true" :base="base" :member-id="child.membership_id" />
 
                         <FamilySubjects v-if="child.subjects?.length" :subjects="child.subjects" :member-id="child.membership_id" :tx="tx" :key-of="KEY.subject" />
@@ -1063,6 +1064,7 @@
     </template>
 
 <script setup lang="ts">
+import FamilyStudentAccount from '@/components/classes/FamilyStudentAccount.vue';
 import FamilyAttendance from '@/views/family/FamilyAttendance.vue';
 import FamilyLetterGrades from '@/components/classes/FamilyLetterGrades.vue';
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';

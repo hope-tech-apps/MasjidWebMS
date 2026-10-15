@@ -2110,6 +2110,9 @@ test('Timetable OFF class page bytes and requests match literal 30cef6d4 renderi
         const attendance = '<li class="nav-item"><button class="nav-link" type="button"><i class="bi bi-calendar-check me-1"></i> Attendance <!--v-if--></button></li>';
         assert.equal(expected.html.split(story).length, 2);
         expected.html = expected.html.replace(story, attendance + story);
+        // One inert mount anchor for the hidden student-account panel; the saved fixture stays literal.
+        assert.equal(expected.html.split('<!-- Tabs -->').length, 2);
+        expected.html = expected.html.replace('<!-- Tabs -->', '<!--v-if--><!-- Tabs -->');
         assert.deepEqual(actual, expected);
     } finally {screen.unmount();}
 });

@@ -99,6 +99,7 @@ final class AcademicRecordsHeld
      * @var array<string, array{0: string, 1: string, 2: string, 3: bool}>
      */
     public const KEYS = [
+        'student_hand_ins' => ['group_membership_id','hand-ins','restrict',true],
         'period_attendance_records' => ['group_membership_id', 'period register marks', 'restrict', true],
         'attendance_records' => ['group_membership_id', 'register marks', 'restrict', true],
         'assignment_scores' => ['group_membership_id', 'marks', 'restrict', true],
@@ -151,6 +152,7 @@ final class AcademicRecordsHeld
 
     /** One of each, for a sentence that counts: "1 register mark". */
     private const SINGULAR = [
+        'hand-ins'=>'hand-in',
         'register marks' => 'register mark',
         'period register marks' => 'period register mark',
         'marks' => 'mark',

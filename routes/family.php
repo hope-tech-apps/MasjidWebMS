@@ -269,6 +269,7 @@ Route::prefix('family')
             // the office gave. A GET — the counted writes above are untouched —
             // and not capability-gated: an organisation with no calendar
             // answers `years: []`.
+            Route::get('/student-accounts', [\App\Http\Controllers\Family\StudentAccountsController::class, 'index'])->middleware('capability:student_sign_in');
             Route::get('/school-calendar', [\App\Http\Controllers\Family\SchoolCalendarController::class, 'index']);
 
             // The entry point: which groups this parent stands in, and which

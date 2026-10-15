@@ -172,6 +172,26 @@ class GradesController extends FamilyController
         ], Response::HTTP_OK);
     }
 
+    /** Student realm calls the family reader only AFTER proving its own membership. */
+    public function studentRead(\App\Models\GroupMembership $membership): array
+    {
+        $scores=$this->scores((int)$membership->id);
+        $summary=GradeRecord::summaryFor((int)$membership->id);
+        $cards=\App\Models\ReportCard::where('masjid_id',$membership->masjid_id)->where('group_membership_id',$membership->id)->published()->orderByDesc('id')->get();
+        return [
+            'summary'=>$summary,
+            'scores'=>$scores->map(fn (AssignmentScore $s) => [
+                'assignment'=>$s->assignment ? $this->assignment($s->assignment) : null,
+                'status'=>$s->status,'points_earned'=>$s->points_earned !== null ? (float)$s->points_earned : null,
+                'mark_label'=>$s->assignment?->usesSimpleMarks() && $s->status === AssignmentScore::STATUS_SCORED ? SimpleMark::label($s->points_earned) : null,
+            ])->values()->all(),
+            'scores_shown'=>$scores->count(),
+            'scores_truncated'=>$summary['recorded'] > $scores->count(),
+            'reports'=>$cards->map(fn ($card) => ['id'=>(int)$card->id,'period'=>\App\Support\LetterGrades::periodLabel($card) ?? $card->periodLabel(),
+                'letter_grades'=>array_map(fn ($row) => array_intersect_key($row,array_flip(['subject','final_letter','percentage'])),\App\Support\LetterGrades::family($card))])->all(),
+        ];
+    }
+
     // ------------------------------------------------------------- internals
 
     /**

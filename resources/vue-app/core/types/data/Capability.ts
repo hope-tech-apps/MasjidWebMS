@@ -24,7 +24,7 @@ import { OrgType } from "@/core/types/data/Vertical";
 //
 // A SuperAdmin is never gated by a grant or a module on the server; the menu
 // shows them what the organisation has and lists the rest as switched off.
-export type CapabilityKey = 'transcripts' | 'tuition_ledger' | 'school_reenrolment' | 'school_applications' | 'report_card_criteria' | 'letter_grades' | 'lesson_plan_photo_fill' | 'app_member_questions' | 'app_volunteer_entry' | 'app_bottom_tabs' | 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' | 'school_calendar' | 'school_calendar_terms' | 'school_timetable' | 'family_duty_rota' | 'attendance_absence_emails' | 'period_attendance' | 'student_allergies' | 'form_editing'
+export type CapabilityKey = 'student_sign_in' | 'transcripts' | 'tuition_ledger' | 'school_reenrolment' | 'school_applications' | 'report_card_criteria' | 'letter_grades' | 'lesson_plan_photo_fill' | 'app_member_questions' | 'app_volunteer_entry' | 'app_bottom_tabs' | 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' | 'school_calendar' | 'school_calendar_terms' | 'school_timetable' | 'family_duty_rota' | 'attendance_absence_emails' | 'period_attendance' | 'student_allergies' | 'form_editing'
     // The weekly-school settings (App\Support\SchoolSettings), SuperAdmin-only like every grant.
     | 'report_card_core_subjects' | 'short_lesson_plan' | 'simple_marking'
     // The Friday points report (T-003.3): families and teachers are emailed. A grant, off for everyone.
@@ -167,6 +167,7 @@ export type TeamMember = {
 
 /** Human names for the catalogue keys (mirror config/capabilities.php labels). */
 export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
+    student_sign_in: 'Student sign-in',
     tuition_ledger: 'Family tuition ledger',
     web_pages: 'Website pages',
     jummah_lunch: 'Friday lunch ordering',

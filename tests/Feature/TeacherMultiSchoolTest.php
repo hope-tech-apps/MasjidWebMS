@@ -416,7 +416,7 @@ class TeacherMultiSchoolTest extends TestCase
             \App\Support\ClassSubjectInitializer::run($school, false, true);
             // Subject notes and marks are off by default too; swept for real, like the store.
             $on = $school->fresh();
-            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['report_card_criteria' => true, 'class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true,
+            $on->forceFill(['capability_overrides' => array_merge((array) $on->capability_overrides, ['student_sign_in' => true, 'report_card_criteria' => true, 'class_subject_work' => true, 'school_calendar' => true, 'school_timetable' => true,
                 'lesson_plan_photo_fill' => true, 'lesson_plan_photo_fill_teacher_ids' => [(int) $this->teacher->id]])])->save();
             app(TenantContext::class)->runWithout(fn () => \App\Support\ReportCardCriteria::editor($on->fresh(), $this->teacher));
             \App\Models\MasjidPointsSetting::withoutMasjidScope()->create(['masjid_id' => $school->id, 'paper_bucks_enabled' => true]);
@@ -721,6 +721,7 @@ class TeacherMultiSchoolTest extends TestCase
         $bodyRefusal = [403, 404, 422];
 
         return [
+            'PUT /groups/{group_id}/assignments/{assignment_id}/student-hand-in' => ['body'=>fn()=>['students_hand_in'=>1,'due_on'=>'2026-10-16']],
             'PUT /period-attendance/{meeting_id}' => ['body' => fn (TeacherRealmWorld $w) => ['session_date' => $w->periodDate, 'marks' => [['membership_id' => $w->student->id, 'status' => 'present']]], 'refuse' => [422]],
             'GET /schedule' => ['query' => ['week' => '2026-10-12']],
             'POST /guides/ask' => ['body' => fn () => ['question' => 'How do I open Help?']],

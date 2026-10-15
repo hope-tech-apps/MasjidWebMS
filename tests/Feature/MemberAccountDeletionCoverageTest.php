@@ -89,6 +89,7 @@ class MemberAccountDeletionCoverageTest extends TestCase
     public function the_office_and_login_lists_are_exactly_these_tables(): void
     {
         $this->assertSame([
+            'student_hand_ins' => ['student_contact_id'],
             'tuition_children' => ['contact_id'],
             'tuition_guardians' => ['contact_id'],
             'tuition_lines' => ['child_contact_id', 'payer_contact_id'],
@@ -143,6 +144,8 @@ class MemberAccountDeletionCoverageTest extends TestCase
             // 2026-09-27: an unpaid basket. Not a sale (a paid one becomes the
             // office records above), and its items can carry attendee names, so
             // it is cleared with the account rather than keeping the contact.
+            'student_accounts' => ['contact_id'],
+            'student_sign_in_logs' => ['contact_id'],
             'carts' => ['contact_id'],
             'contact_login_codes' => ['contact_id'],
             // 2026-09-24: the office's 7-day portal invite links. Login

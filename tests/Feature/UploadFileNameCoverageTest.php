@@ -171,6 +171,30 @@ final class UploadFileNameCoverageTest extends TestCase
      * Read at 9e026457 (the audit of 2026-10-05) and again when this file was written.
      */
     private const NAME_NEVER_PUBLIC = [
+        'app/Services/Student/StudentHandIns.php' => [
+            'submit() (expression)' => [
+                'what'=>'A student hand-in file or photo.',
+                'why'=>'The existing school resource writer uses a random sniffed-extension name on a private disk; the original name is metadata only. Downloads re-resolve the student membership and assignment.',
+                'facts'=>[
+                    ['disk','groups.resources.disk'],
+                    ['has','app/Support/GroupResourceFiles.php',"Str::random(40).'.'.(\$file->extension() ?: 'bin')"],
+                    ['has','app/Services/Student/StudentHandIns.php','GroupResourceFiles::studentUpload('],
+                    ['has','app/Services/Student/StudentHandIns.php',"Storage::disk(\$h->disk)->download("],
+                    ['lacks','app/Services/Student/StudentHandIns.php','->url('],
+                ],
+            ],
+            'submit() file' => [
+                'what'=>'A student hand-in file or photo.',
+                'why'=>'The existing school resource writer uses a random sniffed-extension name on a private disk; the original name is metadata only. Downloads re-resolve the student membership and assignment.',
+                'facts'=>[
+                    ['disk','groups.resources.disk'],
+                    ['has','app/Support/GroupResourceFiles.php',"Str::random(40).'.'.(\$file->extension() ?: 'bin')"],
+                    ['has','app/Services/Student/StudentHandIns.php','GroupResourceFiles::studentUpload('],
+                    ['has','app/Services/Student/StudentHandIns.php',"Storage::disk(\$h->disk)->download("],
+                    ['lacks','app/Services/Student/StudentHandIns.php','->url('],
+                ],
+            ],
+        ],
         'app/Http/Requests/Admin/Assistant/AssistantChatRequest.php' => [
             'rules() image' => [
                 'what' => 'A picture dropped into the assistant chat, which a tool may attach to an announcement.',

@@ -94,6 +94,7 @@ class GroupsController extends FamilyController
             'data' => $this->serialize($group, true),
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
+        if (\App\Services\Student\StudentAccess::enabled(\App\Support\ClassSubjectMode::loadedOrganisation((int)$group->masjid_id))) { $body=$response->getData(true); $body['data']['student_sign_in_enabled']=true; $response->setData($body); }
         if (\App\Support\SchoolAdmissionsMode::enabled(\App\Support\ClassSubjectMode::loadedOrganisation((int) $group->masjid_id), 'school_reenrolment')) {
             $body = $response->getData(true);
             $body['meta']['reenrolment'] = \App\Models\SchoolReenrolment::orderByDesc('id')->get()->map(fn ($c) => app(\App\Services\Schools\SchoolReenrolments::class)->campaignPayload($c))->all();

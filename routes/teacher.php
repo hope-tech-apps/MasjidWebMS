@@ -281,12 +281,17 @@ Route::prefix('teacher')
                         // this realm allows — still not roster mutation: a
                         // teacher says what the class was asked to do, never who
                         // belongs in the room.
+                        Route::middleware('capability:student_sign_in')->group(function () {
+                            Route::get('/assignments/{assignment_id}/hand-ins',[\App\Http\Controllers\Teacher\StudentHandInsController::class,'index']);
+                            Route::put('/assignments/{assignment_id}/student-hand-in',[\App\Http\Controllers\Teacher\StudentHandInsController::class,'configure']);
+                            Route::get('/assignments/{assignment_id}/hand-ins/{hand_in_id}/download',[\App\Http\Controllers\Teacher\StudentHandInsController::class,'download']);
+                        });
                         Route::get('/assignments', [GradebookController::class, 'index']);
                         Route::post('/assignments', [GradebookController::class, 'store']);
                         Route::get('/assignments/{assignment_id}', [GradebookController::class, 'show']);
                         Route::put('/assignments/{assignment_id}', [GradebookController::class, 'update']);
                         Route::delete('/assignments/{assignment_id}', [GradebookController::class, 'destroy']);
-                        Route::put('/assignments/{assignment_id}/scores', [GradebookController::class, 'saveScores']);
+                        Route::put('/assignments/{assignment_id}/scores', [GradebookController::class, 'saveScores'])->middleware(\App\Http\Middleware\StudentMarkLock::class);
                         // How much each TYPE of work counts for in THIS class
                         // (T-001.2), all five types or clear them. A class-level
                         // setting that moves every subject's average, so it is for

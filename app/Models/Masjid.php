@@ -553,6 +553,7 @@ class Masjid extends Model implements HasMedia
         if (! \App\Support\SchoolSettings::timetable($this)) unset($out['school_timetable']);
         if (! \App\Support\SchoolSettings::familyDutyRota($this)) unset($out['family_duty_rota']);
         foreach (\App\Support\SchoolAdmissionsMode::KEYS as $key) if (! \App\Support\SchoolAdmissionsMode::enabled($this, $key)) unset($out[$key]);
+        if (! \App\Services\Student\StudentAccess::enabled($this)) unset($out['student_sign_in']);
         if (! \App\Services\FamilyLedger\FamilyLedger::enabled($this)) unset($out['tuition_ledger']);
         if (! \App\Support\AttendanceAbsenceSettings::enabled($this)) unset($out['attendance_absence_emails']);
         if (! \App\Support\PeriodAttendanceMode::enabled($this)) unset($out['period_attendance']);
@@ -605,6 +606,7 @@ class Masjid extends Model implements HasMedia
     {
         $attributes = parent::attributesToArray();
         if (! \App\Support\TranscriptMode::enabled($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['transcripts']);
+        if (! \App\Services\Student\StudentAccess::enabled($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['student_sign_in']);
         if (! \App\Support\ReportCardCriteria::enabled($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['report_card_criteria']);
         if (! \App\Support\LetterGrades::offered($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['letter_grades']);
         if (! \App\Support\SchoolSettings::calendarTerms($this)

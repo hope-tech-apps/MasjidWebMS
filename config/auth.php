@@ -36,6 +36,7 @@ return [
     */
 
     'guards' => [
+        'student' => ['driver'=>'student-bearer','provider'=>'student_accounts'],
         'web' => [
             'driver' => 'session',
             'provider' => 'users',
@@ -169,6 +170,7 @@ return [
     */
 
     'providers' => [
+        'student_accounts' => ['driver'=>'eloquent','model'=>App\Models\StudentAccount::class],
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', App\Models\User::class),

@@ -85,7 +85,11 @@ class AppServiceProvider extends ServiceProvider
         \Illuminate\Support\Facades\RateLimiter::for('attendance-absence-mail', fn ($job) => \Illuminate\Cache\RateLimiting\Limit::perMinute(max(1, (int) config('attendance.absence_emails_per_minute', 30)))->by('school-absence-mail'));
         \Illuminate\Support\Facades\RateLimiter::for('school-admissions-mail', fn ($job) => \Illuminate\Cache\RateLimiting\Limit::perMinute(max(1, (int) config('attendance.absence_emails_per_minute', 30)))->by('school-admissions-mail'));
         \Illuminate\Support\Facades\RateLimiter::for('duty-rota', fn ($request) => \Illuminate\Cache\RateLimiting\Limit::perMinute(30)->by($request->ip()));
+        \App\Models\Contact::forceDeleting(fn ($contact) => \App\Services\Student\StudentCredentials::erase($contact));
         $this->registerFamilyGuard();
+        Auth::extend('student-bearer', fn ($app, $name, array $config) => new RequestGuard(
+            new \App\Services\Student\StudentGuard(), $app['request'], $app['auth']->createUserProvider($config['provider'])
+        ));
 
         foreach ([\App\Models\TimetablePeriodSet::class, \App\Models\TimetablePeriod::class, \App\Models\TimetableDay::class,
             \App\Models\TimetableClassDay::class, \App\Models\TimetableRoom::class, \App\Models\TimetableClassRoom::class,

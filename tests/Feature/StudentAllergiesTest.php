@@ -315,7 +315,7 @@ class StudentAllergiesTest extends TestCase
             $token=['family'=>$familyToken,'child'=>$childToken,'member'=>$memberToken][$realm];
             $response=$this->withHeader('Authorization','Bearer '.$token)->get('/'.$uri,['Accept'=>'application/json']);
             // The new optional member route is dark; still inspect its refusal for health data.
-            $this->assertSame(str_contains($uri,'/reenrolment/') ? 403 : (str_ends_with($uri,'/member-questions') ? 404 : 200),$response->getStatusCode(),$uri);
+            $this->assertSame(str_ends_with($uri,'/student-accounts') ? 404 : (str_contains($uri,'/reenrolment/') ? 403 : (str_ends_with($uri,'/member-questions') ? 404 : 200)),$response->getStatusCode(),$uri);
             $body=($response->baseResponse instanceof \Symfony\Component\HttpFoundation\StreamedResponse || $response->baseResponse instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse) ? $response->streamedContent() : (string)$response->getContent();
             $this->assertNotSame('', $body, $uri);
             if (str_ends_with($uri,'/pdf') || str_contains((string) $response->headers->get('Content-Type'), 'application/pdf')) {

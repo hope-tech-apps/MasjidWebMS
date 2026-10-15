@@ -584,3 +584,7 @@ The guide/demo school walk is a later guides session and does not authorize live
 ## 2026-10-14 — Transcript walk corrections
 
 On the transcript is a class-subject setting, alongside credit and level, matching the existing office course-settings scope. Unconfigured courses remain included so the office can see ungraded work and graded work still requires an explicit credit. Excluded courses remain available in staff final editors. A student with an open participant membership is presently enrolled; with all participant rows closed, attendance ends at the latest leaving date. Previously issued immutable files are retained byte-for-byte; display fixes apply when rendering and new issues carry corrected totals.
+## 2026-10-15 — Student sign-in
+- The guides/demo walk and guide pages are a later session, not authorization to read or change a live demo tenant. Build/tests use invented practice data only.
+- A child's recognized current class grades must all meet the school's threshold; unknown or contradictory younger grades fail closed. Withdrawal or threshold/switch changes are rechecked per request.
+- Due dates mean the end of the named school-local day. Missing due date means no late flag. Existing assignment scores, including missing/excused, mean the work has been marked and lock replacement.

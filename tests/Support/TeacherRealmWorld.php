@@ -60,6 +60,7 @@ final class TeacherRealmWorld
     public bool $led;
 
     public GroupMembership $student;
+    public \App\Models\StudentHandIn $handIn;
     public BehaviorSkill $skill;
     public BehaviorAward $award;
     public HifzEntry $hifz;
@@ -246,6 +247,16 @@ final class TeacherRealmWorld
             'title' => "MARK-{$tag}-MARK-PIECE", 'created_by_user_id' => $teacher->id,
         ]);
 
+        $handPath='group-resources/'.$masjid.'/'.$group.'/hand-ins/fixture-'.$tag.'.pdf';
+        Storage::disk((string)config('groups.resources.disk','local'))->put($handPath,'MARK-'.$tag.'-HAND-IN-BYTES');
+        $w->handIn=\App\Models\StudentHandIn::create([
+            'masjid_id'=>$masjid,'group_id'=>$group,'class_assignment_id'=>$w->assignment->id,
+            'group_membership_id'=>$w->student->id,'student_contact_id'=>$w->student->contact_id,
+            'version'=>1,'kind'=>'file','disk'=>config('groups.resources.disk','local'),'path'=>$handPath,
+            'original_name'=>'MARK-'.$tag.'-HAND-IN.pdf','mime_type'=>'application/pdf','size_bytes'=>strlen('MARK-'.$tag.'-HAND-IN-BYTES'),
+            'late'=>false,'submitted_at'=>now(),
+        ]);
+
         return $w;
     }
 
@@ -262,6 +273,7 @@ final class TeacherRealmWorld
         return match ($placeholder) {
             'group_id' => (string) $this->class->id,
             'meeting_id' => (string) $this->meeting->id,
+            'hand_in_id' => (string) $this->handIn->id,
             'membership_id' => (string) $this->student->id,
             // `note_id` is an Arabic daily note, except under /subjects/ where it is a subject note.
             'note_id' => str_contains($uri, '/subjects/') ? (string) $this->subjectNote->id : (string) $this->note->id,

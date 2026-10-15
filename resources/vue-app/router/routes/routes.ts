@@ -9,6 +9,7 @@ import lunchRoutes from "@/router/routes/lunchRoutes";
 import jummahLunchRoutes from "@/router/routes/jummahLunchRoutes";
 
 const routes: RouteRecordRaw[] = [
+    { path: '/student/:masjidId(\\d+)', name: 'studentAccountPortal', component: () => import('@/views/student/StudentPortal.vue'), meta: { pageTitle: 'Student portal' } },
     { path: '/duty/:masjidId(\\d+)/:rotaId(\\d+)', name: 'dutyClaim', component: () => import('@/views/public/DutyRotaClaim.vue'), meta: { pageTitle: 'Your duty days' } },
     {
         path: '/',
