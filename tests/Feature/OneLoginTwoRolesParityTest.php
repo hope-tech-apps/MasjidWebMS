@@ -64,6 +64,8 @@ class OneLoginTwoRolesParityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Each view stamps last_read_at; a second boundary between two reads made the bodies differ (CI 2026-10-15).
+        $this->freezeSecond();
 
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
         config(['tenancy.roles_per_organisation' => true]);
