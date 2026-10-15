@@ -19,7 +19,7 @@ class TranscriptsController extends FamilyController
     {
         [$school,$child]=$this->child($masjid_id,$group_id,$membership_id);
         return response()->json(['status'=>'success','data'=>app(Transcripts::class)->live($school,$child->contact),
-            'shares'=>TranscriptShareRequest::where('contact_id',$child->contact_id)->whereIn('status',['awaiting_family','pending'])->get()->map(fn($share)=>['id'=>$share->id,'receiving_school'=>Masjid::whereKey($share->receiving_masjid_id)->value('name'),'status'=>$share->status])]);
+            'shares'=>TranscriptShareRequest::where('contact_id',$child->contact_id)->get()->map(fn($share)=>['id'=>$share->id,'receiving_school'=>Masjid::whereKey($share->receiving_masjid_id)->value('name'),'status'=>$share->status,'resolved_at'=>$share->resolved_at?->format('Y-m-d'),'resolved_on_display'=>$share->resolved_at?->copy()->setTimezone(\App\Support\SchoolCalendarReaders::for((int)$school->id)->timezone())->format('M j, Y')])]);
     }
     public function pdf($masjid_id,$group_id,$membership_id)
     {

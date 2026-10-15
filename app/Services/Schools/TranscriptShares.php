@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Schools;
 
-use App\Models\{Contact, GroupMembership, Masjid, TranscriptIssue, TranscriptReceived, TranscriptShareRequest};
-use App\Support\{TenantContext, TranscriptMode};
+use App\Models\{Contact, GroupMembership, Masjid, TranscriptIssue, TranscriptReceived, TranscriptShareRequest, User};
+use App\Support\{TenantContext, TranscriptMode, SchoolAdmissionsMode};
 use Illuminate\Support\Facades\{DB, Storage};
 use Illuminate\Validation\ValidationException;
 
@@ -23,6 +23,9 @@ final class TranscriptShares
         $header=['id'=>(int)$request->id,'sending_school'=>$request->sending_school,'student_name'=>$request->student_name,'date_of_birth'=>$request->student_birth_date ? substr($request->student_birth_date,0,10):null,'status'=>$request->status,'requested_at'=>$request->requested_at];
         if ($request->status!=='pending') $header['resolved_at']=$request->resolved_at;
         if (in_array($request->status,['accepted','declined'],true)) $header['resolved_by_user_id']=$request->resolved_by_user_id;
+        $header['requested_at_display']=SchoolAdmissionsMode::timestamp((int)$request->receiving_masjid_id,\Carbon\Carbon::parse($request->requested_at));
+        if ($request->status!=='pending') $header['resolved_at_display']=SchoolAdmissionsMode::timestamp((int)$request->receiving_masjid_id,$request->resolved_at?\Carbon\Carbon::parse($request->resolved_at):null);
+        if (in_array($request->status,['accepted','declined'],true)) $header['resolved_by_name']=User::withTrashed()->whereKey($request->resolved_by_user_id)->value('name');
         return $header;
     }
     public function request(Masjid $sender,Contact $student,int $receiver,int $actor): TranscriptShareRequest

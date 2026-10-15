@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
-use App\Models\{ClassSubject, Contact, Group, GroupMembership, Masjid, TranscriptCourse, TranscriptFinal, TranscriptIssue, TranscriptPriorYear, TranscriptReceived, TranscriptSetting, TranscriptShareRequest};
+use App\Models\{ClassSubject, Contact, Group, GroupMembership, Masjid, TranscriptCourse, TranscriptFinal, TranscriptIssue, TranscriptPriorYear, TranscriptReceived, TranscriptSetting, TranscriptShareRequest, User};
 use App\Services\Schools\{Transcripts, TranscriptPdf, TranscriptShares};
-use App\Support\{GradeLevel, GroupResourceFiles, TenantContext, TranscriptMath as Math, TranscriptMode};
+use App\Support\{GradeLevel, GroupResourceFiles, TenantContext, TranscriptMath as Math, TranscriptMode, SchoolAdmissionsMode};
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{DB, Storage};
 use Illuminate\Validation\{Rule, ValidationException};
@@ -29,7 +29,9 @@ class TranscriptsController extends Controller
     public function index(Request $request)
     {
         $school=$this->school();
-        $students=Contact::whereIn('id',GroupMembership::participants()->select('contact_id'))
+        $members=GroupMembership::participants()->get();
+        $eligible=$request->boolean('show_all')?$members:$members->filter(fn($m)=>Transcripts::highSchool($m->grade_label));
+        $students=Contact::whereIn('id',$eligible->pluck('contact_id'))
             ->when($request->filled('search'),fn($q)=>$q->where(fn($q)=>$q->where('first_name','like','%'.$request->input('search').'%')->orWhere('last_name','like','%'.$request->input('search').'%')))->orderBy('last_name')->orderBy('id')->paginate(50,['id','first_name','last_name']);
         $subjects=ClassSubject::whereIn('group_id',GroupMembership::participants()->get()->filter(fn($m)=>Transcripts::highSchool($m->grade_label))->pluck('group_id'))->orderBy('id')->get();
         return $this->ok(['students'=>$students,'policy'=>app(Transcripts::class)->policy($school),'scale'=>$school->letter_grade_settings['scale'] ?? \App\Support\LetterGrades::DEFAULT_SCALE,'method'=>Transcripts::METHOD,
@@ -40,9 +42,11 @@ class TranscriptsController extends Controller
     public function show($masjid_id,$contact_id)
     {
         $school=$this->school(); $student=$this->student((int)$contact_id);
+        $issues=TranscriptIssue::where('contact_id',$student->id)->orderByDesc('id')->get();
         return $this->ok(['document'=>app(Transcripts::class)->live($school,$student,true),
-            'issues'=>TranscriptIssue::where('contact_id',$student->id)->orderByDesc('id')->get(['id','serial','issued_at','issued_by_user_id']),
-            'shares'=>TranscriptShareRequest::where('contact_id',$student->id)->orderByDesc('id')->get()->map(fn($share)=>$share->toArray()+['receiving_school'=>Masjid::whereKey($share->receiving_masjid_id)->value('name')]),
+            'latest_issue_stale'=>app(Transcripts::class)->issueIsStale($school,$student,$issues->first()),
+            'issues'=>$issues->map(fn($issue)=>['id'=>$issue->id,'serial'=>$issue->serial,'issued_at'=>$issue->issued_at,'issued_at_display'=>SchoolAdmissionsMode::timestamp((int)$school->id,$issue->issued_at),'issued_by_name'=>$issue->snapshot['issued_by'] ?? $this->staffName($issue->issued_by_user_id)]),
+            'shares'=>TranscriptShareRequest::where('contact_id',$student->id)->orderByDesc('id')->get()->map(fn($share)=>$this->shareHeader($share)),
             'received'=>TranscriptReceived::where('contact_id',$student->id)->orderByDesc('id')->get()->map(fn($row)=>$this->receivedHeader($row)),
             'memberships'=>GroupMembership::where('contact_id',$student->id)->participants()->get()->map(fn($m)=>['id'=>$m->id,'class'=>Group::find($m->group_id)?->name]),
             'prior_years'=>TranscriptPriorYear::where('contact_id',$student->id)->get()]);
@@ -67,8 +71,11 @@ class TranscriptsController extends Controller
     public function course(Request $request,$masjid_id,$class_subject_id)
     {
         ClassSubject::findOrFail($class_subject_id);
-        $data=$request->validate(['credit'=>['required'],'level'=>['required',Rule::in(['regular','honors','ap'])]]);
-        return $this->locked(fn($school)=>$this->ok(TranscriptCourse::updateOrCreate(['class_subject_id'=>$class_subject_id],['credit_hundredths'=>Math::hundredths($data['credit'],'credit',10000),'level'=>$data['level']])));
+        if ($request->has('on_transcript')) $request->merge(['on_transcript'=>filter_var($request->input('on_transcript'),FILTER_VALIDATE_BOOLEAN,FILTER_NULL_ON_FAILURE)]);
+        $data=$request->validate(['credit'=>['nullable'],'level'=>['required',Rule::in(['regular','honors','ap'])],'on_transcript'=>['sometimes','required','boolean']]);
+        $attributes=['credit_hundredths'=>isset($data['credit'])?Math::hundredths($data['credit'],'credit',10000):null,'level'=>$data['level']];
+        if (array_key_exists('on_transcript',$data)) $attributes['on_transcript']=$data['on_transcript'];
+        return $this->locked(fn($school)=>$this->ok(TranscriptCourse::updateOrCreate(['class_subject_id'=>$class_subject_id],$attributes)));
     }
     public function finalGrade(Request $request,$masjid_id,$contact_id)
     {
@@ -188,9 +195,25 @@ class TranscriptsController extends Controller
             $copy->contact_id=$student->id; $copy->save(); return $this->ok($this->receivedHeader($copy));
         });
     }
+    private function staffName(?int $id): ?string { return $id===null?null:User::withTrashed()->whereKey($id)->value('name'); }
+    private function guardianName(?int $id): ?string
+    {
+        $contact=$id===null?null:Contact::withTrashed()->find($id);
+        return $contact?trim($contact->first_name.' '.$contact->last_name):null;
+    }
+    private function shareHeader(TranscriptShareRequest $share): array
+    {
+        return $share->toArray()+['receiving_school'=>Masjid::whereKey($share->receiving_masjid_id)->value('name'),
+            'requested_by_name'=>$this->staffName($share->requested_by_user_id),
+            'consented_by_name'=>$this->guardianName($share->consented_by_contact_id) ?? $this->staffName($share->consented_by_user_id),
+            'resolved_by_name'=>$this->guardianName($share->withdrawn_by_contact_id) ?? $this->staffName($share->resolved_by_user_id),
+            'requested_at_display'=>SchoolAdmissionsMode::timestamp((int)$share->masjid_id,$share->requested_at),
+            'consented_at_display'=>SchoolAdmissionsMode::timestamp((int)$share->masjid_id,$share->consented_at),
+            'resolved_at_display'=>SchoolAdmissionsMode::timestamp((int)$share->masjid_id,$share->resolved_at)];
+    }
     private function receivedHeader(TranscriptReceived $copy): array
     {
-        return ['id'=>$copy->id,'contact_id'=>$copy->contact_id,'origin_school'=>$copy->origin_school,'origin_serial'=>$copy->origin_serial,'received_at'=>$copy->received_at,'student_name'=>$copy->snapshot['student']['name'],'read_only'=>true];
+        return ['id'=>$copy->id,'contact_id'=>$copy->contact_id,'origin_school'=>$copy->origin_school,'origin_serial'=>$copy->origin_serial,'received_at'=>$copy->received_at,'received_at_display'=>SchoolAdmissionsMode::timestamp((int)$copy->masjid_id,$copy->received_at),'accepted_by_name'=>$this->staffName($copy->accepted_by_user_id),'student_name'=>$copy->snapshot['student']['name'],'read_only'=>true];
     }
     private function download($row,string $name)
     {

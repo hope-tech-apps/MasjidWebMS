@@ -9,6 +9,6 @@ use Illuminate\Database\Eloquent\Model;
 class TranscriptCourse extends Model
 {
     use BelongsToMasjid;
-    protected $fillable = ['masjid_id', 'class_subject_id', 'credit_hundredths', 'level'];
-    protected function casts(): array { return ['credit_hundredths'=>'integer']; }
+    protected $fillable = ['masjid_id', 'class_subject_id', 'credit_hundredths', 'level', 'on_transcript'];
+    protected function casts(): array { return ['credit_hundredths'=>'integer', 'on_transcript'=>'boolean']; }
 }

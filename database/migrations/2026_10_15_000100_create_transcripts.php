@@ -15,7 +15,8 @@ return new class extends Migration
         Schema::create('transcript_courses', function (Blueprint $t) {
             $t->id(); $t->foreignId('masjid_id')->constrained('masjids')->restrictOnDelete();
             $t->foreignId('class_subject_id')->unique()->constrained('class_subjects')->restrictOnDelete();
-            $t->unsignedInteger('credit_hundredths'); $t->string('level', 12); $t->timestamps();
+            // No credit for a course without a final letter or kept off the transcript.
+            $t->unsignedInteger('credit_hundredths')->nullable(); $t->string('level', 12); $t->boolean('on_transcript')->default(true); $t->timestamps();
         });
         Schema::create('transcript_finals', function (Blueprint $t) {
             $t->id(); $t->foreignId('masjid_id')->constrained('masjids')->restrictOnDelete();

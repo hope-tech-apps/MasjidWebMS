@@ -36,7 +36,7 @@ class TranscriptsTest extends TestCase
         $term=SchoolTerm::create(['masjid_id'=>$school->id,'school_year_id'=>$year->id,'name'=>'First term','starts_on'=>'2026-08-24','ends_on'=>'2026-10-31','position'=>1]);
         return [$school,$child,$term];
     }
-    private function course($child,$term,string $name,string $percentage,int $credit=100,string $level='regular',string $grade='9th'): ClassSubject
+    private function course($child,$term,string $name,?string $percentage,int $credit=100,string $level='regular',string $grade='9th'): ClassSubject
     {
         $subject=ClassSubject::create(['masjid_id'=>$child->masjid_id,'group_id'=>$child->group_id,'name'=>$name,'position'=>0]);
         TranscriptCourse::create(['masjid_id'=>$child->masjid_id,'class_subject_id'=>$subject->id,'credit_hundredths'=>$credit,'level'=>$level]);
@@ -139,7 +139,7 @@ class TranscriptsTest extends TestCase
         $url=str_replace('/attendance','/transcript/shares/'.$share['id'].'/consent',$this->familyUrl($child));
         $this->postJson($url,['consent'=>'1'])->assertOk();
         $this->office($receiver); $header=$this->getJson($this->base($receiver).'/inbox/'.$share['id'])->assertOk()->json('data');
-        $this->assertSame(['id','sending_school','student_name','date_of_birth','status','requested_at'],array_keys($header));
+        $this->assertSame(['id','sending_school','student_name','date_of_birth','status','requested_at','requested_at_display'],array_keys($header));
         $this->assertSame('2010-03-04',$header['date_of_birth']);
         $this->getJson($this->base($receiver).'/students/'.$child->contact_id)->assertNotFound();
         $this->postJson($this->base($receiver).'/inbox/'.$share['id'].'/accept',['contact_id'=>$newChild->contact_id])->assertCreated();
@@ -375,5 +375,135 @@ class TranscriptsTest extends TestCase
         $this->postJson($url,$data)->assertCreated();
         $data['starts_on']='2026-06-02';$this->postJson($url,$data)->assertUnprocessable();
     }
+
+    #[Test]
+    public function ungraded_courses_neither_attempt_credit_nor_require_it_to_issue_and_hide_credit_cells(): void
+    {
+        [$school,$child,$term]=$this->makeMasjidWorld();
+        $this->course($child,$term,'Passing','95',100);
+        $this->course($child,$term,'Failing','40',50);
+        $levels=$this->course($child,$term,'Levels only',null,200);
+        $missing=$this->course($child,$term,'No points work',null);
+        TranscriptCourse::where('class_subject_id',$missing->id)->delete();
+        $actor=$this->office($school); $service=app(Transcripts::class);
+        $document=$service->live($school,$child->contact);
+        $this->assertSame('1.50',$document['cumulative']['attempted']);
+        $this->assertSame('1.00',$document['cumulative']['earned']);
+        $this->assertSame('2.67',$document['cumulative']['plain']);
+        $this->assertSame($document['cumulative'],$document['years'][0]['totals']);
+        $issue=$service->issue($school,$child->contact,$actor->id);
+        $html=view('pdf.transcript',['document'=>$issue->snapshot])->render();
+        $this->assertMatchesRegularExpression('/Levels only<\/td>.*?Not graded<\/td><td>\s*<\/td><td>\s*<\/td>/s',$html);
+        $this->assertStringNotContainsString('Not set',$html);
+        TermGrade::where('class_subject_id',$missing->id)->update(['percentage'=>'90']);
+        $this->postJson($this->base($school).'/students/'.$child->contact_id.'/issues')->assertUnprocessable();
+    }
+
+    #[Test]
+    public function course_visibility_survives_form_encoding_and_excludes_graded_courses_from_all_copies(): void
+    {
+        [$school,$child,$term]=$this->makeMasjidWorld();
+        $this->course($child,$term,'Included','95',50); $hidden=$this->course($child,$term,'Excluded','40',100);
+        $actor=$this->office($school); $url=$this->base($school).'/courses/'.$hidden->id;
+        $this->assertTrue(TranscriptCourse::where('class_subject_id',$hidden->id)->first()->on_transcript);
+        $this->put($url,['credit'=>'','level'=>'regular','on_transcript'=>'false'])->assertOk();
+        $service=app(Transcripts::class); $document=$service->live($school,$child->contact);
+        $this->assertSame(['Included'],array_column($document['years'][0]['courses'],'name'));
+        $this->assertSame('0.50',$document['cumulative']['attempted']);
+        $staff=$service->live($school,$child->contact,true);
+        $this->assertCount(2,$staff['years'][0]['courses']); $this->assertSame($document['cumulative'],$staff['cumulative']);
+        $issue=$service->issue($school,$child->contact,$actor->id);
+        $this->assertStringNotContainsString('Excluded',view('pdf.transcript',['document'=>$issue->snapshot])->render());
+        $this->put($url,['credit'=>'','level'=>'regular','on_transcript'=>'true'])->assertOk();
+        $this->postJson($this->base($school).'/students/'.$child->contact_id.'/issues')->assertUnprocessable();
+        $this->put($url,['credit'=>'1.00','level'=>'regular','on_transcript'=>'nonsense'])->assertUnprocessable();
+        $this->assertSame('0.50',$issue->fresh()->snapshot['cumulative']['attempted']);
+    }
+
+    #[Test]
+    public function office_student_filter_uses_gradelevel_spellings_and_show_all_precedes_pagination(): void
+    {
+        [$school,$child]=$this->makeMasjidWorld(); $child->update(['grade_label'=>'Grade 10']);
+        $class=\App\Models\Group::find($child->group_id);
+        $younger=$this->enrol($class); $younger->update(['grade_label'=>'8th']);
+        $unknown=$this->enrol($class); $unknown->update(['grade_label'=>'Unknown']);
+        $older=$this->enrol($class); $older->update(['grade_label'=>'twelfth grade']);
+        $this->office($school);
+        $ids=$this->getJson($this->base($school))->assertOk()->json('data.students.data');
+        $this->assertEqualsCanonicalizing([$child->contact_id,$older->contact_id],array_column($ids,'id'));
+        $this->getJson($this->base($school).'?show_all=1')->assertOk()->assertJsonPath('data.students.total',4);
+    }
+
+    #[Test]
+    public function attendance_uses_first_enrolment_or_roster_start_and_present_or_leaving_date(): void
+    {
+        [$school,$child]=$this->makeMasjidWorld(); $child->update(['joined_at'=>'2026-08-24']);
+        $class=$this->classroom($school,'Previous class'); $old=$this->enrol($class,$child->contact);
+        $old->forceFill(['joined_at'=>'2025-08-25','left_on'=>'2026-06-01'])->save();
+        $document=app(Transcripts::class)->live($school,$child->contact);
+        $this->assertSame('2025-08-25',$document['student']['attended_from']);
+        $html=view('pdf.transcript',['document'=>$document])->render();
+        $this->assertStringContainsString('Aug 25, 2025 to Present',$html);
+        $child->forceFill(['left_on'=>'2026-10-14'])->save();
+        $document=app(Transcripts::class)->live($school,$child->contact);
+        $this->assertSame('2026-10-14',$document['student']['attended_to']);
+        $child->update(['joined_at'=>null]); $old->delete();
+        $document=app(Transcripts::class)->live($school,$child->contact);
+        $this->assertSame('2026-10-14',$document['student']['attended_from']);
+    }
+
+    #[Test]
+    public function stale_issue_detects_term_changes_overrides_and_cleared_overrides_then_resets_on_reissue(): void
+    {
+        [$school,$child,$term]=$this->makeMasjidWorld(); $subject=$this->course($child,$term,'Science','95'); $this->office($school);
+        $url=$this->base($school).'/students/'.$child->contact_id;
+        $this->postJson($url.'/issues')->assertCreated();
+        $this->getJson($url)->assertOk()->assertJsonPath('data.latest_issue_stale',false);
+        $this->travel(1)->minutes(); TermGrade::query()->update(['percentage'=>'85','updated_at'=>now()]);
+        $this->getJson($url)->assertOk()->assertJsonPath('data.latest_issue_stale',true);
+        $this->postJson($url.'/issues')->assertCreated();
+        $this->getJson($url)->assertOk()->assertJsonPath('data.latest_issue_stale',false);
+        $this->travel(1)->minutes();
+        $body=['class_subject_id'=>$subject->id,'school_year_id'=>$term->school_year_id,'letter'=>'A','reason'=>'Additional evidence'];
+        $this->putJson($url.'/finals',$body)->assertOk();
+        $this->getJson($url)->assertOk()->assertJsonPath('data.latest_issue_stale',true);
+        $this->postJson($url.'/issues')->assertCreated(); $this->travel(1)->minutes();
+        $this->putJson($url.'/finals',array_merge($body,['letter'=>null]))->assertOk();
+        $this->getJson($url)->assertOk()->assertJsonPath('data.latest_issue_stale',true);
+    }
+
+    #[Test]
+    public function office_dates_and_names_use_school_clock_and_pdf_contains_only_issuing_office_identity(): void
+    {
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-16 03:06:00','UTC'));
+        [$school,$child,$term]=$this->makeMasjidWorld(); $child->update(['grade_label'=>'10th','joined_at'=>'2026-08-24']);
+        $subject=$this->course($child,$term,'Science','95'); [$receiver]=$this->makeMasjidWorld('b');
+        $this->assertSame('2026-10-15',app(Transcripts::class)->live($school,$this->enrol(\App\Models\Group::find($child->group_id))->contact)['student']['attended_from']);
+        $actor=$this->office($school); $studentUrl=$this->base($school).'/students/'.$child->contact_id;
+        $this->putJson($studentUrl.'/finals',['class_subject_id'=>$subject->id,'school_year_id'=>$term->school_year_id,'letter'=>'B','reason'=>'Private reason'])->assertOk();
+        $issue=$this->postJson($studentUrl.'/issues')->assertCreated()->json('data.id');
+        $share=$this->postJson($studentUrl.'/shares',['receiving_masjid_id'=>$receiver->id])->assertCreated()->json('data.id');
+        $guardian=$this->guardian($child); $this->family($guardian);
+        $familyUrl=str_replace('/attendance','/transcript',$this->familyUrl($child));
+        $this->postJson($familyUrl.'/shares/'.$share.'/consent',['consent'=>'1'])->assertOk();
+        $this->office($school);
+        $data=$this->getJson($studentUrl)->assertOk()->json('data');
+        $this->assertSame('Oct 15, 2026, 11:06 PM',$data['issues'][0]['issued_at_display']);
+        $this->assertSame('Practice Office',$data['issues'][0]['issued_by_name']);
+        $this->assertSame('Practice Office',$data['shares'][0]['requested_by_name']);
+        $this->assertSame('Practice Guardian',$data['shares'][0]['consented_by_name']);
+        $this->assertSame('Oct 15, 2026, 11:06 PM',$data['shares'][0]['consented_at_display']);
+        $this->assertSame('Practice Office',$data['document']['years'][0]['courses'][0]['staff']['by_name']);
+        $snapshot=TranscriptIssue::find($issue)->snapshot; $html=view('pdf.transcript',['document'=>$snapshot])->render();
+        $this->assertStringContainsString('Issued Oct 15, 2026, 11:06 PM by Practice Office',$html);
+        $this->assertStringContainsString('Grade 10',$html); $this->assertStringNotContainsString('Grade 10th',$html);
+        $this->assertStringNotContainsString('Practice Guardian',$html); $this->assertStringNotContainsString('Private reason',$html);
+        $this->office($receiver);
+        $this->getJson($this->base($receiver).'/inbox/'.$share)->assertOk()->assertJsonPath('data.requested_at_display','Oct 15, 2026, 11:06 PM');
+        $this->postJson($this->base($receiver).'/inbox/'.$share.'/accept')->assertCreated()->assertJsonPath('data.received_at_display','Oct 15, 2026, 11:06 PM')->assertJsonPath('data.accepted_by_name','Practice Office');
+        $this->family($guardian);
+        $this->getJson($familyUrl)->assertOk()->assertJsonPath('shares.0.status','accepted')->assertJsonPath('shares.0.receiving_school',$receiver->name)->assertJsonPath('shares.0.resolved_on_display','Oct 15, 2026');
+    }
+
 
 }

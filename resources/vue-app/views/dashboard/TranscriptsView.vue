@@ -14,12 +14,14 @@
                 <button type="button" class="btn btn-outline-secondary my-2" @click="points.push({letter:'',points:'0.00',failing:false})">Add points-table letter</button>
                 <form v-for="subject in data.subjects" :key="subject.id" @submit.prevent="saveCourse(subject)" class="border-top py-3">
                     <h2 class="h6">{{ subject.class }} · {{ subject.name }}</h2>
-                    <label class="form-label">Credit<input class="form-control" v-model="credits[subject.id].credit" inputmode="decimal" required /></label>
+                    <label class="form-label">Credit<input class="form-control" v-model="credits[subject.id].credit" inputmode="decimal" /></label>
+                    <label class="form-label ms-2">On the transcript<select class="form-select" v-model="credits[subject.id].on_transcript"><option :value="true">Yes</option><option :value="false">No</option></select></label>
                     <label class="form-label ms-2">Level<select class="form-select" v-model="credits[subject.id].level"><option value="regular">Regular</option><option value="honors">Honors</option><option value="ap">AP</option></select></label>
                     <button class="btn btn-outline-primary ms-2" :disabled="busy">Save {{ subject.name }}</button>
                 </form>
             </details>
             <form class="d-flex gap-2 mb-3" @submit.prevent="load(1)"><label>Find student<input class="form-control" v-model="search" /></label><button class="btn btn-outline-secondary" :disabled="busy">Search</button></form>
+            <label class="d-block mb-2"><input type="checkbox" v-model="showAll" @change="load(1)" /> Show all students (default: grades 9 and up)</label>
             <label class="form-label d-block">Student<select class="form-select" v-model="selected" @change="openStudent"><option value="">Choose a student</option><option v-for="student in data.students.data" :key="student.id" :value="String(student.id)">{{ student.first_name }} {{ student.last_name }}</option></select></label>
             <div v-if="data.students.last_page > 1" class="d-flex gap-2 mb-3"><button class="btn btn-outline-secondary" :disabled="data.students.current_page <= 1 || busy" @click="load(data.students.current_page - 1)">Previous</button><span>{{ data.students.current_page }} / {{ data.students.last_page }}</span><button class="btn btn-outline-secondary" :disabled="data.students.current_page >= data.students.last_page || busy" @click="load(data.students.current_page + 1)">Next</button></div>
             <section v-if="studentData" class="border rounded p-3 my-3">
@@ -30,7 +32,7 @@
                 <h2 class="h6 mt-4">Official issues</h2>
                 <button class="btn btn-primary mb-2" :disabled="busy" @click="issue">Issue a new official transcript</button>
                 <p class="small">Each issue freezes the figures, school policy and PDF. A later grade change needs a new issue.</p>
-                <ul><li v-for="copy in studentData.issues" :key="copy.id"><button class="btn btn-link" :disabled="busy" @click="download(`/issues/${copy.id}/pdf`,'official-transcript.pdf')">{{ copy.serial }} · {{ copy.issued_at }}</button></li></ul>
+                <ul><li v-for="copy in studentData.issues" :key="copy.id"><button class="btn btn-link" :disabled="busy" @click="download(`/issues/${copy.id}/pdf`,'official-transcript.pdf')">{{ copy.serial }} · {{ copy.issued_at_display }} · {{ copy.issued_by_name || 'Name not recorded' }}</button></li></ul>
                 <details class="border rounded p-3 mt-3"><summary>Prior-school years</summary>
                     <p>Enter courses to include them in cumulative GPA. A PDF alone contributes no credits or GPA. Each year is marked with the prior school.</p>
                     <ul><li v-for="year in studentData.prior_years" :key="year.id">From {{ year.school_name }} · {{ year.year_label }} <button type="button" class="btn btn-link" @click="editPrior(year)">Edit prior year</button><button v-if="year.group_resource_id" class="btn btn-link" :disabled="busy" @click="download(`/students/${selected}/prior/${year.id}/pdf`,'prior-transcript.pdf')">Download prior PDF</button></li></ul>
@@ -52,26 +54,27 @@
                 </details>
                 <h2 class="h6 mt-4">Share with another Manara school</h2>
                 <p>The family consents in its portal, or the office records signed paper consent. The receiving office sees only this student's name and birth date until it accepts. Acceptance copies the latest issued official transcript; if none exists, the sending office's request authorises a new issue.</p>
+                <p v-if="studentData.latest_issue_stale" class="alert alert-warning" role="status">Grades have changed since the latest official issue. Sharing sends that older copy. <button type="button" class="btn btn-outline-primary" :disabled="busy" @click="issue">Issue a new official copy first</button></p>
                 <form @submit.prevent="requestShare" class="d-flex gap-2"><label>Receiving school<select class="form-select" v-model="receiving" required><option value="">Choose school</option><option v-for="school in data.receiving_schools" :key="school.id" :value="String(school.id)">{{ school.name }}</option></select></label><button class="btn btn-primary" :disabled="busy">Request sharing</button></form>
                 <article v-for="share in studentData.shares" :key="share.id" class="border rounded p-3 mt-2">
-                    <p>To {{ share.receiving_school }} · Request #{{ share.id }} · {{ share.status }} · Requested {{ share.requested_at }} by staff #{{ share.requested_by_user_id }}</p>
-                    <p v-if="share.consented_at">Family consent: {{ share.consent_method }} · {{ share.consented_at }} · {{ share.consented_by_contact_id ? `guardian #${share.consented_by_contact_id}` : `office #${share.consented_by_user_id}` }}</p>
-                    <p v-if="share.resolved_at">{{ share.status }} at {{ share.resolved_at }} · {{ share.withdrawn_by_contact_id ? `guardian #${share.withdrawn_by_contact_id}` : `office #${share.resolved_by_user_id}` }}</p>
+                    <p>To {{ share.receiving_school }} · Request #{{ share.id }} · {{ share.status }} · Requested {{ share.requested_at_display }} by {{ share.requested_by_name || 'Name not recorded' }}</p>
+                    <p v-if="share.consented_at">Family consent: {{ share.consent_method }} · {{ share.consented_at_display }} · {{ share.consented_by_name || 'Name not recorded' }}</p>
+                    <p v-if="share.resolved_at">{{ share.status }} at {{ share.resolved_at_display }} · {{ share.resolved_by_name || 'Name not recorded' }}</p>
                     <form v-if="share.status === 'awaiting_family'" @submit.prevent="paper(share)"><label>Where the signed paper consent is held<textarea class="form-control" v-model="evidence[share.id]" required maxlength="4000" /></label><button class="btn btn-outline-primary ms-2" :disabled="busy">Record paper consent</button></form>
                     <button v-if="['awaiting_family','pending'].includes(share.status)" class="btn btn-outline-secondary mt-2" :disabled="busy" @click="withdraw(share)">Withdraw request</button>
                 </article>
                 <h2 class="h6 mt-3">Received on this student's record</h2>
                 <p v-if="!studentData.received.length">No received transcripts.</p>
-                <p v-for="copy in studentData.received" :key="copy.id">From {{ copy.origin_school }} · {{ copy.received_at }} · Read-only <button class="btn btn-link" :disabled="busy" @click="download(`/received/${copy.id}/pdf`,'received-transcript.pdf')">Download</button></p>
+                <p v-for="copy in studentData.received" :key="copy.id">From {{ copy.origin_school }} · {{ copy.received_at_display }} · {{ copy.accepted_by_name || 'Name not recorded' }} · Read-only <button class="btn btn-link" :disabled="busy" @click="download(`/received/${copy.id}/pdf`,'received-transcript.pdf')">Download</button></p>
             </section>
             <h2 class="h5 mt-4">Incoming requests and history</h2><p v-if="!inbox.length">No incoming requests.</p>
             <article v-for="share in inbox" :key="share.id" class="border rounded p-3 my-2">
-                <p>From {{ share.sending_school }} · {{ share.student_name }} · {{ share.date_of_birth || 'No birth date on file' }} · {{ share.status }} · {{ share.resolved_at || share.requested_at }}</p>
+                <p>From {{ share.sending_school }} · {{ share.student_name }} · {{ share.date_of_birth ? transcriptDate(share.date_of_birth) : 'No birth date on file' }} · {{ share.status }} · {{ share.resolved_at_display || share.requested_at_display }}<span v-if="share.resolved_by_name"> · {{ share.resolved_by_name }}</span></p>
                 <template v-if="share.status === 'pending'"><label>Link to an enrolled student<select class="form-select" v-model="linkChoices[share.id]"><option value="">Keep unlinked until enrolled</option><option v-for="child in data.students.data" :key="child.id" :value="String(child.id)">{{ child.first_name }} {{ child.last_name }}</option></select></label><button class="btn btn-primary m-2" :disabled="busy" @click="accept(share)">Accept and copy transcript</button><button class="btn btn-outline-secondary" :disabled="busy" @click="decline(share)">Decline</button></template>
             </article>
             <h2 class="h5 mt-4">Received transcripts</h2>
             <article v-for="copy in data.received" :key="copy.id" class="border rounded p-3 my-2">
-                <p>{{ copy.student_name }} · From {{ copy.origin_school }} · {{ copy.received_at }} · Read-only</p><button class="btn btn-link" :disabled="busy" @click="download(`/received/${copy.id}/pdf`,'received-transcript.pdf')">Download</button>
+                <p>{{ copy.student_name }} · From {{ copy.origin_school }} · {{ copy.received_at_display }} · {{ copy.accepted_by_name || 'Name not recorded' }} · Read-only</p><button class="btn btn-link" :disabled="busy" @click="download(`/received/${copy.id}/pdf`,'received-transcript.pdf')">Download</button>
                 <template v-if="!copy.contact_id"><label>Link to student<select class="form-select" v-model="receivedLinks[copy.id]"><option value="">Choose student</option><option v-for="child in data.students.data" :key="child.id" :value="String(child.id)">{{ child.first_name }} {{ child.last_name }}</option></select></label><button class="btn btn-outline-primary ms-2" :disabled="busy || !receivedLinks[copy.id]" @click="link(copy)">Link received copy</button></template>
             </article>
         </template>
@@ -79,6 +82,7 @@
     </div></section>
 </template>
 <script setup lang="ts">
+import { transcriptDate } from '@/core/helpers/transcriptDisplay';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import ApiService from '@/core/services/ApiService';
 import { useMasjidStore } from '@/stores/masjidStore';
@@ -87,15 +91,16 @@ import TranscriptDocument from '@/components/classes/TranscriptDocument.vue';
 import TranscriptFinalEditor from '@/components/classes/TranscriptFinalEditor.vue';
 const store=useMasjidStore(); const school=computed(()=>String(store.masjid?.id ?? '')); const base=()=>`/api/admin/masjids/${school.value}/transcripts` as any;
 const data=ref<any>(null); const studentData=ref<any>(null); const inbox=ref<any[]>([]); const selected=ref(''); const search=ref(''); const receiving=ref(''); const error=ref(''); const message=ref(''); const busy=ref(false);
+const showAll=ref(false);
 const points=ref<any[]>([]); const honors=ref('0.50'); const ap=ref('1.00'); const credits=ref<Record<number,any>>({}); const evidence=ref<Record<number,string>>({}); const linkChoices=ref<Record<number,string>>({}); const receivedLinks=ref<Record<number,string>>({}); const priorFile=ref<File|null>(null);
 const blankPrior=()=>({id:null as number|null,school_name:'',year_label:'',grade_label:'9th',starts_on:'',ends_on:'',courses:[] as any[],membership_id:''}); const prior=ref(blankPrior());
 let generation=0; let studentGeneration=0; let alive=true;
 const decimal=(value:number)=>`${Math.floor(value/100)}.${String(value%100).padStart(2,'0')}`;
 async function load(page=1) {
     const run=++generation; error.value=''; if(!school.value)return;
-    try {const [r,requests]=await Promise.all([ApiService.get(`${base()}?search=${encodeURIComponent(search.value)}&page=${page}`),ApiService.get(`${base()}/inbox`)]);if(!alive || run!==generation)return;
+    try {const [r,requests]=await Promise.all([ApiService.get(`${base()}?search=${encodeURIComponent(search.value)}&page=${page}&show_all=${showAll.value?1:0}`),ApiService.get(`${base()}/inbox`)]);if(!alive || run!==generation)return;
         data.value=r.data.data; inbox.value=requests.data.data; points.value=[...new Set([...Object.keys(data.value.policy.points),...data.value.scale.map((row:any)=>row.letter)])].map(letter=>({letter,points:data.value.policy.points[letter]===undefined?'':decimal(data.value.policy.points[letter]),failing:data.value.policy.failing_letters.includes(letter)}));honors.value=decimal(data.value.policy.honors_extra);ap.value=decimal(data.value.policy.ap_extra);
-        credits.value=Object.fromEntries(data.value.subjects.map((subject:any)=>[subject.id,{credit:subject.setting?decimal(subject.setting.credit_hundredths):'',level:subject.setting?.level ?? 'regular'}]));
+        credits.value=Object.fromEntries(data.value.subjects.map((subject:any)=>[subject.id,{credit:subject.setting?.credit_hundredths==null?'':decimal(subject.setting.credit_hundredths),level:subject.setting?.level ?? 'regular',on_transcript:subject.setting?.on_transcript ?? true}]));
     } catch(e){if(alive && run===generation)error.value=serverMessage(e,'Transcripts could not be loaded.');}
 }
 async function openStudent() {
@@ -109,7 +114,7 @@ async function mutate(action:()=>Promise<any>,success:string,refreshSchool=false
     catch(e){if(alive && run===generation)error.value=serverMessage(e,'This transcript change could not be saved.');}
     finally{if(alive)busy.value=false;}
 }
-const saveCourse=(subject:any)=>mutate(()=>ApiService.put(`${base()}/courses/${subject.id}`,{...credits.value[subject.id]},'json'),'Course settings saved.');
+const saveCourse=(subject:any)=>mutate(()=>ApiService.put(`${base()}/courses/${subject.id}`,{...credits.value[subject.id],credit:credits.value[subject.id].credit || null},'json'),'Course settings saved.');
 const savePolicy=()=>{if(new Set(points.value.map(row=>row.letter)).size!==points.value.length){error.value='Use one row per letter in the points table.';return;}return mutate(()=>ApiService.put(`${base()}/settings`,{points:Object.fromEntries(points.value.map(row=>[row.letter,row.points])),honors_extra:honors.value,ap_extra:ap.value,failing_letters:points.value.filter(row=>row.failing).map(row=>row.letter)},'json'),'GPA policy saved.');};
 const issue=()=>mutate(()=>ApiService.post(`${base()}/students/${selected.value}/issues`,{}),'Official transcript issued.');
 const requestShare=()=>mutate(()=>ApiService.post(`${base()}/students/${selected.value}/shares`,{receiving_masjid_id:receiving.value}),'Request created. Family consent is required.');
@@ -133,6 +138,6 @@ async function download(path:string,name:string){
     catch(e){if(alive && run===generation)error.value=serverMessage(e,'The transcript file could not be downloaded.');}
     finally{if(alive)busy.value=false;}
 }
-watch(school,()=>{generation++;studentGeneration++;data.value=null;studentData.value=null;selected.value='';search.value='';message.value='';busy.value=false;load();},{immediate:true});
+watch(school,()=>{generation++;studentGeneration++;data.value=null;studentData.value=null;selected.value='';search.value='';showAll.value=false;message.value='';busy.value=false;load();},{immediate:true});
 onBeforeUnmount(()=>{alive=false;generation++;studentGeneration++;});
 </script>

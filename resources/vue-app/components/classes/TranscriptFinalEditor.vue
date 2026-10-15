@@ -4,7 +4,7 @@
         <p>Calculated final: {{ course.calculated_letter || 'Not graded' }} · Final: {{ course.letter || 'Not graded' }} · Average: {{ course.average_percentage ?? 'Not available' }}%</p>
         <label class="form-label d-block">Final letter override<select class="form-select" v-model="letter"><option value="">Use calculated letter</option><option v-for="row in scale" :key="row.letter" :value="row.letter">{{ row.letter }}</option></select></label>
         <label class="form-label d-block">Staff-only reason<textarea class="form-control" v-model="reason" :required="!!letter" maxlength="4000" /></label>
-        <p v-if="course.staff.at" class="small">Recorded by staff #{{ course.staff.by_user_id }} at {{ course.staff.at }}</p>
+        <p v-if="course.staff.at" class="small">Recorded by {{ course.staff.by_name || 'Name not recorded' }} at {{ course.staff.at_display }}</p>
         <p v-if="error" class="text-danger" role="alert">{{ error }}</p>
         <p v-if="saved" role="status">Final letter saved.</p>
         <button class="btn btn-outline-primary" :disabled="busy">Save final letter</button>

@@ -579,3 +579,8 @@ The owner's served-grade rule supersedes the earlier initial-proposal assumption
 A year's first published dated report-card grade snapshot is its historical grade label; there is no separate yearly grade record to invent. Unknown historical grades and years before grade 9 stay off the transcript. Current GPA policy and course settings govern live documents; issued snapshots freeze their original policy and figures. Missing percentages are ungraded, never zero. Points/extras input ceilings (10.00) and credit ceiling (100.00) are validation limits, not measured course data.
 
 The guide/demo school walk is a later guides session and does not authorize live data changes here. New translation keys are machine drafts, including the additions in the existing Arabic table. Local SQLite/mounted Vue/PDF-byte checks do not prove MySQL DDL or concurrency, real-browser geometry/accessibility, fluent translations, CI or deployed behavior.
+
+
+## 2026-10-14 — Transcript walk corrections
+
+On the transcript is a class-subject setting, alongside credit and level, matching the existing office course-settings scope. Unconfigured courses remain included so the office can see ungraded work and graded work still requires an explicit credit. Excluded courses remain available in staff final editors. A student with an open participant membership is presently enrolled; with all participant rows closed, attendance ends at the latest leaving date. Previously issued immutable files are retained byte-for-byte; display fixes apply when rendering and new issues carry corrected totals.

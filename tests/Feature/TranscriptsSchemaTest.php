@@ -23,5 +23,7 @@ it('gives each transcript table a primary key classified columns short indexes a
 
 it('rolls empty transcript storage down and forward without partial tables',function () {
     $migration=require database_path('migrations/2026_10_15_000100_create_transcripts.php');
-    $migration->down();expect(Schema::hasTable('transcript_issues'))->toBeFalse();$migration->up();expect(Schema::hasTable('transcript_issues'))->toBeTrue();
+    $migration->down();expect(Schema::hasTable('transcript_issues'))->toBeFalse();$migration->up();
+    expect(Schema::hasColumn('transcript_courses','on_transcript'))->toBeTrue();
+    expect(Schema::hasTable('transcript_issues'))->toBeTrue();
 });

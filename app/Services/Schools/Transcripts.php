@@ -4,15 +4,15 @@ declare(strict_types=1);
 
 namespace App\Services\Schools;
 
-use App\Models\{Contact, GroupMembership, Masjid, TranscriptCourse, TranscriptFinal, TranscriptIssue, TranscriptPriorYear, TranscriptSetting};
-use App\Support\{GradeLevel, LetterGrades, TranscriptMath as Math, TranscriptMode};
+use App\Models\{Contact, GroupMembership, Masjid, TranscriptCourse, TranscriptFinal, TranscriptIssue, TranscriptPriorYear, TranscriptSetting, User};
+use App\Support\{GradeLevel, LetterGrades, TranscriptMath as Math, TranscriptMode, SchoolCalendarReaders};
 use Illuminate\Support\Facades\{DB, Storage};
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 final class Transcripts
 {
-    public const METHOD = 'Final letters use the equal-weight average of published term percentages for each course and year, then the school scale. An office or authorised teacher may override a final letter with a staff-only reason. GPA is the sum of credit times letter points divided by graded attempted credits, including failed courses. Weighted GPA adds the school Honors or AP extra. Failed courses earn no credit. Ungraded courses and file-only prior years contribute no GPA. Arithmetic is exact; display rounds half up to two decimals. Cumulative GPA uses all eligible courses directly, never averages rounded yearly GPAs.';
+    public const METHOD = 'Final letters use the equal-weight average of published term percentages for each course and year, then the school scale. An office or authorised teacher may override a final letter with a staff-only reason. GPA is the sum of credit times letter points divided by graded attempted credits, including failed courses. Weighted GPA adds the school Honors or AP extra. Failed courses earn no credit. Only courses with a final letter count as attempted. Ungraded courses and file-only prior years contribute no credits or GPA. Courses marked not on the transcript are excluded. Arithmetic is exact; display rounds half up to two decimals. Cumulative GPA uses all eligible courses directly, never averages rounded yearly GPAs.';
     public const POINTS = ['A+'=>400,'A'=>400,'A−'=>370,'B+'=>330,'B'=>300,'B−'=>270,'C+'=>230,'C'=>200,'C−'=>170,'D+'=>130,'D'=>100,'D−'=>70,'F'=>0];
 
     public function policy(Masjid $school): array
@@ -39,6 +39,8 @@ final class Transcripts
             ->get(['tg.*','st.school_year_id','st.name as term_name','rc.grade_label','sy.label as year_label','sy.first_day','sy.last_day']);
         $settings=TranscriptCourse::where('masjid_id',$school->id)->whereIn('class_subject_id',$rows->pluck('class_subject_id'))->get()->keyBy('class_subject_id');
         $overrides=TranscriptFinal::where('masjid_id',$school->id)->where('contact_id',$student->id)->get()->keyBy(fn($row)=>$row->school_year_id.':'.$row->class_subject_id);
+        $actorNames=User::withTrashed()->whereIn('id',$overrides->pluck('overridden_by_user_id')->filter())->pluck('name','id');
+        $timezone=SchoolCalendarReaders::for((int)$school->id)->timezone();
         $years=[]; $all=[];
         foreach ($rows->groupBy('school_year_id') as $yearId=>$yearRows) {
             // Earliest published dated term supplies the student's grade for this academic year.
@@ -49,10 +51,12 @@ final class Transcripts
                 $letter=Math::letter($values->sum(),$values->count(),$scale);
                 $override=$overrides->get($yearId.':'.$subjectId); $config=$settings->get($subjectId);
                 $course=$this->course($terms->first()->subject,$override?->letter ?? $letter,$config?->credit_hundredths,$config?->level ?? 'regular',$policy);
+                $course['on_transcript']=$config?->on_transcript ?? true;
+                if (!$course['on_transcript'] && !$staff) continue;
                 $course['calculated_letter']=$letter;
                 $course['average_percentage']=$values->isEmpty()?null:Math::ratio($values->sum(),$values->count()*100);
                 $course['terms']=$terms->map(fn($row)=>['term'=>$row->term_name,'letter'=>$row->final_letter,'percentage'=>$row->percentage===null?null:Math::decimal(Math::hundredths((string)$row->percentage))])->all();
-                if ($staff) $course['staff']=['class_subject_id'=>(int)$subjectId,'school_year_id'=>(int)$yearId,'override_letter'=>$override?->letter,'reason'=>$override?->reason,'by_user_id'=>$override?->overridden_by_user_id,'at'=>$override?->overridden_at?->toIso8601String()];
+                if ($staff) $course['staff']=['class_subject_id'=>(int)$subjectId,'school_year_id'=>(int)$yearId,'override_letter'=>$override?->letter,'reason'=>$override?->reason,'by_user_id'=>$override?->overridden_by_user_id,'by_name'=>$actorNames->get($override?->overridden_by_user_id),'at'=>$override?->overridden_at?->toIso8601String(),'at_display'=>$override?->overridden_at?->copy()->setTimezone($timezone)->format('M j, Y, g:i A')];
                 $courses[]=$course;
             }
             $years[]=['year'=>$first->year_label,'grade'=>$first->grade_label,'origin'=>$school->name,'starts_on'=>substr($first->first_day,0,10),'ends_on'=>substr($first->last_day,0,10),'courses'=>$courses,'file_only'=>false,'excluded_from_gpa'=>false,'totals'=>Math::totals($courses)];
@@ -71,10 +75,19 @@ final class Transcripts
         $headerGrade=$withGrade->whereNull('left_on')->last()?->grade_label ?? $withGrade->last()?->grade_label ?? ($years===[]?null:$years[array_key_last($years)]['grade']);
         $logo=null; $media=$school->getFirstMedia('logos');
         if ($media && in_array($media->mime_type,['image/png','image/jpeg','image/gif'],true) && is_readable($media->getPath())) $logo='data:'.$media->mime_type.';base64,'.base64_encode((string)file_get_contents($media->getPath()));
-        return ['designation'=>'Unofficial','school'=>['name'=>$school->name,'address'=>$school->address,'logo'=>$logo],
+        return ['designation'=>'Unofficial','school'=>['name'=>$school->name,'address'=>$school->address,'logo'=>$logo,'timezone'=>$timezone],
             'student'=>['name'=>trim($student->first_name.' '.$student->last_name),'date_of_birth'=>$student->dateOfBirthOrNull(),'grade'=>$headerGrade,
-                'attended_from'=>$rosters->pluck('joined_at')->filter()->min()?->format('Y-m-d'),'attended_to'=>$rosters->contains(fn($m)=>$m->left_on===null)?null:$rosters->pluck('left_on')->filter()->max()?->format('Y-m-d')],
+                'attended_from'=>$rosters->map(fn($m)=>$m->joined_at?->toDateString() ?? ($m->moved_from_group_id!==null?$m->moved_on?->toDateString():null) ?? $m->created_at?->copy()->setTimezone($timezone)->toDateString())->filter()->min(),'attended_to'=>$rosters->contains(fn($m)=>$m->left_on===null)?null:$rosters->pluck('left_on')->filter()->max()?->format('Y-m-d')],
             'years'=>$years,'cumulative'=>Math::totals($all),'method'=>self::METHOD,'points'=>$policy,'generated_at'=>now()->toIso8601String(),'serial'=>null,'issued_at'=>null,'issued_by'=>null];
+    }
+    public function issueIsStale(Masjid $school, Contact $student, ?TranscriptIssue $issue): bool
+    {
+        if (!$issue) return false;
+        if (TranscriptFinal::where('masjid_id',$school->id)->where('contact_id',$student->id)->where('updated_at','>',$issue->issued_at)->exists()) return true;
+        return DB::table('term_grades as tg')->join('report_cards as rc','rc.id','=','tg.report_card_id')
+            ->where('tg.masjid_id',$school->id)->where('rc.masjid_id',$school->id)->where('tg.contact_id',$student->id)
+            ->whereNotNull('tg.published_at')->whereNotNull('rc.published_at')->where('rc.type','report_card')
+            ->where(fn($q)=>$q->where('tg.updated_at','>',$issue->issued_at)->orWhere('tg.published_at','>',$issue->issued_at)->orWhere('rc.published_at','>',$issue->issued_at))->exists();
     }
     private function course(string $name,?string $letter,?int $credit,string $level,array $policy): array
     {
@@ -87,7 +100,7 @@ final class Transcripts
         return DB::transaction(function () use($school,$student,$actor) {
             $locked=Masjid::whereKey($school->id)->lockForUpdate()->firstOrFail(); TranscriptMode::assertEnabled($locked);
             $snapshot=$this->live($locked,$student);
-            foreach ($snapshot['years'] as $year) foreach($year['courses'] as $course) if ($course['credit_hundredths']===null) throw ValidationException::withMessages(['credits'=>['Set credit for every course before issuing an official transcript.']]);
+            foreach ($snapshot['years'] as $year) foreach($year['courses'] as $course) if ($course['letter']!==null && $course['credit_hundredths']===null) throw ValidationException::withMessages(['credits'=>['Set credit for every course with a final letter before issuing an official transcript.']]);
             $serial=(string)Str::uuid(); $snapshot['designation']='Official'; $snapshot['serial']=$serial; $snapshot['issued_at']=now()->toIso8601String();
             $snapshot['issued_by']=\App\Models\User::withTrashed()->whereKey($actor)->value('name');
             $bytes=app(TranscriptPdf::class)->render($snapshot); $path='transcripts/'.$school->id.'/issued/'.$serial.'.pdf';

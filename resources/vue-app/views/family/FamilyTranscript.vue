@@ -6,10 +6,11 @@
             <TranscriptDocument :document="document" :labels="labels" />
             <button class="btn btn-outline-primary" :disabled="busy" @click="download">{{ t('tr_download') }}</button>
             <article v-for="share in shares" :key="share.id" class="border rounded p-3 mt-3">
-                <p>{{ t('tr_consent',share.receiving_school) }}</p>
+                <p v-if="['awaiting_family','pending'].includes(share.status)">{{ t('tr_consent',share.receiving_school) }}</p>
+                <p v-else>{{ t('tr_sent_to',share.receiving_school) }} · {{ t(`tr_${share.status}`) }} {{ share.resolved_on_display }}</p>
                 <button v-if="share.status === 'awaiting_family'" class="btn btn-primary me-2" :disabled="busy" @click="act(share,'consent')">{{ t('tr_agree') }}</button>
-                <p v-else>{{ t('tr_pending') }}</p>
-                <button class="btn btn-outline-secondary" :disabled="busy" @click="act(share,'withdraw')">{{ t('tr_withdraw') }}</button>
+                <p v-else-if="share.status === 'pending'">{{ t('tr_pending') }}</p>
+                <button v-if="['awaiting_family','pending'].includes(share.status)" class="btn btn-outline-secondary" :disabled="busy" @click="act(share,'withdraw')">{{ t('tr_withdraw') }}</button>
             </article>
         </template>
         <button v-else-if="error" class="btn btn-outline-secondary" @click="load">{{ t('cal_retry') }}</button>
@@ -23,7 +24,7 @@ import { useFamilyLang } from '@/views/family/familyI18n';
 import TranscriptDocument from '@/components/classes/TranscriptDocument.vue';
 const props=defineProps<{masjidId:string;groupId:string;membershipId:number}>();
 const {t,lang,dir}=useFamilyLang(); const document=ref<any>(null); const shares=ref<any[]>([]); const error=ref(false); const busy=ref(false); let generation=0; let alive=true;
-const labels=computed(()=>Object.fromEntries(['unofficial','date_of_birth','attended','none','from','file_only','course','level','final','attempted','earned','plain','weighted','cumulative','regular','honors','ap'].map(key=>[key,t(`tr_${key}`)])));
+const labels=computed(()=>Object.fromEntries(['present','not_graded','unofficial','date_of_birth','attended','none','from','file_only','course','level','final','attempted','earned','plain','weighted','cumulative','regular','honors','ap'].map(key=>[key,t(`tr_${key}`)])));
 const url=()=>`/api/family/masjids/${props.masjidId}/groups/${props.groupId}/members/${props.membershipId}/transcript`;
 async function load() {
     const run=++generation; error.value=false; document.value=null; shares.value=[]; busy.value=false;

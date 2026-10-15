@@ -41,9 +41,8 @@ final class TranscriptMath
     {
         $attempted=0; $graded=0; $earned=0; $plain=0; $weighted=0;
         foreach ($courses as $course) {
-            if ($course['credit_hundredths']===null) continue;
+            if (($course['on_transcript'] ?? true)===false || $course['credit_hundredths']===null || $course['letter']===null) continue;
             $credit=$course['credit_hundredths']; $attempted+=$credit;
-            if ($course['letter']===null) continue;
             $graded+=$credit;
             if ($course['passing']) $earned+=$credit;
             $plain+=$credit*$course['points_hundredths'];
