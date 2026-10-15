@@ -279,6 +279,9 @@ class ContactsController extends Controller
     public function merge(\App\Http\Requests\Admin\Contacts\MergeContactRequest $request, $masjid_id, $contact_id)
     {
         $source = Contact::findOrFail($contact_id);   // tenant-scoped
+        if (app(\App\Services\FamilyLedger\FamilyLedger::class)->holdsContact($source)) {
+            return response()->json(['status' => 'failed', 'message' => 'This contact has tuition financial records. Keep this contact so its financial history and guardian authority remain traceable.'], 422);
+        }
 
         $target = $request->filled('target_contact_id')
             ? Contact::findOrFail($request->integer('target_contact_id'))

@@ -65,7 +65,15 @@ class App101OffContractTest extends TestCase
                 'select exists(select * from "'.$table.'" where ('.$condition.')) as "exists"',
             ], $added);
         }
-        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'school_reenrolment_') && !str_contains($q,'school_admission_mails') && !str_contains($q,'member_question_answers') && !str_contains($q,'attendance_absence_mail') && !str_contains($q,'term_grades') && !str_contains($q,'period_attendance_records')));
+        // Financial records are retained; each new table has a separately pinned guarded read.
+        $tuition = array_values(array_filter($sql, fn ($q) => str_contains($q, 'tuition_')));
+        $expected = [];
+        foreach (['tuition_children' => ['contact_id'], 'tuition_guardians' => ['contact_id'], 'tuition_lines' => ['child_contact_id', 'payer_contact_id'], 'tuition_checkouts' => ['payer_contact_id'], 'tuition_mails' => ['guardian_contact_id']] as $table => $columns) {
+            $expected[] = 'select exists (select 1 from "main".sqlite_master where name = \''.$table.'\' and type = \'table\') as "exists"';
+            $expected[] = 'select exists(select * from "'.$table.'" where ('.implode(' or ', array_map(fn ($c) => '"'.$c.'" = ?', $columns)).')) as "exists"';
+        }
+        $this->assertSame($expected, $tuition);
+        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'school_reenrolment_') && !str_contains($q,'school_admission_mails') && !str_contains($q,'tuition_') && !str_contains($q,'member_question_answers') && !str_contains($q,'attendance_absence_mail') && !str_contains($q,'term_grades') && !str_contains($q,'period_attendance_records')));
         $this->assertSame(json_decode(file_get_contents(base_path('tests/fixtures/app101-off-109ce744.json')),true),$out);
     }
 }

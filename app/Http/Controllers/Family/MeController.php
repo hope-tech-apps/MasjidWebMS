@@ -46,6 +46,7 @@ class MeController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => [
+                ...(\App\Services\FamilyLedger\FamilyLedger::enabled(\App\Models\Masjid::find($contact->masjid_id)) ? ['tuition_ledger_enabled' => true] : []),
                 'id' => (int) $contact->id,
                 // The organisation this token is bound to — the same value
                 // `family.tenant` bound the request to, so a client can tell

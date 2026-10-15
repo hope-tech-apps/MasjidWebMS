@@ -424,6 +424,16 @@ class MasjidsController extends Controller
             $response->setData($payload);
         }
 
+        if (! \App\Services\FamilyLedger\FamilyLedger::enabled($org)) {
+            $payload = $response->getData(true);
+            foreach ($payload['data']['groups'] as &$group) {
+                $group['entries'] = array_values(array_filter($group['entries'], fn ($entry) => $entry['key'] !== 'tuition_ledger'));
+            }
+            unset($group);
+            $payload['data']['history'] = array_values(array_filter($payload['data']['history'], fn ($row) => $row['capability'] !== 'tuition_ledger'));
+            $response->setData($payload);
+        }
+
         if (! \App\Support\AttendanceAbsenceSettings::enabled($org)) {
             $payload = $response->getData(true);
             foreach ($payload['data']['groups'] as &$group) {

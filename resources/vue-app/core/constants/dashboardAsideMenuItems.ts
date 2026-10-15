@@ -398,6 +398,12 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         title: 'Applications', to: '/masjid/applications',
         svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="17" rx="2" stroke="white"/><path d="M8 9h8M8 13h8M8 17h5" stroke="white"/></svg>',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'], requiresOrgTypes: ['school'], requiresCapability: 'school_applications'
+        title: 'Family tuition ledger',
+        svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="18" rx="2" stroke="white"/><path d="M8 8h8M8 12h8M8 16h6" stroke="white"/></svg>',
+        to: '/masjid/tuition',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresOrgTypes: ['school'],
+        requiresCapability: 'tuition_ledger'
     },
     {
         title: 'Duty rota',

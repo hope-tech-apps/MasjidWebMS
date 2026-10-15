@@ -251,6 +251,16 @@ class StripeWebhookController extends Controller
         // never changes where an event that used to route elsewhere goes.
         $isCart = ! $isTopUp && ! $isOrder && ! $isRegistration && ! $isFormResponse && CartPaymentService::isCartEvent($object);
 
+        // New tuition metadata never takes an event away from an older money path.
+        if (! $isTopUp && ! $isOrder && ! $isRegistration && ! $isFormResponse && ! $isCart
+            && ! isset($object['metadata']['donation_uuid'])
+            && (isset($object['metadata']['tuition_checkout_uuid'])
+                // A Charge does not carry its PaymentIntent's metadata: a refund finds its tuition payment by the intent id.
+                || ($event['type'] === 'charge.refunded' && app(\App\Services\FamilyLedger\TuitionPayments::class)->ownsRefund($object, $account)))) {
+            app(\App\Support\TenantContext::class)->runWithout(fn () => app(\App\Services\FamilyLedger\TuitionPayments::class)->event((string) $event['type'], $object, $account, $paidAt));
+            return;
+        }
+
         match ($event['type']) {
             'checkout.session.completed' => match (true) {
                 $isTopUp => $this->mealOrderTopUps->handleCheckoutCompleted($object, $account, $paidAt),

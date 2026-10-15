@@ -103,6 +103,11 @@ class MemberAccountDeletion
      * keeps the contact. `table => [columns holding a contacts.id]`.
      */
     public const OFFICE_RECORDS = [
+        'tuition_children' => ['contact_id'],
+        'tuition_guardians' => ['contact_id'],
+        'tuition_lines' => ['child_contact_id', 'payer_contact_id'],
+        'tuition_checkouts' => ['payer_contact_id'],
+        'tuition_mails' => ['guardian_contact_id'],
         'contact_cards' => ['contact_id'],
         'contact_credentials' => ['contact_id'],
         // Written by staff acts on a family login (enable, revoke, merge,
@@ -690,7 +695,7 @@ class MemberAccountDeletion
 
             // These optional logs do not exist in the code-before-migration deployment window.
             // Only a genuinely missing table skips: a failed schema check must stop erasure.
-            if (in_array($table, ['school_reenrolment_answers', 'school_reenrolment_deposits', 'school_admission_mails', 'period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
+            if (in_array($table, ['tuition_children', 'tuition_guardians', 'tuition_lines', 'tuition_checkouts', 'tuition_mails', 'school_reenrolment_answers', 'school_reenrolment_deposits', 'school_admission_mails', 'period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
                 && ! \Illuminate\Support\Facades\Schema::hasTable($table)) continue;
 
             $held = DB::table($table)

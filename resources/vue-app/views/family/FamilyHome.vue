@@ -33,6 +33,8 @@
             </div>
         </div>
 
+        <router-link v-if="tuitionEnabled" class="btn btn-outline-primary mb-3" :to="`/family/${masjidId}/tuition`">{{ t('tuition_title') }}</router-link>
+
         <!-- Honest about what came back, exactly as on the class screen. -->
         <div v-if="translationError" class="alert alert-warning py-2 small">
             {{ tMessageBoth(translationError) }}
@@ -196,10 +198,12 @@ const pwSaved = ref<FamilyMessage | null>(null);
 
 const closePw = () => { pwOpen.value = false; pw.value = ''; pw2.value = ''; pwError.value = null; };
 
+const tuitionEnabled = ref(false);
 const loadMe = async () => {
     try {
         const res = await FamilyApiService.get(`/api/family/masjids/${masjidId.value}/me`);
         hasPassword.value = !!res.data?.data?.has_password;
+        tuitionEnabled.value = res.data?.data?.tuition_ledger_enabled === true;
     } catch {
         // Non-fatal: the panel just offers "Set a password", which is harmless
         // to show to someone who already has one — it changes it.

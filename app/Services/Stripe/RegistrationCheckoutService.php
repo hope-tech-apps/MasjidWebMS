@@ -789,6 +789,12 @@ class RegistrationCheckoutService
         }
     }
 
+    /** Shared hosted direct-charge transport for the family ledger; registration pricing stays above. */
+    public function createDirectCheckout(array $params, string $connectedAccountId, string $idempotencyKey): array
+    {
+        return $this->createCheckoutSession($params, $connectedAccountId, $idempotencyKey);
+    }
+
     // ---------------------------------------------------------------------
     // Stripe seams (thin wrappers; stubbed in tests). The ONLY methods here
     // that touch the live API.

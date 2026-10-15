@@ -1,5 +1,6 @@
 // Type for validating the system routes
 export type SystemRoute =
+    '/masjid/tuition' |
     '/' |
     AuthRoute |
     MasjidDashboardRoute |

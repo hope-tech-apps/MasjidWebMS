@@ -9854,3 +9854,54 @@ Admissions retention/verification corrections: a private capability_overrides.sc
 ## 2026-10-14 - Admissions walk fixes
 
 The owner's walk brief supersedes the initial proposal fallback: propose only grades served by an active current school class; unknown/final/unserved grades start blank. Saved proposals remain frozen and explicit office grade choices remain allowed. One deposit response per child/campaign is enforced regardless of paid state; linked responses cannot become applications even when their form has both uses. Existing response handles remain readable after closing. Families retain the dated answer gate; office paper/phone answers may be recorded late. Reminder requests use distinct UUID batches and an independent mail limiter at the existing pace. The incremental schema guard refuses existing duplicate payment links rather than choosing or deleting a payment. No production data change, real email, payment, deployment or commit is authorized by this fix round.
+## 2026-10-14 — Item 9: scheduled family tuition charges, switched off
+
+Item 9 and DECISIONS.md's rule that Manara does not build a payment scheduler: a fee plan's schedule creates CHARGES on the family ledger (what is owed, on its due date). It never takes money. Every card payment is started by a family in the portal and runs on the school's own connected Stripe account through Stripe Checkout; the ledger records it only from a verified Stripe webhook (idempotent through stripe_webhook_events), never from a browser redirect. Office payments (cash, check, Zelle and the like) are ledger lines only and never look like Stripe payment state. Autopay through Stripe subscriptions (the 2026-09-30 decision) is not in this item; a family on autopay later sees its subscription payments arrive as ledger lines from the same webhooks. Manara still builds no payment scheduler.
+
+Implementation choices: September's tuition folder is research and plans, and
+`.claude/rules/family-ledger.md` explicitly said no implementation existed. This
+build extends T-006 FeePlan with a tuition_schedules relation table. A new ledger
+plan's FeePlan is inactive for registration intake (the schedule has its own
+active flag), so a plan cannot collect a registration payment and then post the
+same scheduled debt. Existing Registration/RegistrationPayment flows are untouched.
+Checkout reuses RegistrationCheckoutService's direct-charge transport. No autopay
+setup, subscription projection or card surcharge is added. Autopay is future work:
+verified invoice events must project RegistrationPayment into the same account,
+with a unique payment key; credits do not change a Stripe subscription's amount.
+
+Sibling order is birth date ascending (eldest first); equal/missing dates use
+contact ID ascending, unknown dates last. Only siblings eligible for the SAME
+plan in the SAME period count. Eldest pays full; younger siblings each receive
+floor(amount_minor * sibling_percent / 100) as their own negative line.
+Yearly due date = school year's first date; term = each dated term's start;
+monthly = chosen day (default 9), clamped to month end, inside the school year.
+Due dates remain due on closed/non-meeting days: tuition is a calendar obligation,
+not an attendance day. No automatic backfill of missed due days. Explicit office
+charges repair a missed sweep with an audit reason. Reminders preview future debt
+without posting it early and allocate existing credits to oldest debt first.
+
+School billing settings own currency/minimum/reminder defaults; accounts retain
+currency and may raise their minimum or override intervals. Currency cannot change
+after any account or scheduled plan exists. No masjids columns. Accounts and their
+children/guardians are explicitly confirmed by the office, never email-matched.
+Every reader and sender requires confirmed guardian edges to EVERY account child,
+including withdrawn children. Custody-edge removal immediately cuts account access.
+This item does not implement payer-only or split-household accounts; the office
+must keep separate families separate. A contact with tuition history cannot be
+merged, because rewriting immutable financial attribution would obscure custody.
+
+The default-off tuition_ledger grant hides every new surface. Turning it off stops
+new charges, checkouts and emails. Already-opened Checkout payments and refunds
+still settle from verified events: moved money cannot be discarded by a switch.
+A mismatch against the Checkout amount or balance snapshot is recorded and flagged
+for the office. Wrong account events cannot settle; a currency mismatch fails the
+webhook for reconciliation instead of mixing currencies in one balance.
+
+Verification follow-ups: a term period is keyed by school year and stable term
+position, so replacing a calendar row cannot bill the same period twice. Prepaid
+credits are allocated against upcoming previews before the portal shows a next
+amount; those previews remain read-only. Verified Stripe event time, converted to
+the school timezone, is the payment/refund effective date even if delivered late.
+Office financial posts carry a browser action UUID; retries return the same entry,
+and reuse with changed details is refused. New tuition metadata is considered only
+after every existing money path, including the cart and donation metadata.

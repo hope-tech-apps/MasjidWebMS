@@ -124,6 +124,9 @@ use Illuminate\Support\Facades\Route;
 | updating that list is a failing build, on purpose.
 */
 
+// Tuition adds one explicitly family-initiated Checkout POST behind tuition_ledger.
+// Its redirect is a read only; verified Stripe webhooks alone record card payments.
+
 // --------------------------------------------------------------- signing in
 
 // whereNumber is load-bearing, not tidiness. The per-address throttle bucket is
@@ -211,6 +214,15 @@ Route::prefix('family')
         Route::prefix('masjids/{masjid_id}')->group(function () {
 
             Route::get('/me', [MeController::class, 'show']);
+
+            Route::prefix('tuition')->middleware('capability:tuition_ledger')
+                ->controller(\App\Http\Controllers\Family\TuitionController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::get('/{account_id}', 'show')->whereNumber('account_id');
+                    Route::get('/{account_id}/statement', 'statement')->whereNumber('account_id');
+                    Route::post('/{account_id}/checkout', 'checkout')->whereNumber('account_id')->middleware('throttle:10,1');
+                });
+
 
             // A parent CHOOSING their own password, and removing it. The third
             // and fourth writes in this realm, and the only ones that touch a

@@ -1,0 +1,94 @@
+<template>
+    <main v-if="masjidStore.masjid?.capabilities?.tuition_ledger === true">
+        <h1 class="h4">Family tuition ledger</h1>
+        <p v-if="error" class="alert alert-warning" role="alert">{{ error }}</p><p v-if="notice" class="alert alert-info" role="status">{{ notice }}</p>
+        <p v-if="!cardAvailable">Card payment is not available. Families can use office payments until this school's Stripe account is connected.</p>
+        <div class="d-flex flex-wrap gap-3 align-items-end mb-3"><label><input v-model="overdueOnly" type="checkbox" @change="load" /> Overdue only</label><label>From<input v-model="from" type="date" class="form-control" /></label><label>To<input v-model="to" type="date" class="form-control" /></label><button class="btn btn-outline-primary" :disabled="busy" @click="exportCsv">Export CSV</button></div>
+        <table class="table"><thead><tr><th>Family's children</th><th>Balance</th><th>Overdue</th><th></th></tr></thead><tbody><tr v-for="a in accounts" :key="a.id"><td>{{ a.children.map((c:any) => c.name).join(', ') }}</td><td>{{ money(a.balance_minor, a.currency) }}</td><td>{{ money(a.overdue_minor, a.currency) }}</td><td><button class="btn btn-sm btn-outline-primary" @click="open(a)">Open ledger</button></td></tr></tbody></table>
+        <details class="border rounded p-3 mb-3"><summary>School billing settings</summary>
+            <form class="d-flex flex-wrap gap-2 align-items-end" @submit.prevent="saveSchoolSettings">
+                <label>School currency<select v-model="schoolSettings.currency" class="form-select"><option v-for="c in currencies" :key="c" :value="c">{{ c.toUpperCase() }}</option></select></label>
+                <label>Minimum card payment<input v-model="schoolMinimum" inputmode="decimal" class="form-control" /></label>
+                <label>Reminder days before due<input v-model="schoolSettings.remind_before_days" type="number" min="1" max="60" placeholder="Off" class="form-control" /></label>
+                <label>Reminder days after due<input v-model="schoolSettings.remind_after_days" type="number" min="1" max="60" placeholder="Off" class="form-control" /></label>
+                <button class="btn btn-primary" :disabled="busy">Save school billing settings</button>
+            </form><p>Blank reminder intervals are off. Currency is fixed once accounts or plans exist. Family settings may increase the minimum or override reminder intervals.</p>
+        </details>
+        <details class="border rounded p-3 mb-3"><summary>Open a family account</summary>
+            <p>Select children who share these confirmed guardians. Every guardian must be confirmed for every selected child.</p>
+            <form class="d-flex flex-wrap gap-3 align-items-end" @submit.prevent="createAccount">
+                <label>Children<select v-model="newChildren" multiple required class="form-select"><option v-for="c in childOptions" :key="c.id" :value="c.id">{{ c.name }}</option></select></label>
+                <label>Confirmed guardians<select v-model="newGuardians" multiple required class="form-select"><option v-for="c in guardianOptions" :key="c.id" :value="c.id">{{ c.name }}</option></select></label>
+                <button :disabled="busy" class="btn btn-primary">Open account</button>
+            </form>
+        </details>
+        <section v-if="selected && detail" class="border rounded p-3 mb-4">
+            <h2 class="h5">{{ selected.children.map((c:any) => c.name).join(', ') }}</h2><p>Balance: {{ money(detail.balance_minor, selected.currency) }}</p>
+            <div class="d-flex flex-wrap gap-2 mb-3"><button class="btn btn-outline-primary" :disabled="busy" @click="open(selected)">Apply date range</button><button class="btn btn-outline-primary" :disabled="busy" @click="statement">Download statement PDF</button><button class="btn btn-outline-primary" :disabled="busy || !detail.recipients.some((r:any) => r.eligible && r.address)" @click="sendStatement">Email statement to confirmed guardians</button></div>
+            <p v-for="r in detail.recipients" :key="r.contact_id">{{ r.name }}: {{ r.address || 'No email address' }} <b v-if="!r.eligible">Access blocked: confirm guardianship for every child.</b></p>
+            <p>Opening balance: {{ money(detail.statement.opening_minor, selected.currency) }}</p>
+            <div class="table-responsive"><table class="table"><thead><tr><th>Date / due</th><th>Child</th><th>Entry</th><th>Reason / reference</th><th>Amount</th><th>Recorded by</th><th></th></tr></thead><tbody><tr v-for="l in detail.statement.lines" :key="l.id"><td>{{ l.date }}<br>{{ l.due_on }}</td><td>{{ l.child }}</td><td>#{{ l.id }} {{ l.kind.replaceAll('_',' ') }}<span v-if="l.original_line_id"> (entry #{{ l.original_line_id }})</span><b v-if="l.needs_review" class="text-danger d-block">Office review needed</b></td><td>{{ l.reason }}<br>{{ l.reference }}<br>{{ l.stripe_payment_intent_id }}<br>{{ l.method }}</td><td>{{ money(l.amount_minor, selected.currency) }}</td><td>{{ l.recorded_by }}<br>{{ l.recorded_at }}</td><td><button v-if="['charge','credit','office_payment','sibling_discount'].includes(l.kind) && !detail.statement.lines.some((v:any) => v.kind === 'void' && v.original_line_id === l.id)" class="btn btn-sm btn-outline-danger" :disabled="busy" @click="voidId=l.id">Void</button></td></tr></tbody></table></div>
+            <p>Closing balance: {{ money(detail.statement.closing_minor, selected.currency) }}</p>
+            <form v-if="voidId" class="d-flex gap-2 mb-3" @submit.prevent="voidLine"><label>Reason for voiding entry #{{ voidId }}<input v-model="voidReason" required maxlength="1000" class="form-control" /></label><button class="btn btn-danger" :disabled="busy">Add void entry</button><button type="button" class="btn btn-outline-secondary" @click="voidId=null">Cancel</button></form>
+            <form class="d-flex flex-wrap gap-2 align-items-end mb-3" @submit.prevent="addEntry">
+                <label>Entry<select v-model="entry.kind" class="form-select"><option value="charge">One-off charge / late fee</option><option value="credit">Credit</option><option value="office_payment">Office payment</option></select></label>
+                <label>Amount ({{ selected.currency.toUpperCase() }})<input v-model="entry.amount" inputmode="decimal" required class="form-control" /></label><label>Date / due date<input v-model="entry.effective_on" type="date" required class="form-control" /></label>
+                <label>Child<select v-model="entry.child_contact_id" class="form-select"><option :value="null">Family</option><option v-for="c in selected.children" :key="c.id" :value="c.id">{{ c.name }}</option></select></label>
+                <label v-if="entry.kind==='office_payment'">Method<select v-model="entry.method" required class="form-select"><option v-for="method in options.methods" :key="method" :value="method">{{ method.replaceAll('_',' ') }}</option></select></label>
+                <label>Reference<input v-model="entry.reference" maxlength="255" class="form-control" /></label><label>Reason<input v-model="entry.reason" required maxlength="1000" class="form-control" /></label><button class="btn btn-primary" :disabled="busy">Add entry</button>
+            </form>
+            <p>Correct an office entry by voiding it and entering its replacement. Refund card payments in the school's Stripe dashboard.</p>
+            <form class="d-flex flex-wrap gap-2 align-items-end mb-3" @submit.prevent="saveSettings">
+                <label>Minimum card payment ({{ selected.currency.toUpperCase() }})<input v-model="minimum" inputmode="decimal" class="form-control" /></label>
+                <label>Remind days before due<input v-model="before" type="number" min="1" max="60" placeholder="School default" class="form-control" /></label><label>Remind days after due<input v-model="after" type="number" min="1" max="60" placeholder="School default" class="form-control" /></label><button :disabled="busy" class="btn btn-primary">Save reminders and minimum</button>
+            </form>
+            <h3 class="h6">Email log</h3><table class="table"><thead><tr><th>Kind</th><th>Guardian</th><th>Status</th><th>Queued / sent</th></tr></thead><tbody><tr v-for="m in detail.mails" :key="m.id"><td>{{ m.kind }}</td><td>{{ detail.recipients.find((r:any)=>r.contact_id===m.guardian_contact_id)?.name }}</td><td>{{ m.status }}</td><td>{{ m.created_at }} / {{ m.sent_at }}</td></tr></tbody></table>
+        </section>
+        <details class="border rounded p-3"><summary>Tuition plans and charge schedules</summary>
+            <p>Schedules create amounts owed only. They never charge a card. Each eligible child's charge uses the plan amount per period. Eldest eligible sibling pays full; younger siblings get the percentage discount below. Equal or missing birth dates use contact order.</p>
+            <p>Yearly is due on the first school-year date; per-term is due on each term's start. Monthly uses the due day, clamped to the last day of a shorter month, within the school year. Charges remain due on holidays and weekends.</p>
+            <table class="table"><thead><tr><th>Plan</th><th>Amount</th><th>Schedule</th><th>Sibling discount</th><th></th></tr></thead><tbody><tr v-for="p in plans" :key="p.id"><td>{{ p.plan.label }}</td><td>{{ money(p.plan.amount_minor,p.plan.currency) }}</td><td>{{ p.cadence }} <span v-if="p.cadence==='monthly'">day {{ p.due_day }}</span><details><summary>Due dates</summary>{{ p.periods.map((d:any)=>d.due_on).join(', ') }}</details></td><td>{{ p.sibling_percent }}%</td><td><button v-if="p.is_active" class="btn btn-sm btn-outline-danger" @click="deactivate(p)">Deactivate</button><span v-else>Inactive</span></td></tr></tbody></table>
+            <form class="d-flex flex-wrap gap-2 align-items-end" @submit.prevent="createPlan">
+                <label>Existing offering<select v-model="plan.offering_id" class="form-select" required><option v-for="o in options.offerings" :key="o.id" :value="o.id">{{ o.name }}</option></select></label><label>School year<select v-model="plan.school_year_id" required class="form-select"><option v-for="y in options.years" :key="y.id" :value="y.id">{{ y.label }}</option></select></label>
+                <label>Plan label<input v-model="plan.label" required maxlength="255" class="form-control" /></label><label>Amount per child per period ({{ options.currency?.toUpperCase() }})<input v-model="plan.amount" required inputmode="decimal" class="form-control" /></label>
+                <label>Schedule<select v-model="plan.cadence" class="form-select"><option value="monthly">Monthly</option><option value="term">Per term</option><option value="yearly">Yearly</option></select></label><label>Monthly due day<input v-model="plan.due_day" type="number" min="1" max="31" required class="form-control" /></label><label>Younger sibling discount %<input v-model="plan.sibling_percent" type="number" min="0" max="100" required class="form-control" /></label>
+                <label>Classes<select v-model="plan.group_ids" multiple class="form-select"><option v-for="g in options.groups" :key="g.id" :value="g.id">{{ g.name }}</option></select></label><label>Grades<select v-model="plan.grades" multiple class="form-select"><option v-for="g in options.grades" :key="g" :value="g">{{ g }}</option></select></label><button :disabled="busy" class="btn btn-primary">Create plan</button>
+            </form><p>Choose classes or grades; when both are selected both must match. Plan amounts are immutable. Deactivate and replace for future periods. Review overlapping active plans before saving.</p>
+        </details>
+    </main>
+</template>
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue';
+import { useMasjidStore } from '@/stores/masjidStore';
+import ApiService from '@/core/services/ApiService';
+import type { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
+import { tuitionMinor, tuitionMoney as money, tuitionDecimal as decimal } from '@/core/helpers/tuitionMoney';
+const masjidStore = useMasjidStore();
+const base = computed(() => `/api/admin/masjids/${masjidStore.masjid.id}/tuition`);
+const url = (path = '') => (base.value + path) as BackendApiRoute;
+const currencies=['usd','cad','gbp','eur','aud','nzd','jpy','aed','sar','kwd','bhd','qar'];
+const schoolSettings=ref<any>({currency:'usd',remind_before_days:'',remind_after_days:''}),schoolMinimum=ref('0');
+const busy=ref(false), error=ref(''), notice=ref(''), accounts=ref<any[]>([]), plans=ref<any[]>([]), options=ref<any>({contacts:[], participants:[], guardians:[], methods:[], offerings:[], years:[], groups:[], grades:[]}), selected=ref<any>(null), detail=ref<any>(null), cardAvailable=ref(false), overdueOnly=ref(false);
+const from=ref('2000-01-01'), to=ref(new Date().toISOString().slice(0,10)), newChildren=ref<number[]>([]), newGuardians=ref<number[]>([]), minimum=ref('0'), before=ref<any>(''), after=ref<any>(''), voidId=ref<number|null>(null), voidReason=ref('');
+const entry=ref({idempotency_key:crypto.randomUUID(),kind:'charge',amount:'',effective_on:to.value,reason:'',method:'cash',reference:'',child_contact_id:null as number|null});
+const plan=ref({offering_id:'', school_year_id:'',label:'',amount:'',cadence:'monthly',due_day:9,sibling_percent:0,group_ids:[],grades:[]});
+const childOptions=computed(()=>options.value.contacts.filter((c:any)=>options.value.participants.some((p:any)=>p.contact_id===c.id)));
+const guardianOptions=computed(()=>options.value.contacts.filter((c:any)=>newChildren.value.length && newChildren.value.every(id=>options.value.guardians.some((g:any)=>g.contact_id===c.id && g.guardian_of_contact_id===id))));
+const query=()=>new URLSearchParams({from:from.value,to:to.value}).toString();
+async function run(work:()=>Promise<void>) { if(busy.value)return;busy.value=true;error.value='';notice.value='';try{await work();}catch(e:any){error.value=Object.values(e.response?.data?.errors??{}).flat().join(' ') || e.response?.data?.message || 'The request could not be completed.';}finally{busy.value=false;} }
+async function load(){const r=await ApiService.get(url(overdueOnly.value?'?overdue=1':''));accounts.value=r.data.data.accounts;cardAvailable.value=r.data.data.card_available;}
+async function open(a:any){await run(async()=>{detail.value=(await ApiService.get(url(`/${a.id}?${query()}`))).data.data;selected.value=a;minimum.value=decimal(detail.value.account.minimum_payment_minor,a.currency);before.value=detail.value.account.remind_before_days??'';after.value=detail.value.account.remind_after_days??'';});}
+async function refresh(){await load();if(selected.value){const a=accounts.value.find(a=>a.id===selected.value.id)??selected.value;detail.value=(await ApiService.get(url(`/${a.id}?${query()}`))).data.data;selected.value=a;}}
+async function saveSchoolSettings(){await run(async()=>{const minor=/^0(?:\.0+)?$/.test(schoolMinimum.value)?0:tuitionMinor(schoolMinimum.value,schoolSettings.value.currency);if(minor===null)throw new Error();await ApiService.VueApp.axios.put(url('/settings'),{currency:schoolSettings.value.currency,minimum_payment_minor:minor,remind_before_days:schoolSettings.value.remind_before_days===''?null:schoolSettings.value.remind_before_days,remind_after_days:schoolSettings.value.remind_after_days===''?null:schoolSettings.value.remind_after_days},{headers:{'Content-Type':'application/json'}});options.value=(await ApiService.get(url('/options'))).data.data;notice.value='School billing settings saved.';});}
+async function createAccount(){await run(async()=>{await ApiService.post(url('/accounts'),{children:newChildren.value,guardians:newGuardians.value});newChildren.value=[];newGuardians.value=[];await load();});}
+async function addEntry(){await run(async()=>{const amount=tuitionMinor(entry.value.amount,selected.value.currency);if(amount===null)throw new Error();await ApiService.post(url(`/${selected.value.id}/entries`),{...entry.value,amount_minor:amount});entry.value.idempotency_key=crypto.randomUUID();entry.value.amount='';entry.value.reason='';entry.value.reference='';await refresh();});}
+async function voidLine(){await run(async()=>{await ApiService.post(url(`/${selected.value.id}/entries/${voidId.value}/void`),{reason:voidReason.value});voidId.value=null;voidReason.value='';await refresh();});}
+async function saveSettings(){await run(async()=>{const minor=/^0(?:\.0+)?$/.test(minimum.value)?0:tuitionMinor(minimum.value,selected.value.currency);if(minor===null)throw new Error();await ApiService.VueApp.axios.put(url(`/${selected.value.id}/settings`),{minimum_payment_minor:minor,remind_before_days:before.value===''?null:before.value,remind_after_days:after.value===''?null:after.value},{headers:{'Content-Type':'application/json'}});await refresh();});}
+async function sendStatement(){await run(async()=>{const r=await ApiService.post(url(`/${selected.value.id}/statement`),{from:from.value,to:to.value});await refresh();notice.value=`${r.data.data.queued} statement email(s) queued.`;});}
+async function bytes(path:string,name:string){const r=await ApiService.VueApp.axios.get(url(path),{responseType:'blob'});const objectUrl=URL.createObjectURL(r.data),link=document.createElement('a');link.href=objectUrl;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);}
+async function statement(){await run(()=>bytes(`/${selected.value.id}/statement?${query()}`,'tuition-statement.pdf'));}
+async function exportCsv(){await run(()=>bytes(`/export?${query()}`,'tuition-ledger.csv'));}
+async function createPlan(){await run(async()=>{const amount=tuitionMinor(plan.value.amount,options.value.currency);if(amount===null)throw new Error();await ApiService.post(url('/schedules'),{...plan.value,amount_minor:amount});plans.value=(await ApiService.get(url('/schedules'))).data.data;notice.value='Plan created. It creates debt on the due dates and never takes payment.';});}
+async function deactivate(p:any){await run(async()=>{await ApiService.delete(url(`/schedules/${p.id}`));plans.value=(await ApiService.get(url('/schedules'))).data.data;});}
+onMounted(()=>run(async()=>{if(masjidStore.masjid?.capabilities?.tuition_ledger!==true)return;await load();options.value=(await ApiService.get(url('/options'))).data.data;schoolSettings.value={...options.value.billing_settings,remind_before_days:options.value.billing_settings.remind_before_days??'',remind_after_days:options.value.billing_settings.remind_after_days??''};schoolMinimum.value=decimal(options.value.billing_settings.minimum_payment_minor,options.value.currency);to.value=options.value.school_today;plans.value=(await ApiService.get(url('/schedules'))).data.data;}));
+</script>

@@ -925,3 +925,7 @@ Schedule::command('push:sweep-outcomes')->everyFiveMinutes()->withoutOverlapping
 
 // Unique guardian/day claims protect delivery even if scheduler locks expire.
 Schedule::command('attendance:absence-emails')->everyFiveMinutes()->withoutOverlapping(4);
+
+// Local calendar dates, including non-meeting due dates. Unique ledger/mail keys survive overlapping runs.
+Schedule::command('tuition:charges')->everyFifteenMinutes()->withoutOverlapping(10);
+Schedule::command('tuition:remind')->hourly()->withoutOverlapping(50);

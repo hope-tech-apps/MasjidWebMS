@@ -89,6 +89,11 @@ class MemberAccountDeletionCoverageTest extends TestCase
     public function the_office_and_login_lists_are_exactly_these_tables(): void
     {
         $this->assertSame([
+            'tuition_children' => ['contact_id'],
+            'tuition_guardians' => ['contact_id'],
+            'tuition_lines' => ['child_contact_id', 'payer_contact_id'],
+            'tuition_checkouts' => ['payer_contact_id'],
+            'tuition_mails' => ['guardian_contact_id'],
             'contact_cards' => ['contact_id'],
             'contact_credentials' => ['contact_id'],
             'contact_login_events' => ['contact_id'],

@@ -561,3 +561,10 @@ Reminders use one current guardian contact/email and list all their unanswered c
 ## 2026-10-14 - Admissions walk-fix clarification
 
 The owner's served-grade rule supersedes the earlier initial-proposal assumption that unknown/final grades retain their current labels. A class currently serves the normalized grades on its current participant roster; only active classes at this school count. Reminder confirmation counts eligible guardian emails, matching the existing one-email-per-guardian delivery rule. The existing walk database may have duplicate deposit links, so the additive schema migration refuses them without changing payment records; no live database was inspected.
+## 2026-10-14 — Tuition ledger item 9
+
+- Verified at base 05a3f9e3: September tuition work is design/research, no ledger or custom autopay implementation exists. T-006 remains the registration engine.
+- Due-date choices and sibling ordering are recorded in DECISIONS.md. No automatic catch-up after a missed day: the office can add an explicit charge with a reason. Schedule runners must run on due dates.
+- One school currency is configured in organisation_billing_settings, initially the existing Stripe currency setting. Accounts and FeePlans snapshot it; balances never mix currencies.
+- New non-English tuition labels are machine-drafted, including Arabic; fluent review remains owed. Existing locale review flags are unchanged.
+- Real Stripe TEST mode, webhook endpoint subscriptions, real mail, MySQL locking and production behaviour are unverified locally. No network is available.

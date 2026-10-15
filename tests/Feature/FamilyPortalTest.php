@@ -1961,6 +1961,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback',
             'POST /api/family/masjids/{masjid_id}/translations',
+            'POST /api/family/masjids/{masjid_id}/tuition/{account_id}/checkout',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/reactions/{reaction}',

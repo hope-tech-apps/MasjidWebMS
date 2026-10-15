@@ -1227,6 +1227,8 @@ final class WixContactImport
                 continue;
             }
 
+            if (str_starts_with($table, 'tuition_') && ! \Illuminate\Support\Facades\Schema::hasTable($table)) continue;
+
             $query = DB::table($table)->where(function ($q) use ($columns, $contact) {
                 foreach ($columns as $column) {
                     $q->orWhere($column, $contact->id);

@@ -1,16 +1,16 @@
 # Family ledger (tuition): the rules
 
-DECISIONS.md 2026-09-30, "Tuition autopay and the family ledger". **Design rules: until slice 1A lands, no code implements this.** Each rule names the guard that will enforce it, and each money guard must have a named test that fails when the guard is removed.
+DECISIONS.md 2026-09-30, "Tuition autopay and the family ledger", amended by item 9 on 2026-10-14. **Item 9 now implements the default-off tuition ledger; its exact current contract is docs/tuition-ledger.md. The remaining September autopay/split-household rules below are future design, not shipped behaviour.** Each rule names the guard that will enforce it, and each money guard must have a named test that fails when the guard is removed.
 
 ## What the ledger is
 
-- **The school's own account of what a family owes.** Manara never holds money. A ledger row never causes money to move, and nothing posts on a clock. The ledger holds three kinds of rows:
+- **The school's own account of what a family owes.** Manara never holds money. A ledger row never causes money to move, and scheduled item 9 posts create debt only, never collect payments. The ledger holds three kinds of rows:
   - charges the school expects;
   - money the office received outside Stripe;
-  - Stripe payments the webhook already recorded, mirrored from `registration_payments`.
-- **Append-only.** Entries are never updated or deleted, and a correction is a reversal with a required reason. The one sanctioned exception is `FamilyLedger::carryOnMerge`, which re-points contact ids in a contact merge. There is no MySQL trigger: an absolute delete refusal once blocked account erasure.
+  - Stripe payments the webhook already recorded, from verified family Checkout webhooks; subscription projection from `registration_payments` remains future work.
+- **Append-only.** Entries are never updated or deleted, and a correction is a reversal with a required reason. Item 9 refuses contact merges involving tuition history; the proposed `carryOnMerge` is not implemented. There is no MySQL trigger: an absolute delete refusal once blocked account erasure.
 - **One writer.** `App\Services\FamilyLedger\FamilyLedger` is the only class that creates entries.
-- **Integer minor units, signed**, with a `currency` on every entry and account. Amounts arrive as strings and are parsed once by `Money::toMinor`.
+- **Integer minor units, signed**, with a `currency` on every entry and account. Item 9 parses decimal UI strings once with tuitionMinor; PHP receives validated integer minor units.
 - **Idempotency.** `(masjid_id, idempotency_key)` is unique. The keys:
 
 | Row | Key |

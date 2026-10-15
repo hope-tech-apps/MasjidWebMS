@@ -291,6 +291,9 @@ class StudentAllergiesTest extends TestCase
         $intakeYear = \App\Models\SchoolYear::create(['masjid_id'=>$this->school->id,'label'=>'Practice intake year','first_day'=>'2027-08-01','last_day'=>'2028-06-30']);
         $intake = \App\Models\SchoolReenrolment::create(['masjid_id'=>$this->school->id,'school_year_id'=>$intakeYear->id,'opens_on'=>'2026-01-01','closes_on'=>'2026-12-31']);
         $params['reenrolment_id'] = $intake->id;
+        $this->school->forceFill(['capability_overrides'=>array_merge($this->school->getRawOriginal('capability_overrides') ? json_decode($this->school->getRawOriginal('capability_overrides'),true) : [], ['tuition_ledger'=>true])])->save();
+        $account=app(\App\Services\FamilyLedger\FamilyLedger::class)->open($this->school,[$this->child->id],[$this->parent->id],$this->office->id);
+        $params['account_id']=$account->id;
         $familyToken=$this->parent->createFamilyToken()->plainTextToken;
         $childToken=$this->parent->createStudentHandoffToken($this->member->id)->plainTextToken;
         $memberToken=$this->child->createMemberToken()->plainTextToken;
@@ -313,7 +316,7 @@ class StudentAllergiesTest extends TestCase
             $this->assertSame(str_contains($uri,'/reenrolment/') ? 403 : (str_ends_with($uri,'/member-questions') ? 404 : 200),$response->getStatusCode(),$uri);
             $body=($response->baseResponse instanceof \Symfony\Component\HttpFoundation\StreamedResponse || $response->baseResponse instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse) ? $response->streamedContent() : (string)$response->getContent();
             $this->assertNotSame('', $body, $uri);
-            if (str_ends_with($uri,'/pdf')) {
+            if (str_ends_with($uri,'/pdf') || str_contains((string) $response->headers->get('Content-Type'), 'application/pdf')) {
                 $this->assertStringStartsWith('%PDF-', $body, $uri);
                 // PDF text may be compressed: inspect decoded Flate streams as well as the bytes.
                 preg_match_all('/stream\r?\n(.*?)\r?\nendstream/s', $body, $streams);

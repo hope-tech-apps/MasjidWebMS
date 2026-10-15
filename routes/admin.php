@@ -1401,6 +1401,24 @@ Route::prefix('admin')->group(function () {
                         Route::get('/members/{membership_id}/grades', 'forMember')->middleware('permission:view contacts');
                     });
 
+                Route::prefix('{masjid_id}/tuition')->middleware(['capability:tuition_ledger', 'permission:manage donations', 'permission:manage contacts'])
+                    ->controller(\App\Http\Controllers\AdminDashboard\TuitionController::class)->group(function () {
+                        Route::get('/', 'index');
+                        Route::get('/options', 'options');
+                        Route::put('/settings', 'schoolSettings');
+                        Route::get('/export', 'export');
+                        Route::get('/schedules', 'schedules');
+                        Route::post('/schedules', 'storeSchedule');
+                        Route::delete('/schedules/{schedule_id}', 'deactivate');
+                        Route::post('/accounts', 'storeAccount');
+                        Route::get('/{account_id}', 'show')->whereNumber('account_id');
+                        Route::put('/{account_id}/settings', 'settings')->whereNumber('account_id');
+                        Route::post('/{account_id}/entries', 'entry')->whereNumber('account_id');
+                        Route::post('/{account_id}/entries/{line_id}/void', 'void')->whereNumber('account_id')->whereNumber('line_id');
+                        Route::get('/{account_id}/statement', 'statement')->whereNumber('account_id');
+                        Route::post('/{account_id}/statement', 'send')->whereNumber('account_id');
+                    });
+
                 Route::prefix('{masjid_id}/report-card-criteria')->middleware(['capability:report_card_criteria', 'permission:manage contacts'])
                     ->controller(\App\Http\Controllers\AdminDashboard\ReportCardCriteriaController::class)->group(function () {
                         Route::get('/', 'show');

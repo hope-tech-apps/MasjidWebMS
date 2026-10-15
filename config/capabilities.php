@@ -315,6 +315,16 @@ return [
         'listed_when_off' => false, 'catalogue_when_off' => false,
     ],
 
+    'tuition_ledger' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Family tuition ledger',
+        'description' => 'Scheduled tuition charges, family balances and statements, hosted card payments and office payment records.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+        'catalogue_when_off' => false,
+    ],
+
     'attendance_absence_emails' => [
         'kind' => 'grant',
         'group' => 'school',

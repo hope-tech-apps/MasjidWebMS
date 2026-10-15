@@ -247,6 +247,8 @@ return [
     | into a failed transaction half way through the run.
     */
     'null_columns' => [
+        'tuition_lines' => ['reference', 'stripe_payment_intent_id'],
+        'tuition_checkouts' => ['stripe_session_id', 'checkout_url'],
         'push_send_groups' => ['subscription_ids'], // frozen handset audience; also covered by drop_rows
 
         'users' => [
@@ -461,6 +463,8 @@ return [
     | unconditionally because it exists to FORCE a state, not to mask a value.
     */
     'anonymise' => [
+        'tuition_lines' => ['reason' => 'label:Financial entry', 'recorded_by_label' => 'label:Staff'],
+        'tuition_checkouts' => ['stripe_account_id' => 'label:Disconnected account'],
         'timetable_period_sets' => ['name' => 'label:Period set'],
         'timetable_periods' => ['name' => 'label:Period'],
         'timetable_rooms' => ['name' => 'label:Room', 'name_key' => 'label:Room'],
