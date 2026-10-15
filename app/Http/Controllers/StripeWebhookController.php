@@ -28,6 +28,7 @@ use App\Support\GivingSwitch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -428,12 +429,13 @@ class StripeWebhookController extends Controller
      * `event.account` no longer lets the platform act on it. Clear the charges and payouts
      * flags of the live organisation(s) holding it, so FormChargeAccount (and
      * canAcceptDonations()) stop offering card payments on an account nothing can be
-     * charged on. The account id itself is kept: pinned pages still name it.
+     * charged on. Clear the organisation link; payment rows retain their pinned
+     * account references and the history records the disconnection.
      *
      * The disconnection is RECORDED (`masjids.stripe_deauthorized_at`, Stripe's time for
      * the event), because Stripe does not order deliveries: an account.updated queued or
      * retried from before the disconnect, landing after this, would otherwise turn the
-     * flags back on. Only an update Stripe created after it (a reconnect) does.
+     * flags back on. The cleared link requires an explicit office reconnection.
      * FormResponseCheckoutService stamps the same column when Stripe refuses a pinned page
      * this event never arrived for. Logged at warning.
      */
@@ -446,17 +448,29 @@ class StripeWebhookController extends Controller
         }
 
         $at = self::eventCreated($event) ?? now()->getTimestamp();
-        $holders = Masjid::query()->where('stripe_account_id', $account)->get();
+        $holders = DB::transaction(function () use ($account, $at) {
+            $holders = Masjid::withTrashed()->where('stripe_account_id', $account)->orderBy('id')->lockForUpdate()->get();
+            $cleared = collect();
+            foreach ($holders as $holder) {
+                // A delayed disconnect from the previous grant cannot undo an
+                // explicit office relink completed after Stripe created that event.
+                $lastLink = \App\Models\StripeConnectHistory::withoutMasjidScope()
+                    ->where('masjid_id', $holder->id)->latest('id')->first();
+                if ($lastLink?->action === 'link' && $at < $lastLink->created_at->getTimestamp()) {
+                    continue;
+                }
+                $stamp = max($at, self::deauthorizedAt($holder) ?? 0);
+                $holder->forceFill([
+                    'stripe_deauthorized_at' => Carbon::createFromTimestampUTC($stamp)->format('Y-m-d H:i:s'),
+                ]);
+                app(\App\Services\Stripe\StripeConnectOAuthService::class)->clear($holder, $account, 'deauthorized');
+                $cleared->push($holder);
+            }
+            return $cleared;
+        });
 
-        foreach ($holders as $holder) {
-            // Never moved earlier: a later stamp (a refused page seen first) already covers this.
-            $stamp = max($at, self::deauthorizedAt($holder) ?? 0);
-
-            $holder->forceFill([
-                'stripe_charges_enabled' => false,
-                'stripe_payouts_enabled' => false,
-                'stripe_deauthorized_at' => Carbon::createFromTimestampUTC($stamp)->format('Y-m-d H:i:s'),
-            ])->save();
+        if ($holders->isEmpty()) {
+            return;
         }
 
         Log::warning('An organisation disconnected the platform from its Stripe account; its card payments are switched off.', [

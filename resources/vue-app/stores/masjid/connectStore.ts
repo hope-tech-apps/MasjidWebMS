@@ -129,6 +129,21 @@ export const useConnectStore = defineStore('connectStore', () => {
         throw new Error('Stripe did not return an onboarding link. Please try again.');
     }
 
+    async function startExistingAccount(): Promise<string> {
+        const id = masjidId();
+        if (!id) throw new Error('Organisation not specified.');
+        const res = await ApiService.post(`/api/admin/masjids/${id}/connect/oauth`, {});
+        if (res.data?.status === 'success' && res.data?.data?.authorize_url) return res.data.data.authorize_url;
+        throw new Error('Stripe did not return an account linking page. Please try again.');
+    }
+
+    async function unlinkAccount(): Promise<void> {
+        const id = masjidId();
+        if (!id) throw new Error('Organisation not specified.');
+        const res = await ApiService.delete(`/api/admin/masjids/${id}/connect/oauth` as BackendApiRoute);
+        if (res.data?.status !== 'success') throw new Error('Could not unlink the Stripe account. Please try again.');
+    }
+
     // ------------------------------------------------ form card payments through another org
     //
     // DECISIONS.md 2026-09-15. A child program organisation's FORM card payments may go
@@ -215,6 +230,8 @@ export const useConnectStore = defineStore('connectStore', () => {
         connectStatus,
         fetchStatus,
         startOnboarding,
+        startExistingAccount,
+        unlinkAccount,
         fetchFormsCardAccount,
         setFormsCardAccount,
         revokeFormsCardFor

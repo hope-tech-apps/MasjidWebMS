@@ -1879,6 +1879,8 @@ Route::prefix('admin')->group(function () {
                 // payments depend on this account too.
                 Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
                     Route::post('/onboarding', 'startOnboarding')->middleware('permission:manage donations');
+                    Route::post('/oauth', [\App\Http\Controllers\StripeConnectOAuthController::class, 'start'])->middleware('permission:manage donations');
+                    Route::delete('/oauth', [\App\Http\Controllers\StripeConnectOAuthController::class, 'unlink'])->middleware('permission:manage donations');
                     Route::get('/status', 'status')->middleware('permission:manage donations');
                     // The holder's revoke (forms-card-for/{child_id}) is registered
                     // ABOVE this group, outside `crm`: see the note there.

@@ -46,6 +46,7 @@ Route::get('/robots.txt', function () {
  * Declared BEFORE the SPA catch-all below, which would otherwise swallow them.
  */
 Route::middleware('throttle:20,1')->group(function () {
+    Route::get('/connect/oauth/callback', [\App\Http\Controllers\StripeConnectOAuthController::class, 'complete'])->name('connect.oauth.callback');
     Route::get('/connect/{masjid_id}/return', [ConnectOnboardingLandingController::class, 'complete'])
         ->whereNumber('masjid_id')
         ->name('connect.return');

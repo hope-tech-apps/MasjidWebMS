@@ -96,6 +96,8 @@ return [
     | The value is the reason, printed by `--dry-run`.
     */
     'drop_rows' => [
+        'stripe_connect_oauth_states' => 'Single-use linking credentials and staff attribution must never survive a staging copy.',
+        'stripe_connect_histories' => 'Stripe account suffixes and staff linking attribution are production financial history.',
         'transcript_received' => 'Immutable snapshots and private file pointers include child names and dates of birth; all receiving copies are PII.',
         'transcript_share_requests' => 'Child headers, consent evidence and guardian/office histories are private; delete before issues.',
         'transcript_issues' => 'Official JSON and private PDF pointers contain student identity and academic records.',

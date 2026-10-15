@@ -105,6 +105,14 @@ class StripeConnectController extends Controller
                 // child's own stripe_account_id above stays its own (NULL).
                 'forms_card_via' => FormsCardAccountController::viaSummary($masjid),
                 'forms_card_for' => FormsCardAccountController::forSummary($masjid),
+                ...(\App\Services\Stripe\StripeConnectOAuthService::enabled() ? ['oauth' => [
+                    'enabled' => true,
+                    'history' => \App\Models\StripeConnectHistory::with('actor:id,name')->where('masjid_id', $masjid->id)->latest('id')->limit(20)->get()->map(fn ($row) => [
+                        'action' => $row->action, 'account_last4' => $row->account_last4,
+                        'actor' => $row->actor?->name,
+                        'at' => $row->created_at->toIso8601String(),
+                    ])->all(),
+                ]] : []),
             ],
         ], Response::HTTP_OK);
     }

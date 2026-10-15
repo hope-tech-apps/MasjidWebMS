@@ -112,6 +112,12 @@ class StripeConnectService
         return $masjid->refresh();
     }
 
+    /** Read capabilities before an OAuth claim takes database locks. */
+    public function readAccountStatus(string $accountId): array
+    {
+        return $this->retrieveAccount($accountId);
+    }
+
     // ---------------------------------------------------------------------
     // Stripe seams (thin wrappers; the only methods that hit the live API).
     // ---------------------------------------------------------------------

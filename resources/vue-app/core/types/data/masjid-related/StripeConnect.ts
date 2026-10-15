@@ -27,6 +27,10 @@ export type FormsCardVia = {
 
 /** GET /api/admin/masjids/{masjid_id}/connect/status → data */
 export type ConnectStatus = {
+    oauth?: {
+        enabled: boolean;
+        history: { action: string; account_last4: string; actor: string | null; at: string }[];
+    };
     /** null until the first onboarding call creates the connected account. */
     stripe_account_id: string | null;
     /** The account can take donations. */

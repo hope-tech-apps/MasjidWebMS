@@ -592,3 +592,7 @@ On the transcript is a class-subject setting, alongside credit and level, matchi
 ## 2026-10-15 — Student sign-in walk fixes
 
 Class-slip name defaults apply when creating an account; later slips preserve any existing username because the office can edit it and the schema does not distinguish a generated name from an office choice. Unusable or shorter-than-three-character cleaned names use a readable student fallback. Student date labels are English, matching the existing English-only portal; family field labels retain their language while the server time label uses the requested English format. Calendar day values remain dates in the school timezone and are never treated as UTC instants.
+
+## 2026-10-15 — Existing Stripe OAuth
+
+The brief's Stripe documentation quotations are owner-supplied evidence, not independently fetched in this network-free build. Locally faked OAuth/Stripe and SQLite do not verify provider eligibility, real callback/session cookies, MySQL DDL/locking, webhook endpoint subscriptions or tuition direct-charge/refund settlement. A duplicate-account grant's deauthorization is platform-wide and can disconnect its existing holder; the brief explicitly requires this cleanup, and the verified webhook is the holder's reconciliation path. No real customer or account identifiers are added.

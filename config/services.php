@@ -129,6 +129,8 @@ return [
     ],
 
     'stripe' => [
+        'connect_oauth_enabled' => env('STRIPE_CONNECT_OAUTH_ENABLED', false),
+        'connect_client_id' => env('STRIPE_CONNECT_CLIENT_ID', ''),
         // Publishable + secret API keys (test-mode until the org goes live).
         'key' => env('STRIPE_KEY'),
         'secret' => env('STRIPE_SECRET'),

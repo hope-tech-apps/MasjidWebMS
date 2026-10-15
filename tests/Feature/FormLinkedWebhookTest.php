@@ -289,7 +289,8 @@ class FormLinkedWebhookTest extends TestCase
         $holder = $this->holder->fresh();
         $this->assertFalse((bool) $holder->stripe_charges_enabled);
         $this->assertFalse((bool) $holder->stripe_payouts_enabled);
-        $this->assertSame(self::HOLDER_ACCOUNT, $holder->stripe_account_id, 'the account id stays: pinned pages still name it');
+        $this->assertNull($holder->stripe_account_id, 'the office must explicitly link again; payment pins remain on their own rows');
+        $this->assertDatabaseHas('stripe_connect_histories', ['masjid_id' => $holder->id, 'action' => 'deauthorized', 'actor_user_id' => null]);
         $this->assertNotNull($holder->stripe_deauthorized_at, 'the disconnection is recorded');
         $this->assertNull(FormChargeAccount::for($this->biss->fresh()), 'BISS card payment fails closed');
         $this->assertFalse($holder->canAcceptDonations());
@@ -307,7 +308,7 @@ class FormLinkedWebhookTest extends TestCase
     // ---------------------------------------------------------- refunds and disputes (D10)
 
     #[Test]
-    public function an_account_update_created_before_the_disconnect_never_turns_card_payments_back_on_and_a_later_one_does(): void
+    public function account_updates_cannot_restore_a_link_cleared_by_deauthorization(): void
     {
         $bystander = $this->makeOrg('Bystander', ['stripe_account_id' => self::OTHER_ACCOUNT, 'stripe_charges_enabled' => false]);
         $disconnectedAt = time() - 600;
@@ -330,33 +331,14 @@ class FormLinkedWebhookTest extends TestCase
         $this->assertNotNull($holder->stripe_deauthorized_at);
         $this->assertNull(FormChargeAccount::for($this->biss->fresh()), 'BISS card payment stays off');
 
-        Log::shouldHaveReceived('warning')
-            ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'arrived late')
-                && ($context['account'] ?? null) === self::HOLDER_ACCOUNT)
-            ->twice();
-
-        // Connected again: an update Stripe created after the disconnection.
+        // A later account.updated is not an explicit office link either.
         $this->postWebhook($this->accountUpdated(self::HOLDER_ACCOUNT, $disconnectedAt + 300, true))->assertOk();
-
-        $holder = $this->holder->fresh();
-        $this->assertTrue((bool) $holder->stripe_charges_enabled);
-        $this->assertNull($holder->stripe_deauthorized_at);
-        $this->assertNotNull(FormChargeAccount::for($this->biss->fresh()));
-
-        Log::shouldHaveReceived('warning')
-            ->withArgs(fn (string $message) => str_contains($message, 'follow Stripe again'))
-            ->once();
-
-        // From then on it follows Stripe as before, like every account never disconnected.
-        $this->postWebhook($this->accountUpdated(self::HOLDER_ACCOUNT, $disconnectedAt - 900, false))->assertOk();
+        $this->assertNull($this->holder->fresh()->stripe_account_id);
         $this->assertFalse((bool) $this->holder->fresh()->stripe_charges_enabled);
+        $this->assertDatabaseCount('stripe_connect_histories', 1);
 
         $this->postWebhook($this->accountUpdated(self::OTHER_ACCOUNT, $disconnectedAt - 900, true))->assertOk();
         $this->assertTrue((bool) $bystander->fresh()->stripe_charges_enabled);
-
-        Log::shouldHaveReceived('warning')
-            ->withArgs(fn (string $message) => str_contains($message, 'arrived late'))
-            ->twice();
     }
 
     #[Test]

@@ -96,9 +96,13 @@
                             setup takes a few minutes and Stripe walks you through it.
                         </p>
                     </template>
-                    <button class="btn btn-primary" :disabled="startingOnboarding" @click="beginOnboarding">
+                    <button class="btn btn-primary" :disabled="startingOnboarding" @click="beginOnboarding()">
                         <span v-if="startingOnboarding" class="spinner-border spinner-border-sm me-1"></span>
-                        Connect with Stripe
+                        {{ connectStatus.oauth?.enabled ? 'Create a new account' : 'Connect with Stripe' }}
+                    </button>
+                    <button v-if="connectStatus.oauth?.enabled" class="btn btn-outline-primary ms-2"
+                        :disabled="startingOnboarding" @click="beginOnboarding(true)">
+                        Link an existing Stripe account
                     </button>
                 </div>
 
@@ -112,7 +116,7 @@
                         A Stripe account exists, but Stripe still needs details before it can
                         {{ takesGifts ? 'take donations' : 'take card payments' }}. Resuming opens a fresh Stripe form where you left off.
                     </p>
-                    <button class="btn btn-primary" :disabled="startingOnboarding" @click="beginOnboarding">
+                    <button class="btn btn-primary" :disabled="startingOnboarding" @click="beginOnboarding()">
                         <span v-if="startingOnboarding" class="spinner-border spinner-border-sm me-1"></span>
                         Resume onboarding
                     </button>
@@ -144,6 +148,19 @@
                     <p v-else class="text-muted small mb-0">
                         {{ takesGifts ? 'Donations' : 'Card payments' }} are being accepted and Stripe is paying the balance out.
                     </p>
+                </div>
+
+                <div v-if="connectStatus.oauth?.enabled" class="border-top pt-3 mt-3">
+                    <button v-if="connectStatus.stripe_account_id" class="btn btn-outline-danger btn-sm"
+                        :disabled="unlinking" @click="unlinkAccount">Unlink Stripe account</button>
+                    <p v-if="unlinkError" class="text-danger small mt-2" role="alert">{{ unlinkError }}</p>
+                    <p v-if="unlinkNotice" class="text-success small mt-2" role="status">{{ unlinkNotice }}</p>
+                    <ul v-if="connectStatus.oauth.history?.length" class="small mt-3 mb-0">
+                        <li v-for="(entry, index) in connectStatus.oauth.history" :key="index">
+                            {{ historyAction(entry.action) }} account ending {{ entry.account_last4 }}
+                            by {{ entry.actor || 'Stripe or removed staff' }} on {{ historyTime(entry.at) }}
+                        </li>
+                    </ul>
                 </div>
 
                 <!--
@@ -255,6 +272,9 @@ const takesGifts = computed<boolean>(() => masjidStore.orgType === 'masjid'
 const checking = ref(true);            // very first status check, nothing rendered yet
 const refreshing = ref(false);         // subsequent re-checks, current state stays visible
 const startingOnboarding = ref(false);
+const unlinking = ref(false);
+const unlinkError = ref('');
+const unlinkNotice = ref('');
 const forbidden = ref(false);          // 403 → the panel renders nothing at all
 const statusError = ref('');
 const onboardingError = ref('');
@@ -353,7 +373,7 @@ const revoke = async (org: FormsCardOrg): Promise<void> => {
  * opened at all, a direct window.open is attempted as a fallback before giving
  * up with a message — a retry mints a fresh link, so nothing is lost.
  */
-const beginOnboarding = async (): Promise<void> => {
+const beginOnboarding = async (existing = false): Promise<void> => {
     onboardingError.value = '';
     onboardingLaunched.value = false;
 
@@ -361,7 +381,7 @@ const beginOnboarding = async (): Promise<void> => {
 
     startingOnboarding.value = true;
     try {
-        const url = await connectStore.startOnboarding();
+        const url = existing ? await connectStore.startExistingAccount() : await connectStore.startOnboarding();
 
         if (tab && !tab.closed) {
             tab.location.href = url;
@@ -384,6 +404,31 @@ const beginOnboarding = async (): Promise<void> => {
         }
     } finally {
         startingOnboarding.value = false;
+    }
+};
+const historyLabels: Record<string, string> = { link: 'Linked', unlink: 'Unlinked', deauthorized: 'Stripe disconnected' };
+const historyAction = (action: string): string => historyLabels[action] ?? action;
+const historyTime = (value: string): string => new Date(value).toLocaleString();
+
+const unlinkAccount = async (): Promise<void> => {
+    if (unlinking.value) return;
+    const answer = await Swal.fire({
+        icon: 'warning', titleText: 'Unlink this Stripe account?',
+        text: 'Card payments will stop for this organisation and any organisations using this account. Payments already made remain in the ledger. Link an account again before accepting more card payments.',
+        showCancelButton: true, confirmButtonText: 'Unlink account', cancelButtonText: 'Keep account'
+    });
+    if (!answer.isConfirmed) return;
+    unlinkError.value = '';
+    unlinkNotice.value = '';
+    unlinking.value = true;
+    try {
+        await connectStore.unlinkAccount();
+        unlinkNotice.value = 'Stripe account unlinked.';
+        await loadStatus();
+    } catch (e) {
+        unlinkError.value = envelopeMessage(e);
+    } finally {
+        unlinking.value = false;
     }
 };
 </script>
