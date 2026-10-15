@@ -192,7 +192,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function a_late_started_prior_term_card_uses_its_period_after_a_draft_applies(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin();
         $editor=ReportCardCriteria::editor($school,$admin);
         $earlier=['Quarter one maths','Quarter one reasoning','Quarter one fluency'];
@@ -204,7 +204,7 @@ class ReportCardCriteriaTest extends TestCase
         $unfinishedRows=ReportCardCriteria::marks($inProgress)->toArray();
         $next=['Quarter two maths','Quarter two reasoning','Quarter two fluency','Quarter two geometry','Quarter two data'];
         $this->edit($school,$this->mathCriteria($editor,$next),$admin,true);
-        $this->travelTo(now()->setDate(2026,11,1));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         $this->assertSame($next,ReportCardCriteria::template($school,'1st')['subjects']['Mathematics']);
         $member=$this->member($school);
         $late=$service->prepare($member,'report_card','2026-2027',1);
@@ -219,7 +219,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function two_applied_drafts_keep_late_q1_and_q2_cards_and_full_band_versions_recoverable(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin();
         $year=SchoolYear::where('masjid_id',$school->id)->firstOrFail();
         $q3=SchoolTerm::create(['masjid_id'=>$school->id,'school_year_id'=>$year->id,'name'=>'Term 3','position'=>3,'starts_on'=>'2027-02-01','ends_on'=>'2027-04-30']);
@@ -233,7 +233,7 @@ class ReportCardCriteriaTest extends TestCase
         $editor['bands'][2]['name']='Q2 upper grades';
         $editor['bands'][2]['id']=null;
         $this->edit($school,$this->mathCriteria($editor,['Q2 maths']),$admin,true);
-        $this->travelTo(now()->setDate(2026,11,1));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         $editor=ReportCardCriteria::editor($school,$admin);
         $q2Band=$editor['bands'][2]['id'];
         $this->assertNotSame($q1Band,$q2Band);
@@ -241,7 +241,7 @@ class ReportCardCriteriaTest extends TestCase
         $editor['bands'][2]['name']='Q3 upper grades';
         $this->edit($school,$this->mathCriteria($editor,['Q3 maths']),$admin,true);
         // The first activation read is late too, after Q3 has already started.
-        $this->travelTo(now()->setDate(2027,2,4));
+        $this->travelTo(\Carbon\Carbon::parse('2027-02-04 16:00:00', 'UTC'));
         $service=app(ReportCardService::class); $member=$this->member($school);
         foreach ([1=>['Q1 maths',$q1Band,ReportCardTemplate::LEARNING_BEHAVIOURS],2=>['Q2 maths',$q2Band,['Q2 behaviour']],3=>['Q3 maths',$q2Band,['Q3 behaviour']]] as $term=>$expected) {
             $card=$service->prepare($member,'progress','2026-2027',$term);
@@ -264,14 +264,14 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function without_dated_terms_late_cards_use_their_own_school_year_including_a_named_year(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $admin=$this->admin();
         SchoolYear::create(['masjid_id'=>$school->id,'label'=>'Earlier school year','first_day'=>'2026-08-15','last_day'=>'2027-06-15']);
         SchoolYear::create(['masjid_id'=>$school->id,'label'=>'Next school year','first_day'=>'2027-08-15','last_day'=>'2028-06-15']);
         $editor=ReportCardCriteria::editor($school,$admin);
         $editor=$this->edit($school,$this->mathCriteria($editor,['Earlier year maths']),$admin);
         $this->edit($school,$this->mathCriteria($editor,['Next year maths']),$admin,true);
-        $this->travelTo(now()->setDate(2027,8,15));
+        $this->travelTo(\Carbon\Carbon::parse('2027-08-15 16:00:00', 'UTC'));
         ReportCardCriteria::editor($school,$admin);
         $service=app(ReportCardService::class); $member=$this->member($school);
         foreach (['2026-2027','Earlier school year'] as $label) {
@@ -288,11 +288,11 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function the_august_rollover_without_calendar_years_keeps_prior_year_criteria(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
         $editor=$this->edit($school,$this->mathCriteria($editor,['Earlier year']),$admin);
         $this->edit($school,$this->mathCriteria($editor,['Next year']),$admin,true);
-        $this->travelTo(now()->setDate(2027,8,1));
+        $this->travelTo(\Carbon\Carbon::parse('2027-08-01 16:00:00', 'UTC'));
         $service=app(ReportCardService::class); $member=$this->member($school);
         foreach (['2026-2027'=>'Earlier year','2027-2028'=>'Next year'] as $year=>$expected) {
             $card=$service->prepare($member,'report_card',$year,1);
@@ -304,10 +304,10 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function immediate_edits_in_a_later_term_do_not_replace_an_earlier_terms_configuration(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
         $this->edit($school,$this->mathCriteria($editor,['Earlier maths']),$admin);
-        $this->travelTo(now()->setDate(2026,11,2));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-02 16:00:00', 'UTC'));
         $editor=ReportCardCriteria::editor($school,$admin);
         $this->edit($school,$this->mathCriteria($editor,['Later maths']),$admin);
         $card=app(ReportCardService::class)->prepare($this->member($school),'report_card','2026-2027',1);
@@ -331,13 +331,13 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function the_existing_unversioned_configuration_is_preserved_before_activating_a_pending_draft(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
         $editor=$this->edit($school,$this->mathCriteria($editor,['Earlier custom maths']),$admin);
         $this->edit($school,$this->mathCriteria($editor,['Future maths']),$admin,true);
         // Simulate the earlier build's action-only history, with a pending draft.
         ReportCardCriteriaHistory::where('masjid_id',$school->id)->update(['bands'=>null,'effective_period'=>null,'effective_on'=>null]);
-        $this->travelTo(now()->setDate(2026,11,1));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         ReportCardCriteria::editor($school,$admin);
         $card=app(ReportCardService::class)->prepare($this->member($school),'report_card','2026-2027',1);
         $this->assertSame(['Earlier custom maths'],$card->marks->where('subject','Mathematics')->pluck('criterion')->all());
@@ -347,7 +347,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function period_versions_cannot_be_read_or_overwritten_through_another_tenant(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $one=$this->makeMasjid(); $two=$this->makeMasjid(); $this->dates($one); $this->dates($two); $admin=$this->admin();
         foreach ([$one,$two] as $school) {
             $editor=ReportCardCriteria::editor($school,$admin);
@@ -360,7 +360,7 @@ class ReportCardCriteriaTest extends TestCase
         $this->assertSame(0,ReportCardCriteriaHistory::whereKey($version->id)->update(['bands'=>[]]));
         $this->assertSame(0,ReportCardCriteriaHistory::whereKey($version->id)->delete());
         app(TenantContext::class)->forgetTenant();
-        $this->travelTo(now()->setDate(2026,11,1));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         foreach ([$one,$two] as $school) {
             $member=$this->member($school);
             foreach ([1=>'earlier',2=>'later'] as $term=>$suffix) {
@@ -374,12 +374,12 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function switching_off_ignores_versions_and_pending_drafts_for_new_cards(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
         $editor=$this->edit($school,$this->mathCriteria($editor,['Configured maths']),$admin);
         $this->edit($school,$this->mathCriteria($editor,['Next maths']),$admin,true);
         $school->forceFill(['capability_overrides'=>['report_card_criteria'=>false]])->save();
-        $this->travelTo(now()->setDate(2026,11,1));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         $card=app(ReportCardService::class)->prepare($this->member($school),'report_card','2026-2027',1);
         $this->assertSame(ReportCardTemplate::rowsForGrade('1st'),$card->marks->where('kind','academic')->map->only(['subject','criterion'])->values()->all());
         $this->assertNull(ReportCardCriteriaDraft::firstOrFail()->applied_at);
@@ -390,7 +390,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function calendar_terms_without_dates_use_the_school_year_for_both_versions_and_freezes(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin();
         SchoolTerm::where('masjid_id',$school->id)->delete();
         $editor=ReportCardCriteria::editor($school,$admin);
@@ -400,7 +400,7 @@ class ReportCardCriteriaTest extends TestCase
         $this->assertTrue(ReportCardBandFreeze::where('band_id',$card->criteria_band_id)->where('period_key','year:2026-2027')->exists());
         $this->assertTrue(ReportCardCriteria::editor($school,$admin)['bands'][2]['frozen']);
         $this->edit($school,$this->mathCriteria($editor,['Next undated year']),$admin,true);
-        $this->travelTo(now()->setDate(2027,8,1));
+        $this->travelTo(\Carbon\Carbon::parse('2027-08-01 16:00:00', 'UTC'));
         $late=$service->prepare($this->member($school),'report_card','2026-2027',4);
         $this->assertSame(['Earlier undated year'],$late->marks->where('subject','Mathematics')->pluck('criterion')->all());
         $this->travelBack();
@@ -409,7 +409,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function sending_freezes_band_even_after_takeback_and_draft_applies_on_next_term_start(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin();
         ReportCardCriteria::editor($school,$admin); $member=$this->member($school);
         $service=app(ReportCardService::class); $card=$service->prepare($member,'report_card','2026-2027',1);
@@ -421,7 +421,7 @@ class ReportCardCriteriaTest extends TestCase
         $draft=$this->edit($school,$editor,$admin,true);
         $this->assertSame('2026-11-01',$draft['draft_effective_on']);
         $this->assertNotSame(['Next term curriculum'],ReportCardCriteria::template($school,'1st')['subjects']["Qur'an"]);
-        $this->travelTo(now()->setDate(2026,11,1));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         $this->assertSame(['Next term curriculum'],ReportCardCriteria::template($school->fresh(),'1st')['subjects']["Qur'an"]);
         $this->assertFalse(ReportCardCriteria::editor($school,$admin)['bands'][2]['frozen']);
         $this->assertSame($before,ReportCardCriteria::marks($card)->toArray());
@@ -431,14 +431,14 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function without_dated_terms_freeze_is_for_the_school_year(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $admin=$this->admin(); ReportCardCriteria::editor($school,$admin);
         SchoolYear::create(['masjid_id'=>$school->id,'label'=>'2026-2027','first_day'=>'2026-08-15','last_day'=>'2027-06-15']);
         $service=app(ReportCardService::class); $service->publish($service->prepare($this->member($school),'progress','2026-2027',1));
         $editor=ReportCardCriteria::editor($school,$admin); $this->assertTrue($editor['bands'][2]['frozen']);
         $editor['bands'][2]['behaviours']=['Next year behaviour'];
         $this->edit($school,$editor,$admin,true);
-        $this->travelTo(now()->setDate(2027,8,15));
+        $this->travelTo(\Carbon\Carbon::parse('2027-08-15 16:00:00', 'UTC'));
         $this->assertSame(['Next year behaviour'],ReportCardCriteria::template($school->fresh(),'1st')['behaviours']);
         $this->travelBack();
     }
@@ -507,7 +507,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function persistent_drafts_history_and_freezes_reject_cross_tenant_reads_updates_and_deletes(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $one=$this->makeMasjid(); $two=$this->makeMasjid(); $this->dates($one); $admin=$this->admin();
         $editor=ReportCardCriteria::editor($one,$admin);
         $service=app(ReportCardService::class); $service->publish($service->prepare($this->member($one),'report_card','2026-2027',1));
@@ -531,13 +531,13 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function sent_cards_and_their_export_and_pdf_rows_stay_unchanged_after_deferred_edits(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); ReportCardCriteria::editor($school,$admin);
         $member=$this->member($school); $service=app(ReportCardService::class);
         $card=$service->publish($service->prepare($member,'report_card','2026-2027',1));
         $before=ReportCardCriteria::marks($card)->toArray();
         $editor=ReportCardCriteria::editor($school,$admin); $editor['bands'][2]['subjects'][0]['criteria']=['Changed after issue'];
-        $this->edit($school,$editor,$admin,true); $this->travelTo(now()->setDate(2026,11,1));
+        $this->edit($school,$editor,$admin,true); $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         ReportCardCriteria::template($school,'1st');
         $service->prepare($member,'report_card','2026-2027',1);
         $this->assertSame($before,ReportCardCriteria::marks($card)->toArray());
@@ -551,7 +551,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function deleting_staff_nulls_curriculum_attribution_and_keeps_the_school_records(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
         $this->edit($school,$editor,$admin,true);
         $admin->forceDelete();
@@ -576,7 +576,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function only_the_band_used_by_a_sent_card_freezes_and_unrelated_current_edits_survive_a_draft(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); ReportCardCriteria::editor($school,$admin);
         $service=app(ReportCardService::class); $service->publish($service->prepare($this->member($school),'report_card','2026-2027',1));
         $editor=ReportCardCriteria::editor($school,$admin);
@@ -585,7 +585,7 @@ class ReportCardCriteriaTest extends TestCase
         $current=ReportCardCriteria::editor($school,$admin); $current['bands'][0]['behaviours']=['Current early years behaviour'];
         $this->edit($school,$current,$admin);
         $this->assertSame(['Current early years behaviour'],ReportCardCriteria::template($school,'Pre-K')['behaviours']);
-        $this->travelTo(now()->setDate(2026,11,1));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         $this->assertSame(['Current early years behaviour'],ReportCardCriteria::template($school,'Pre-K')['behaviours']);
         $this->assertSame(['Next term behaviour'],ReportCardCriteria::template($school,'1st')['behaviours']);
         $this->travelBack();
@@ -594,14 +594,14 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function deferred_criteria_follow_a_rescheduled_term_and_do_not_apply_on_the_old_start(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
         $editor['bands'][2]['behaviours']=['Deferred behaviour']; $this->edit($school,$editor,$admin,true);
         SchoolTerm::where('masjid_id',$school->id)->where('position',2)->first()->update(['starts_on'=>'2026-11-05']);
-        $this->travelTo(now()->setDate(2026,11,1));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-01 16:00:00', 'UTC'));
         $this->assertSame(ReportCardTemplate::LEARNING_BEHAVIOURS,ReportCardCriteria::template($school,'1st')['behaviours']);
         $this->assertSame('2026-11-05',ReportCardCriteria::editor($school,$admin)['draft_effective_on']);
-        $this->travelTo(now()->setDate(2026,11,5));
+        $this->travelTo(\Carbon\Carbon::parse('2026-11-05 16:00:00', 'UTC'));
         $this->assertSame(['Deferred behaviour'],ReportCardCriteria::template($school,'1st')['behaviours']);
         $this->travelBack();
     }
@@ -609,7 +609,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function opening_the_editor_after_publication_already_freezes_the_seeded_band(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $service=app(ReportCardService::class);
         $service->publish($service->prepare($this->member($school),'report_card','2026-2027',1));
         $this->assertSame(0,ReportCardBand::count());
@@ -650,7 +650,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function sending_while_the_switch_is_off_freezes_a_previously_selected_band_on_reentry(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $admin=$this->admin(); $editor=ReportCardCriteria::editor($school,$admin);
         $service=app(ReportCardService::class); $card=$service->prepare($this->member($school),'report_card','2026-2027',1);
         $school->forceFill(['capability_overrides'=>['report_card_criteria'=>false]])->save();
@@ -665,7 +665,7 @@ class ReportCardCriteriaTest extends TestCase
     #[Test]
     public function a_new_band_in_a_future_draft_has_its_own_teacher_permission_flags(): void
     {
-        $this->travelTo(now()->setDate(2026,10,14));
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 16:00:00', 'UTC'));
         $school=$this->makeMasjid(); $this->dates($school); $admin=$this->admin();
         $editor=ReportCardCriteria::editor($school,$admin); $member=$this->member($school,'1st');
         $teacher=User::factory()->create(['type'=>'Teacher','phone'=>uniqid()]);
