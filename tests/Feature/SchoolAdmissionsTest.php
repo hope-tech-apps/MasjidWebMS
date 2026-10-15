@@ -216,6 +216,31 @@ class SchoolAdmissionsTest extends TestCase
         $this->family($guardian); $this->getJson($url)->assertOk()->assertJsonPath('data.deposit.paid', true);
     }
 
+    /** Walk finding: a deposit form without child first/last name questions left the family an empty, $0 form. */
+    #[Test]
+    public function a_deposit_form_must_ask_each_childs_first_and_last_name(): void
+    {
+        $school = $this->makeMasjid(); $office = $this->office($school);
+        $form = \App\Models\Form::create(['masjid_id' => $school->id, 'name' => 'Full name only', 'slug' => 'full-name-'.uniqid(), 'schema' => ['sections' => [['id' => 'kids', 'title' => 'Children', 'repeatable' => true, 'fields' => [['name' => 'childName', 'label' => 'Child full name', 'type' => 'text']]]]]]);
+        $year = $this->campaign($school, $this->form($school, true))->school_year_id;
+        $this->actingAs($office)->putJson('/api/admin/masjids/'.$school->id.'/reenrolment', ['school_year_id' => $year, 'opens_on' => now()->toDateString(), 'closes_on' => now()->addWeek()->toDateString(), 'deposit_form_id' => $form->id])
+            ->assertUnprocessable()->assertJsonFragment(['Choose a form that asks each child\'s first name and last name (as separate questions).']);
+    }
+
+    /** Walk finding: the screen posts multipart with nested data fields; a JSON string in `data` was refused. */
+    #[Test]
+    public function the_deposit_form_submits_as_the_screen_sends_it_multipart_with_nested_fields(): void
+    {
+        $school = $this->makeMasjid(); $form = $this->form($school, true); $campaign = $this->campaign($school, $form); $child = $this->enrol($this->classroom($school)); $guardian = $this->guardian($child); $this->family($guardian);
+        $url = $this->url($child, $campaign); $this->putJson($url, ['answer' => 'returning'])->assertOk();
+        $page = $this->getJson($url.'/deposit')->assertOk()->json('data');
+        $flat = json_decode(json_encode($page['data']), true);
+        array_walk_recursive($flat, function (&$v) { $v = is_bool($v) ? ($v ? '1' : '0') : ($v === null ? '' : (string) $v); });
+        Auth::forgetGuards(); app(TenantContext::class)->forgetTenant();
+        $this->post('/api/v1/forms/'.$form->id.'/responses', ['data' => $flat, 'reenrolment_token' => $page['token'], 'client_submission_key' => 'deposit-practice-submission-002', 'pay_with' => 'office', 'cover_fees' => '0'], ['masjid-id' => $school->id, 'Accept' => 'application/json'])->assertOk();
+        $this->assertDatabaseCount('school_reenrolment_deposits', 1);
+    }
+
     #[Test]
     public function a_deposit_token_cannot_pay_for_edited_children_another_form_or_a_revoked_guardian(): void
     {

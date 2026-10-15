@@ -60,11 +60,17 @@ async function load() {
 async function price() { if (!page.value || saved.value) return; const request = ++quoteRun; const run = generation; quoting.value = true; try { const r = await FamilyApiService.post(`${endpoint()}/quote`, { data: answers.value, pay_with: payWith.value, cover_fees: coverFees.value }); if (alive && run === generation && request === quoteRun) quote.value = r.data.data; } catch { if (alive && run === generation && request === quoteRun) quote.value = null; } finally { if (alive && run === generation && request === quoteRun) quoting.value = false; } }
 async function submit() {
     if (busy.value) return; const run = generation; busy.value = true; error.value = false; issues.value = '';
-    const body = new FormData(); body.append('data', JSON.stringify(answers.value)); body.append('reenrolment_token', page.value.token); body.append('client_submission_key', clientKey); body.append('pay_with', payWith.value); body.append('cover_fees', coverFees.value ? '1' : '0'); body.append('return_path', location.pathname);
+    // The submissions endpoint reads `data` as an array: send it as nested fields (a JSON string was refused with 422).
+    const body = new FormData(); appendNested(body, 'data', answers.value); body.append('reenrolment_token', page.value.token); body.append('client_submission_key', clientKey); body.append('pay_with', payWith.value); body.append('cover_fees', coverFees.value ? '1' : '0'); body.append('return_path', location.pathname);
     for (const [key, file] of Object.entries(files.value)) if (file) body.append(`files[${key}]`, file);
     try { const result = await publicCall(`forms/${page.value.form_id}/responses`, body); if (!alive || run !== generation) return; uuid.value = result.uuid ?? ''; saved.value = true; if (result.checkout_url) location.assign(result.checkout_url); else if (uuid.value) await readPayment(); }
-    catch (e: any) { if (alive && run === generation) { error.value = true; issues.value = Object.values(e.data ?? {}).flat().filter(v => typeof v === 'string').join(' '); if (e.data?.uuid) { uuid.value = e.data.uuid; saved.value = true; canPay.value = true; } } }
+    catch (e: any) { if (alive && run === generation) { error.value = true; issues.value = Object.values(e.data ?? {}).flat().filter(v => typeof v === 'string').join(' ') || (typeof e.message === 'string' ? e.message : ''); if (e.data?.uuid) { uuid.value = e.data.uuid; saved.value = true; canPay.value = true; } } }
     finally { if (alive && run === generation) busy.value = false; }
+}
+function appendNested(body: FormData, key: string, value: any): void {
+    if (Array.isArray(value)) { value.forEach((item, i) => appendNested(body, `${key}[${i}]`, item)); return; }
+    if (value !== null && typeof value === 'object') { for (const [k, v] of Object.entries(value)) appendNested(body, `${key}[${k}]`, v); return; }
+    body.append(key, value === null || value === undefined ? '' : typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
 }
 async function readPayment() { const run = generation; try { const result = await publicCall(`form-responses/${uuid.value}`); if (alive && run === generation) { if (result.form_id !== page.value.form_id) throw new Error('Wrong form'); paid.value = !result.cancelled && result.payment_status === 'paid'; canPay.value = result.can_pay; } } catch { if (alive && run === generation) error.value = true; } }
 async function resume() { if (busy.value) return; const run = generation; busy.value = true; try { const result = await publicCall(`form-responses/${uuid.value}/checkout`, { return_path: location.pathname, reenrolment_token: page.value.token }); if (alive && run === generation && result.checkout_url) location.assign(result.checkout_url); } catch { if (alive && run === generation) error.value = true; } finally { if (alive && run === generation) busy.value = false; } }

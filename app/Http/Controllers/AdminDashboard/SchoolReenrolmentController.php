@@ -34,7 +34,11 @@ class SchoolReenrolmentController extends Controller
     {
         $data = $request->validate(['school_year_id' => ['required', 'integer'], 'opens_on' => ['required', 'date_format:Y-m-d'], 'closes_on' => ['required', 'date_format:Y-m-d', 'after_or_equal:opens_on'], 'deposit_form_id' => ['nullable', 'integer']]);
         SchoolYear::findOrFail($data['school_year_id']);
-        if (! empty($data['deposit_form_id'])) Form::where('masjid_id', $this->school())->findOrFail($data['deposit_form_id']);
+        if (! empty($data['deposit_form_id'])) {
+            $depositForm = Form::where('masjid_id', $this->school())->findOrFail($data['deposit_form_id']);
+            // Without child name questions the deposit form cannot be filled in for the child (walk finding).
+            if (! \App\Services\Schools\SchoolAdmissionIdentity::hasChildFields($depositForm)) throw \Illuminate\Validation\ValidationException::withMessages(['deposit_form_id' => 'Choose a form that asks each child\'s first name and last name (as separate questions).']);
+        }
         $campaign = DB::transaction(function () use ($data) {
             $school = Masjid::whereKey($this->school())->lockForUpdate()->firstOrFail();
             abort_unless(\App\Support\SchoolAdmissionsMode::enabled($school, 'school_reenrolment'), 403);
