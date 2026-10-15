@@ -104,12 +104,14 @@ test('mail suppression resets when a different application row opens and after a
         assert.equal((check() as any).checked, false);
     } finally { s.unmount(); }
     // The parent harness uses the existing mounted view to open two response IDs.
-    const viewApi = { get: async (url: string) => ({ data: { data: url.includes('/applications/') ? { status: 'new', history: [] } : { children: [8,9].map(response_id => ({ response_id, entry_index: 0, first_name: 'Sample', last_name: 'Student', status: 'new' })), classes: [], settings: {} } } }) };
+    const viewApi = { get: async (url: string) => ({ data: { data: url.includes('/applications/') ? { status: 'new', history: [] } : { children: [8,9].map(response_id => ({ response_id, entry_index: 0, first_name: `Sample ${response_id}`, last_name: 'Student', form_name: `Practice form ${response_id}`, status: 'new' })), classes: [], settings: {} } } }) };
     const view = await mountSfc('views/dashboard/SchoolApplicationsView.vue', {}, { vue, '@/core/services/ApiService': { default: viewApi }, '@/stores/masjidStore': { useMasjidStore: () => ({ masjid: { id: 1 } }) }, '@/components/forms/ApplicationStatusControl.vue': { default: control }, '@/components/forms/ApplicationFormSetting.vue': { default: { render: () => null } } });
     try {
         await flush(); click(view.all((n: any) => n.tag === 'button' && n.textContent === 'Status and email history')[0]); await flush();
+        assert.match(view.all((n: any) => n.tag === 'section' && n.textContent.startsWith('Application status'))[0].textContent, /Sample 8 Student · Practice form 8/);
         view.all((n: any) => n.tag === 'input' && n.props.type === 'checkbox')[0].props['onUpdate:modelValue'](true);
         click(view.all((n: any) => n.tag === 'button' && n.textContent === 'Status and email history')[1]); await flush();
+        assert.match(view.all((n: any) => n.tag === 'section' && n.textContent.startsWith('Application status'))[0].textContent, /Sample 9 Student · Practice form 9/);
         assert.equal((view.all((n: any) => n.tag === 'input' && n.props.type === 'checkbox')[0] as any).checked, false);
     } finally { view.unmount(); }
 });

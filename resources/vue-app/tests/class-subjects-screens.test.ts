@@ -2117,10 +2117,12 @@ test('Timetable OFF class page bytes and requests match literal 30cef6d4 renderi
     } finally {screen.unmount();}
 });
 
-async function photoSetup(allowed: boolean, reply?: any) {
+async function photoSetup(context: any, allowed: boolean, reply?: any) {
+    context.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-15T01:30:00Z') });
     const helpers = await import('../core/helpers/lessonPlanPhoto.ts');
     const calls: any[] = [];
-    const date = new Date().toISOString().slice(0, 10);
+    const today = new Date();
+    const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     const plan = { id: 17, session_date: date, subject: null, body: 'Existing activities', attachments: [], learning_outcomes: [], teaching_methods: [] };
     const api = {
         get: async (url: string) => {
@@ -2156,8 +2158,8 @@ async function photoSetup(allowed: boolean, reply?: any) {
     return { ...r, calls, read };
 }
 
-for (const allowed of [false, true]) test(`photo: mounted button follows the server pilot decision ${allowed}`, async () => {
-    const r = await photoSetup(allowed);
+for (const allowed of [false, true]) test(`photo: mounted button follows the server pilot decision ${allowed}`, async (context) => {
+    const r = await photoSetup(context, allowed);
     try {
         assert.equal(r.screen.text().includes('Fill from a photo'), allowed);
         assert.equal(r.calls.some(c => c.url.endsWith('/photo-fill')), false);
@@ -2165,8 +2167,8 @@ for (const allowed of [false, true]) test(`photo: mounted button follows the ser
     } finally { r.screen.unmount(); }
 });
 
-test('photo: mounted empty-only fill, suggestion edits and deferred staff photo save', async () => {
-    const r = await photoSetup(true);
+test('photo: mounted empty-only fill, suggestion edits and deferred staff photo save', async (context) => {
+    const r = await photoSetup(context, true);
     try {
         await r.read();
         assert.match(r.screen.text(), /from your photo/);
@@ -2192,8 +2194,8 @@ test('photo: mounted empty-only fill, suggestion edits and deferred staff photo 
     } finally { r.screen.unmount(); }
 });
 
-test('photo: mounted no-match choice fills cached day without another read', async () => {
-    const r = await photoSetup(true, { fields: {}, suggested: [], message: 'No date matched this plan.', days: [
+test('photo: mounted no-match choice fills cached day without another read', async (context) => {
+    const r = await photoSetup(context, true, { fields: {}, suggested: [], message: 'No date matched this plan.', days: [
         { date: '2026-10-07', date_written: 'Wednesday 7 Oct', fields: { objective: 'Written on other day', learning_outcomes: ['Suggested outcome'] }, suggested: ['learning_outcomes'] },
     ] });
     try {
@@ -2205,8 +2207,8 @@ test('photo: mounted no-match choice fills cached day without another read', asy
     } finally { r.screen.unmount(); }
 });
 
-test('photo: mounted failed read keeps the form and never displays provider words', async () => {
-    const r = await photoSetup(true, httpError(503, { message: 'invented sensitive provider details' }));
+test('photo: mounted failed read keeps the form and never displays provider words', async (context) => {
+    const r = await photoSetup(context, true, httpError(503, { message: 'invented sensitive provider details' }));
     try {
         await r.read(); assert.match(r.screen.text(), /The photos could not be read; please try again\./);
         assert.doesNotMatch(r.screen.text(), /invented sensitive provider details|from your photo|waiting for Save/);

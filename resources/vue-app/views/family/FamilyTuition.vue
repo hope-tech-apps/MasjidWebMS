@@ -5,7 +5,7 @@
         <p v-if="pending" class="alert alert-info" role="status">{{ t('tuition_pending') }}</p>
         <p v-if="loaded && !accounts.length">{{ t('tuition_empty') }}</p>
         <section v-for="account in accounts" :key="account.id" class="card p-3 mb-3">
-            <h2 class="h5">{{ account.children.map((c: any) => c.name).join(', ') }}</h2>
+            <h2 class="h5">{{ account.children.map((c: any) => c.name).join(t('tuition_list_separator')) }}</h2>
             <p>{{ t('tuition_balance') }}: <bdi>{{ money(account.balance_minor, account.currency) }}</bdi></p>
             <p v-if="account.next_due_on">{{ t('tuition_coming_up') }}: <bdi>{{ money(account.next_due_minor, account.currency) }}</bdi> {{ t('tuition_on') }} {{ date(account.next_due_on) }}</p>
             <p v-if="!account.card_available">{{ t('tuition_card_unavailable') }}</p>
@@ -24,7 +24,7 @@
             <template v-if="statements[account.id]">
                 <p>{{ t('tuition_opening') }}: <bdi>{{ money(statements[account.id].opening_minor, account.currency) }}</bdi></p>
                 <div class="table-responsive"><table class="table"><thead><tr><th>{{ t('tuition_date') }}</th><th>{{ t('tuition_child') }}</th><th>{{ t('tuition_entry') }}</th><th>{{ t('tuition_description') }}</th><th>{{ t('tuition_amount') }}</th></tr></thead><tbody>
-                    <tr v-for="line in statements[account.id].lines" :key="line.id"><td>{{ date(line.date) }}</td><td>{{ line.child }}</td><td>{{ t('tuition_' + line.kind) }}<span v-if="line.method_label">, {{ line.method_label }}</span></td><td>{{ line.description }}</td><td><bdi>{{ money(line.amount_minor, account.currency) }}</bdi></td></tr>
+                    <tr v-for="line in statements[account.id].lines" :key="line.id"><td>{{ date(line.date) }}</td><td>{{ line.child }}</td><td>{{ t('tuition_' + line.kind) }}<span v-if="line.method">{{ t('tuition_list_separator') }}{{ t('tuition_method_' + line.method) }}</span></td><td>{{ line.description }}</td><td><bdi>{{ money(line.amount_minor, account.currency) }}</bdi></td></tr>
                 </tbody></table></div>
                 <p>{{ t('tuition_closing') }}: <bdi>{{ money(statements[account.id].closing_minor, account.currency) }}</bdi></p>
             </template>

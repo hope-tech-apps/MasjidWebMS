@@ -1,6 +1,7 @@
 <template>
     <section class="border rounded p-3 mb-3">
         <h3 class="h6">Application status</h3>
+        <p v-if="applicationLabel" dir="auto">{{ applicationLabel }}</p>
         <p v-if="error" class="text-danger" role="alert">{{ error }}</p>
         <p v-if="!detail" role="status">Loading application…</p>
         <template v-else>
@@ -27,7 +28,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue';
 import ApiService from '@/core/services/ApiService';
 import { serverMessage } from '@/core/helpers/serverMessage';
-const props = defineProps<{ masjidId: string; responseId: number }>();
+const props = defineProps<{ masjidId: string; responseId: number; applicationLabel?: string }>();
 const emit = defineEmits(['changed']);
 const detail = ref<any>(null); const status = ref('new'); const note = ref(''); const withoutEmail = ref(false); const busy = ref(false); const error = ref('');
 let generation = 0; let alive = true;

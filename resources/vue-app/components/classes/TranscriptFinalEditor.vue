@@ -18,7 +18,8 @@ import { serverMessage } from '@/core/helpers/serverMessage';
 const props = defineProps<{ course: any; year: string; scale: any[]; url: string; teacher?: boolean }>();
 const emit = defineEmits(['saved']);
 const letter = ref(''); const reason = ref(''); const busy = ref(false); const error = ref(''); const saved = ref(false); let generation = 0; let alive = true;
-watch(() => [props.url,props.course], () => { generation++; letter.value=props.course.staff?.override_letter ?? ''; reason.value=props.course.staff?.reason ?? ''; error.value=''; saved.value=false; }, {immediate:true});
+watch([() => props.url, () => props.course.staff?.class_subject_id, () => props.course.staff?.school_year_id], () => { generation++; saved.value=false; busy.value=false; }, {immediate:true});
+watch(() => props.course, () => { letter.value=props.course.staff?.override_letter ?? ''; reason.value=props.course.staff?.reason ?? ''; error.value=''; }, {immediate:true});
 async function save() {
     if (busy.value) return; const run=generation; busy.value=true; error.value=''; saved.value=false;
     try { const body={class_subject_id:props.course.staff.class_subject_id,school_year_id:props.course.staff.school_year_id,letter:letter.value || null,reason:letter.value?reason.value:null}; if(props.teacher) await TeacherApiService.put(props.url,body); else await ApiService.put(props.url as any,body,'json'); if (alive && run===generation) { saved.value=true; emit('saved'); } }

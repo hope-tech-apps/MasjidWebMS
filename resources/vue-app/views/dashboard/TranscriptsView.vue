@@ -22,12 +22,12 @@
             </details>
             <form class="d-flex gap-2 mb-3" @submit.prevent="load(1)"><label>Find student<input class="form-control" v-model="search" /></label><button class="btn btn-outline-secondary" :disabled="busy">Search</button></form>
             <label class="d-block mb-2"><input type="checkbox" v-model="showAll" @change="load(1)" /> Show all students (default: grades 9 and up)</label>
-            <label class="form-label d-block">Student<select class="form-select" v-model="selected" @change="openStudent"><option value="">Choose a student</option><option v-for="student in data.students.data" :key="student.id" :value="String(student.id)">{{ student.first_name }} {{ student.last_name }}</option></select></label>
+            <label class="form-label d-block">Student<select class="form-select" v-model="selected" @change="openStudent()"><option value="">Choose a student</option><option v-for="student in data.students.data" :key="student.id" :value="String(student.id)">{{ student.first_name }} {{ student.last_name }}</option></select></label>
             <div v-if="data.students.last_page > 1" class="d-flex gap-2 mb-3"><button class="btn btn-outline-secondary" :disabled="data.students.current_page <= 1 || busy" @click="load(data.students.current_page - 1)">Previous</button><span>{{ data.students.current_page }} / {{ data.students.last_page }}</span><button class="btn btn-outline-secondary" :disabled="data.students.current_page >= data.students.last_page || busy" @click="load(data.students.current_page + 1)">Next</button></div>
             <section v-if="studentData" class="border rounded p-3 my-3">
                 <TranscriptDocument :document="studentData.document" />
                 <details><summary>Final letter overrides</summary>
-                    <template v-for="(year, i) in studentData.document.years" :key="i"><TranscriptFinalEditor v-for="course in year.courses.filter(c => c.staff)" :key="`${course.staff.class_subject_id}:${course.staff.school_year_id}`" :course="course" :year="year.year" :scale="data.scale" :url="`${base()}/students/${selected}/finals`" @saved="openStudent" /></template>
+                    <template v-for="(year, i) in studentData.document.years" :key="i"><TranscriptFinalEditor v-for="course in year.courses.filter(c => c.staff)" :key="`${course.staff.class_subject_id}:${course.staff.school_year_id}`" :course="course" :year="year.year" :scale="data.scale" :url="`${base()}/students/${selected}/finals`" @saved="openStudent(false)" /></template>
                 </details>
                 <h2 class="h6 mt-4">Official issues</h2>
                 <button class="btn btn-primary mb-2" :disabled="busy" @click="issue">Issue a new official transcript</button>
@@ -57,9 +57,9 @@
                 <p v-if="studentData.latest_issue_stale" class="alert alert-warning" role="status">Grades have changed since the latest official issue. Sharing sends that older copy. <button type="button" class="btn btn-outline-primary" :disabled="busy" @click="issue">Issue a new official copy first</button></p>
                 <form @submit.prevent="requestShare" class="d-flex gap-2"><label>Receiving school<select class="form-select" v-model="receiving" required><option value="">Choose school</option><option v-for="school in data.receiving_schools" :key="school.id" :value="String(school.id)">{{ school.name }}</option></select></label><button class="btn btn-primary" :disabled="busy">Request sharing</button></form>
                 <article v-for="share in studentData.shares" :key="share.id" class="border rounded p-3 mt-2">
-                    <p>To {{ share.receiving_school }} · Request #{{ share.id }} · {{ share.status }} · Requested {{ share.requested_at_display }} by {{ share.requested_by_name || 'Name not recorded' }}</p>
+                    <p>To {{ share.receiving_school }} · Request #{{ share.id }} · {{ transcriptStatus(share.status) }} · Requested {{ share.requested_at_display }} by {{ share.requested_by_name || 'Name not recorded' }}</p>
                     <p v-if="share.consented_at">Family consent: {{ share.consent_method }} · {{ share.consented_at_display }} · {{ share.consented_by_name || 'Name not recorded' }}</p>
-                    <p v-if="share.resolved_at">{{ share.status }} at {{ share.resolved_at_display }} · {{ share.resolved_by_name || 'Name not recorded' }}</p>
+                    <p v-if="share.resolved_at">{{ transcriptStatus(share.status) }} at {{ share.resolved_at_display }} · {{ share.resolved_by_name || 'Name not recorded' }}</p>
                     <form v-if="share.status === 'awaiting_family'" @submit.prevent="paper(share)"><label>Where the signed paper consent is held<textarea class="form-control" v-model="evidence[share.id]" required maxlength="4000" /></label><button class="btn btn-outline-primary ms-2" :disabled="busy">Record paper consent</button></form>
                     <button v-if="['awaiting_family','pending'].includes(share.status)" class="btn btn-outline-secondary mt-2" :disabled="busy" @click="withdraw(share)">Withdraw request</button>
                 </article>
@@ -69,7 +69,7 @@
             </section>
             <h2 class="h5 mt-4">Incoming requests and history</h2><p v-if="!inbox.length">No incoming requests.</p>
             <article v-for="share in inbox" :key="share.id" class="border rounded p-3 my-2">
-                <p>From {{ share.sending_school }} · {{ share.student_name }} · {{ share.date_of_birth ? transcriptDate(share.date_of_birth) : 'No birth date on file' }} · {{ share.status }} · {{ share.resolved_at_display || share.requested_at_display }}<span v-if="share.resolved_by_name"> · {{ share.resolved_by_name }}</span></p>
+                <p>From {{ share.sending_school }} · {{ share.student_name }} · {{ share.date_of_birth ? transcriptDate(share.date_of_birth) : 'No birth date on file' }} · {{ transcriptStatus(share.status) }} · {{ share.resolved_at_display || share.requested_at_display }}<span v-if="share.resolved_by_name"> · {{ share.resolved_by_name }}</span></p>
                 <template v-if="share.status === 'pending'"><label>Link to an enrolled student<select class="form-select" v-model="linkChoices[share.id]"><option value="">Keep unlinked until enrolled</option><option v-for="child in data.students.data" :key="child.id" :value="String(child.id)">{{ child.first_name }} {{ child.last_name }}</option></select></label><button class="btn btn-primary m-2" :disabled="busy" @click="accept(share)">Accept and copy transcript</button><button class="btn btn-outline-secondary" :disabled="busy" @click="decline(share)">Decline</button></template>
             </article>
             <h2 class="h5 mt-4">Received transcripts</h2>
@@ -82,7 +82,7 @@
     </div></section>
 </template>
 <script setup lang="ts">
-import { transcriptDate } from '@/core/helpers/transcriptDisplay';
+import { transcriptDate, transcriptStatus } from '@/core/helpers/transcriptDisplay';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import ApiService from '@/core/services/ApiService';
 import { useMasjidStore } from '@/stores/masjidStore';
@@ -99,12 +99,12 @@ const decimal=(value:number)=>`${Math.floor(value/100)}.${String(value%100).padS
 async function load(page=1) {
     const run=++generation; error.value=''; if(!school.value)return;
     try {const [r,requests]=await Promise.all([ApiService.get(`${base()}?search=${encodeURIComponent(search.value)}&page=${page}&show_all=${showAll.value?1:0}`),ApiService.get(`${base()}/inbox`)]);if(!alive || run!==generation)return;
-        data.value=r.data.data; inbox.value=requests.data.data; points.value=[...new Set([...Object.keys(data.value.policy.points),...data.value.scale.map((row:any)=>row.letter)])].map(letter=>({letter,points:data.value.policy.points[letter]===undefined?'':decimal(data.value.policy.points[letter]),failing:data.value.policy.failing_letters.includes(letter)}));honors.value=decimal(data.value.policy.honors_extra);ap.value=decimal(data.value.policy.ap_extra);
+        data.value=r.data.data; inbox.value=requests.data.data; for(const share of inbox.value) linkChoices.value[share.id] ??= ''; points.value=[...new Set([...Object.keys(data.value.policy.points),...data.value.scale.map((row:any)=>row.letter)])].map(letter=>({letter,points:data.value.policy.points[letter]===undefined?'':decimal(data.value.policy.points[letter]),failing:data.value.policy.failing_letters.includes(letter)}));honors.value=decimal(data.value.policy.honors_extra);ap.value=decimal(data.value.policy.ap_extra);
         credits.value=Object.fromEntries(data.value.subjects.map((subject:any)=>[subject.id,{credit:subject.setting?.credit_hundredths==null?'':decimal(subject.setting.credit_hundredths),level:subject.setting?.level ?? 'regular',on_transcript:subject.setting?.on_transcript ?? true}]));
     } catch(e){if(alive && run===generation)error.value=serverMessage(e,'Transcripts could not be loaded.');}
 }
-async function openStudent() {
-    const run=++studentGeneration; const schoolRun=generation; studentData.value=null; prior.value=blankPrior(); priorFile.value=null; error.value=''; if(!selected.value)return;
+async function openStudent(clear = true) {
+    const run=++studentGeneration; const schoolRun=generation; if(clear) { studentData.value=null; prior.value=blankPrior(); priorFile.value=null; } error.value=''; if(!selected.value)return;
     try{const r=await ApiService.get(`${base()}/students/${selected.value}`);if(alive && run===studentGeneration && schoolRun===generation)studentData.value=r.data.data;}
     catch(e){if(alive && run===studentGeneration && schoolRun===generation)error.value=serverMessage(e,'This transcript could not be loaded.');}
 }

@@ -244,3 +244,19 @@ for (const count of [2,12]) test(`Setup class locations overview is read-only an
         assert.equal(s.all(n => ['input','select','button'].includes(n.tag) && (()=>{let p=n.parent;while(p){if(p===table)return true;p=p.parent;}return false;})()).length,0);
     } finally { s.unmount(); }
 });
+
+
+test('polish: period-set headings follow each row name and unnamed fallback', async () => {
+    const s=await screen();
+    try {
+        click(s.button('Setup')); await flush();click(s.button('Add period set'));await flush();
+        click(s.all(n=>n.tag==='button'&&n.textContent==='Add period')[0]);await flush();
+        assert.ok(s.all(n=>n.tag==='legend'&&n.textContent==='Row 1').length);
+        type(s.all(n=>n.props.id==='period-name-0')[0],'Period 3');await flush();
+        assert.ok(s.all(n=>n.tag==='legend'&&n.textContent==='Period 3').length);
+        click(s.all(n=>n.tag==='button'&&n.textContent==='Add period')[0]);await flush();
+        const move=s.all(n=>n.tag==='button'&&n.textContent==='Move down')[0];click(move);await flush();
+        assert.ok(s.all(n=>n.tag==='legend'&&n.textContent==='Period 3').length);
+        assert.ok(s.all(n=>n.tag==='legend'&&n.textContent==='Row 1').length);
+    }finally{s.unmount();}
+});

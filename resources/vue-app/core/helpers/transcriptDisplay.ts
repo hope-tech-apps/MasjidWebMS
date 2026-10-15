@@ -7,3 +7,8 @@ export function transcriptGrade(value: string | null | undefined): string {
     if (!value) return 'Not recorded';
     return value.replace(/^(?:Grade\s*)?(\d+)(?:st|nd|rd|th)?(?:\s*Grade)?$/i, 'Grade $1');
 }
+
+/** Plain office labels for each transcript request state. */
+export function transcriptStatus(value: string): string {
+    return ({awaiting_family:'Waiting for the family',pending:'Waiting for the other school',accepted:'Accepted',declined:'Declined',withdrawn:'Withdrawn'} as Record<string,string>)[value] ?? 'Status unavailable';
+}

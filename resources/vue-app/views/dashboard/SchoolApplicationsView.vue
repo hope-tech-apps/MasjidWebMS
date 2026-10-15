@@ -17,7 +17,7 @@
                 <td>{{ child.first_name }} {{ child.last_name }}<small class="d-block">{{ child.grade }}</small></td>
                 <td>{{ child.form_name }}<small class="d-block">{{ child.submitted_at }}</small></td>
                 <td>{{ label(child.status) }}<span v-if="child.waitlist_position"> · {{ child.waitlist_position }}</span></td>
-                <td><button class="btn btn-sm btn-outline-primary" @click="selected = child.response_id">Status and email history</button>
+                <td><button class="btn btn-sm btn-outline-primary" @click="selected = child.response_id; selectedLabel = `${child.first_name} ${child.last_name} · ${child.form_name}`">Status and email history</button>
                     <p v-if="child.roster_class" class="mt-2 mb-0">Added to {{ child.roster_class }}</p>
                     <div v-else-if="child.status === 'accepted'" class="d-flex flex-wrap gap-1 mt-2">
                         <select class="form-select" :aria-label="`Class for ${child.first_name} ${child.last_name}`" v-model="classChoices[`${child.response_id}:${child.entry_index}`]"><option value="">Choose class</option><option v-for="c in data.classes" :key="c.id" :value="c.id">{{ c.name }}</option></select>
@@ -27,7 +27,7 @@
             </tr>
         </tbody></table></div>
         <p v-if="!data.children.length" class="text-muted">No responses to application forms yet.</p>
-        <ApplicationStatusControl v-if="selected" :masjid-id="school" :response-id="selected" @changed="load" />
+        <ApplicationStatusControl v-if="selected" :masjid-id="school" :response-id="selected" :application-label="selectedLabel" @changed="load" />
         <form @submit.prevent="saveTexts" class="border rounded p-3 mt-4">
             <h2 class="h6">Messages to families</h2><p>Plain text. Safe placeholders: {school} and {children}. Staff notes are kept out of every email. These messages apply to future status changes.</p>
             <label v-for="s in ['accepted', 'wait_listed', 'declined']" :key="s" class="d-block form-label">{{ label(s) }}<textarea class="form-control" v-model="texts[`${s}_text`]" maxlength="8000" required /></label>
@@ -45,6 +45,7 @@ import ApplicationStatusControl from '@/components/forms/ApplicationStatusContro
 const store = useMasjidStore(); const school = computed(() => String(store.masjid?.id ?? ''));
 const forms = ref<any[]>([]); const settingForm = ref<number | string>('');
 const data = ref<any>({ children: [], classes: [], settings: {} }); const texts = ref<any>({}); const selected = ref<number | null>(null); const status = ref(''); const grade = ref(''); const error = ref(''); const message = ref(''); const busy = ref(false); const classChoices = ref<Record<string, any>>({});
+const selectedLabel = ref('');
 const grades = computed(() => [...new Set<string>(data.value.children.map((c: any) => c.grade || ''))]);
 const filtered = computed(() => data.value.children.filter((c: any) => (!status.value || status.value === c.status) && (!grade.value || c.grade === grade.value)));
 const label = (s: string) => ({ new: 'New', accepted: 'Accepted', wait_listed: 'Wait-listed', declined: 'Declined' }[s] ?? s);

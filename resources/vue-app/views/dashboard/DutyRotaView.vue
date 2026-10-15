@@ -48,7 +48,7 @@
                     </section>
                 </div>
                 <div v-else-if="tab === 'Needs a day'" role="tabpanel">
-                    <button v-if="needs.length" class="btn btn-primary mb-3" :disabled="busy || !data.rota.active" @click="email(null)">Email all {{ needs.length }} {{ plural(needs.length, 'family', 'families') }} who need a day</button>
+                    <button v-if="needs.length" class="btn btn-primary mb-3" :disabled="busy || !data.rota.active" @click="email(null)">Email {{ needs.length === 1 ? 'the' : 'all' }} {{ needs.length }} {{ plural(needs.length, 'family', 'families') }} who {{ plural(needs.length, 'needs', 'need') }} a day</button>
                     <p v-else>Every family has its days.</p>
                     <section v-for="f in needs" :key="f.id" class="border rounded p-3 mb-3">
                         <h2 class="h5" dir="auto">{{ f.name }}</h2><p>{{ f.still_owed }} more {{ plural(f.still_owed,'day') }} owed<span v-if="f.registration_count > 1"> · {{ f.registration_count }} registrations</span></p>
@@ -95,7 +95,7 @@
                         <label class="d-block mb-3"><input id="dutyOver" v-model="placement.over_capacity" type="checkbox"> Allow this day to go over capacity deliberately</label>
                     </div>
                     <p v-if="dialog.kind === 'build'">{{ buildCounts }}</p>
-                    <p v-if="dialog.kind === 'email'">Email {{ dialog.family ? dialog.family.name : `${needs.length} families who need a day` }} about {{ data.rota.name }}? Each email issues a new private link and voids the previous link. Families without an email are skipped and counted.</p>
+                    <p v-if="dialog.kind === 'email'">Email {{ dialog.family ? dialog.family.name : `${needs.length} ${plural(needs.length, 'family', 'families')} who ${plural(needs.length, 'needs', 'need')} a day` }} about {{ data.rota.name }}? Each email issues a new private link and voids the previous link. Families without an email are skipped and counted.</p>
                     <p v-if="dialog.action === 'remove'">Remove {{ dialog.family.name }} from {{ formatDay(dialog.date) }}? The day reopens and the released record is kept.</p>
                     <div class="d-flex flex-wrap gap-2"><button type="submit" class="btn btn-primary" :disabled="busy">{{ dialog.kind === 'build' ? 'Confirm build' : dialog.kind === 'email' ? 'Confirm email' : dialog.action === 'remove' ? 'Remove day' : 'Save' }}</button><button type="button" class="btn btn-outline-secondary" :disabled="busy" @click="close">Cancel</button></div>
                 </form>

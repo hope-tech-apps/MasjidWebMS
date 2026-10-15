@@ -119,7 +119,7 @@
                         <p>This changes the times for the whole year.</p>
                         <label for="set-name">Set name</label><input class="form-control" id="set-name" v-model="draft.name" maxlength="60" required />
                         <fieldset v-for="(p, i) in draft.periods" :key="p.id ?? 'new-' + i">
-                            <legend>Period {{ i + 1 }}</legend>
+                            <legend>{{ p.name?.trim() || `Row ${i + 1}` }}</legend>
                             <label :for="'period-name-' + i">Name</label><input class="form-control" :id="'period-name-' + i" v-model="p.name" maxlength="60" required />
                             <label :for="'period-start-' + i">Start</label><input class="form-control" :id="'period-start-' + i" v-model="p.starts_at" type="time" required />
                             <label :for="'period-end-' + i">End</label><input class="form-control" :id="'period-end-' + i" v-model="p.ends_at" type="time" required />
