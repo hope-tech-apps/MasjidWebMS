@@ -189,20 +189,39 @@ class StripeConnectOAuthTest extends TestCase
     {
         $org = $this->makeMasjid(['stripe_account_id' => 'acct_test_existing', 'stripe_charges_enabled' => true, 'stripe_payouts_enabled' => true]);
         $user = $this->staff($org);
+        $this->linkedHere($org, 'acct_test_existing');
         $this->deleteJson($this->path($org, 'oauth'))->assertOk();
         $this->assertNull($org->fresh()->stripe_account_id);
         $this->assertFalse((bool) $org->fresh()->stripe_charges_enabled);
         $this->assertFalse((bool) $org->fresh()->stripe_payouts_enabled);
         $this->assertDatabaseHas('stripe_connect_histories', ['action' => 'unlink', 'actor_user_id' => $user->id, 'account_last4' => 'ting']);
         $user->forceDelete();
-        $this->assertNull(StripeConnectHistory::firstOrFail()->actor_user_id);
+        $this->assertNull(StripeConnectHistory::where('action', 'unlink')->firstOrFail()->actor_user_id);
         Http::assertSentCount(1);
+    }
+
+    /** Onboarding-created accounts (the older create-new door) must never be deauthorized from this screen. */
+    public function test_an_account_connected_by_onboarding_cannot_be_unlinked_here(): void
+    {
+        $org = $this->makeMasjid(['stripe_account_id' => 'acct_test_onboarded', 'stripe_charges_enabled' => true]);
+        $this->staff($org);
+        $this->getJson($this->path($org, 'status'))->assertOk()->assertJsonPath('data.oauth.can_unlink', false);
+        $this->deleteJson($this->path($org, 'oauth'))->assertStatus(422)->assertSee('connected through Stripe onboarding');
+        $this->assertSame('acct_test_onboarded', $org->fresh()->stripe_account_id);
+        $this->assertTrue((bool) $org->fresh()->stripe_charges_enabled);
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/deauthorize'));
+    }
+
+    private function linkedHere(\App\Models\Masjid $org, string $account): void
+    {
+        StripeConnectHistory::withoutMasjidScope()->insert(['masjid_id' => $org->id, 'actor_user_id' => null, 'account_last4' => substr($account, -4), 'action' => 'link', 'created_at' => now(), 'updated_at' => now()]);
     }
 
     public function test_stripe_failure_never_clears_an_existing_link_and_does_not_expose_code(): void
     {
         $org = $this->makeMasjid(['stripe_account_id' => 'acct_test_existing']);
         $this->staff($org);
+        $this->linkedHere($org, 'acct_test_existing');
         Http::swap(new \Illuminate\Http\Client\Factory());
         Http::preventStrayRequests();
         Http::fake(['*' => Http::response(['error_description' => 'sensitive-test-code'], 500)]);
