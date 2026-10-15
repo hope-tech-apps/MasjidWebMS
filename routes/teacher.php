@@ -110,7 +110,7 @@ Route::prefix('teacher')
                 // The teacher's own classes (names-only), and the behaviour-skill
                 // vocabulary needed to fill the award dropdown. Neither is
                 // group-scoped, so `teacher.leads` does not apply.
-                Route::get('/groups', [TeacherGroupsController::class, 'index'])->middleware([\App\Http\Middleware\AppendClassLocation::class, \App\Http\Middleware\AppendReportCardCriteria::class]);
+                Route::get('/groups', [TeacherGroupsController::class, 'index'])->middleware([\App\Http\Middleware\AppendClassLocation::class, \App\Http\Middleware\AppendReportCardCriteria::class, \App\Http\Middleware\AppendTranscriptAccess::class]);
                 Route::get('/avatars', [ContactAvatarController::class, 'catalogue']);
                 Route::get('/behavior-skills', [BehaviorSkillsController::class, 'index']);
 
@@ -161,7 +161,7 @@ Route::prefix('teacher')
                     ->middleware('teacher.leads')
                     ->group(function () {
 
-                        Route::get('/', [TeacherGroupsController::class, 'show'])->middleware([\App\Http\Middleware\AppendClassLocation::class, \App\Http\Middleware\AppendReportCardCriteria::class]);
+                        Route::get('/', [TeacherGroupsController::class, 'show'])->middleware([\App\Http\Middleware\AppendClassLocation::class, \App\Http\Middleware\AppendReportCardCriteria::class, \App\Http\Middleware\AppendTranscriptAccess::class]);
 
                         // ARABIC — the letters tracker and the daily Arabic notes.
                         // `teacher.teaches:arabic` refuses a teacher whose
@@ -317,6 +317,9 @@ Route::prefix('teacher')
                             Route::get('/report-card-criteria', [\App\Http\Controllers\AdminDashboard\ReportCardCriteriaController::class, 'show']);
                             Route::put('/report-card-criteria', [\App\Http\Controllers\AdminDashboard\ReportCardCriteriaController::class, 'update']);
                         });
+                        Route::get('/transcript-finals', [\App\Http\Controllers\Teacher\TranscriptFinalsController::class, 'index'])->middleware('capability:transcripts');
+                        Route::put('/members/{membership_id}/transcript-finals', [\App\Http\Controllers\Teacher\TranscriptFinalsController::class, 'save'])->middleware('capability:transcripts');
+
                         Route::get('/report-cards', [ReportCardController::class, 'index']);
                         Route::get('/members/{membership_id}/report-card', [ReportCardController::class, 'show']);
 

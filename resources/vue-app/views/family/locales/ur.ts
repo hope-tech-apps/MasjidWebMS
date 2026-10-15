@@ -28,6 +28,31 @@
  * extra.
  */
 export const UR: Record<string, string> = {
+    // Transcript additions machine-drafted; fluent review pending.
+    tr_title: "تعلیمی ریکارڈ",
+    tr_unofficial: "غیر سرکاری",
+    tr_download: "غیر سرکاری PDF ڈاؤن لوڈ کریں",
+    tr_plain: "سادہ GPA",
+    tr_weighted: "وزنی GPA",
+    tr_attempted: "لیے گئے کریڈٹ",
+    tr_earned: "حاصل کردہ کریڈٹ",
+    tr_course: "مضمون",
+    tr_final: "حتمی گریڈ",
+    tr_level: "سطح",
+    tr_regular: "عام",
+    tr_honors: "Honors",
+    tr_ap: "AP",
+    tr_from: "سے",
+    tr_file_only: "صرف سابقہ ریکارڈ کی فائل ہے۔ مضامین درج نہیں ہوئے؛ یہ سال کریڈٹ یا GPA میں شامل نہیں۔",
+    tr_consent: "میں اس اسکول کو اپنے بچے کا سرکاری تعلیمی ریکارڈ {x} کے ساتھ بانٹنے کی اجازت دیتا ہوں۔ وصول کرنے والے دفتر کو قبول کرنا ہوگا۔ قبول ہونے سے پہلے درخواست واپس لے سکتا ہوں۔",
+    tr_agree: "میں سرکاری ریکارڈ بانٹنے پر رضامند ہوں",
+    tr_withdraw: "بانٹنے کی درخواست واپس لیں",
+    tr_pending: "خاندان کی رضامندی درج ہوگئی۔ وصول کرنے والے دفتر کی منظوری کا انتظار ہے۔",
+    tr_error: "تعلیمی ریکارڈ لوڈ یا محفوظ نہیں ہوسکا۔ دوبارہ کوشش کریں۔",
+    tr_none: "درج نہیں",
+    tr_date_of_birth: "تاریخ پیدائش",
+    tr_attended: "تعلیم کی تاریخیں",
+    tr_cumulative: "مجموعی",
     // Re-enrolment additions machine-drafted; fluent review pending.
     reenrol_title: "دوبارہ داخلہ",
     reenrol_returning: "اگلے سال واپس آئیں گے",

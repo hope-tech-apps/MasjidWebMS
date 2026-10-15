@@ -164,6 +164,11 @@ class MemberAccountDeletion
         'registrations' => ['contact_id'],
         // Issued academic history survives an account deletion, as its roster records do.
         'term_grades' => ['contact_id'],
+        'transcript_finals' => ['contact_id'],
+        'transcript_prior_years' => ['contact_id'],
+        'transcript_issues' => ['contact_id'],
+        'transcript_share_requests' => ['contact_id', 'consented_by_contact_id', 'withdrawn_by_contact_id'],
+        'transcript_received' => ['contact_id'],
     ];
 
     /**
@@ -695,7 +700,7 @@ class MemberAccountDeletion
 
             // These optional logs do not exist in the code-before-migration deployment window.
             // Only a genuinely missing table skips: a failed schema check must stop erasure.
-            if (in_array($table, ['tuition_children', 'tuition_guardians', 'tuition_lines', 'tuition_checkouts', 'tuition_mails', 'school_reenrolment_answers', 'school_reenrolment_deposits', 'school_admission_mails', 'period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
+            if (in_array($table, ['transcript_finals', 'transcript_prior_years', 'transcript_issues', 'transcript_share_requests', 'transcript_received', 'tuition_children', 'tuition_guardians', 'tuition_lines', 'tuition_checkouts', 'tuition_mails', 'school_reenrolment_answers', 'school_reenrolment_deposits', 'school_admission_mails', 'period_attendance_records', 'attendance_absence_mails', 'attendance_absence_mail_children', 'term_grades'], true)
                 && ! \Illuminate\Support\Facades\Schema::hasTable($table)) continue;
 
             $held = DB::table($table)

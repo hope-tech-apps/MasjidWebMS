@@ -28,6 +28,31 @@
  * extra.
  */
 export const PS: Record<string, string> = {
+    // Transcript additions machine-drafted; fluent review pending.
+    tr_title: "تعلیمي ریکارډ",
+    tr_unofficial: "غیر رسمي",
+    tr_download: "غیر رسمي PDF ښکته کړئ",
+    tr_plain: "ساده GPA",
+    tr_weighted: "وزن لرونکی GPA",
+    tr_attempted: "اخیستل شوي کریډیټونه",
+    tr_earned: "ترلاسه شوي کریډیټونه",
+    tr_course: "مضمون",
+    tr_final: "وروستۍ نمره",
+    tr_level: "کچه",
+    tr_regular: "عادي",
+    tr_honors: "Honors",
+    tr_ap: "AP",
+    tr_from: "له",
+    tr_file_only: "یوازې د پخواني ریکارډ فایل دی. مضمونونه نه دي ثبت شوي؛ دا کال په کریډیټ او GPA کې نه شمېرل کېږي.",
+    tr_consent: "زه دې ښوونځي ته اجازه ورکوم چې زما د ماشوم رسمي تعلیمي ریکارډ له {x} سره شریک کړي. د ترلاسه کوونکي دفتر منل اړین دي. له منلو مخکې غوښتنه بېرته اخیستلی شم.",
+    tr_agree: "زه د رسمي ریکارډ له شریکولو سره موافق یم",
+    tr_withdraw: "د شریکولو غوښتنه بېرته واخلئ",
+    tr_pending: "د کورنۍ رضایت ثبت شو. د ترلاسه کوونکي دفتر منلو ته انتظار دی.",
+    tr_error: "تعلیمي ریکارډ بار یا خوندي نه شو. بیا هڅه وکړئ.",
+    tr_none: "نه دی ثبت شوی",
+    tr_date_of_birth: "د زېږېدو نېټه",
+    tr_attended: "د زده کړې نېټې",
+    tr_cumulative: "ټولیز",
     // Re-enrolment additions machine-drafted; fluent review pending.
     reenrol_title: "بیا نوم لیکنه",
     reenrol_returning: "راتلونکی کال بېرته راځي",

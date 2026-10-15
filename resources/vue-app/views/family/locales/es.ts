@@ -28,6 +28,31 @@
  * extra.
  */
 export const ES: Record<string, string> = {
+    // Transcript additions machine-drafted; fluent review pending.
+    tr_title: "Expediente académico",
+    tr_unofficial: "No oficial",
+    tr_download: "Descargar PDF no oficial",
+    tr_plain: "Promedio GPA simple",
+    tr_weighted: "Promedio GPA ponderado",
+    tr_attempted: "Créditos intentados",
+    tr_earned: "Créditos obtenidos",
+    tr_course: "Materia",
+    tr_final: "Calificación final",
+    tr_level: "Nivel",
+    tr_regular: "Regular",
+    tr_honors: "Honors",
+    tr_ap: "AP",
+    tr_from: "De",
+    tr_file_only: "Solo archivo anterior. No se ingresaron materias; este año no aporta créditos ni GPA.",
+    tr_consent: "Autorizo a esta escuela a compartir el expediente oficial de mi hijo con {x}. La oficina receptora debe aceptar. Puedo retirar la solicitud antes de su aceptación.",
+    tr_agree: "Acepto compartir el expediente oficial",
+    tr_withdraw: "Retirar solicitud de compartir",
+    tr_pending: "Consentimiento familiar registrado. Pendiente de aceptación por la oficina receptora.",
+    tr_error: "No se pudo cargar o guardar el expediente. Inténtelo de nuevo.",
+    tr_none: "No registrado",
+    tr_date_of_birth: "Fecha de nacimiento",
+    tr_attended: "Fechas de asistencia",
+    tr_cumulative: "Acumulado",
     // Re-enrolment additions machine-drafted; fluent review pending.
     reenrol_title: "Reinscripción",
     reenrol_returning: "Regresará el próximo año",

@@ -428,6 +428,7 @@ class TeacherMultiSchoolTest extends TestCase
         $b = TeacherRealmWorld::seed($this->schoolB, $this->classB, $this->teacher, $skillB, 'B', true);
         $a2 = TeacherRealmWorld::seed($this->schoolA, $this->makeClass($this->schoolA, 'MARK-A2-CLASS'), $this->teacher, $skillA, 'A2', false);
         $b2 = TeacherRealmWorld::seed($this->schoolB, $this->makeClass($this->schoolB, 'MARK-B2-CLASS'), $this->teacher, $skillB, 'B2', false);
+        foreach ([$a,$b,$a2,$b2] as $world) $this->seedTranscriptSweep($world);
         $third = $this->makeSchool('Gamma School');
         Sanctum::actingAs($this->teacher, ['staff']);
 
@@ -482,6 +483,7 @@ class TeacherMultiSchoolTest extends TestCase
         ];
 
         foreach ($routes as $route) {
+            $this->transcriptSweepMode(str_contains($route['suffix'], '/transcript-finals'));
             $this->periodSweepMode(str_starts_with($route['suffix'], '/period-attendance/'));
             $key = "{$route['method']} {$route['suffix']}";
             $spec = $specs[$key] ?? [];
@@ -561,6 +563,7 @@ class TeacherMultiSchoolTest extends TestCase
 
         foreach ([$a, $b] as $world) {
             foreach ($ordered as $route) {
+                $this->transcriptSweepMode(str_contains($route['suffix'], '/transcript-finals'));
                 $this->periodSweepMode(str_starts_with($route['suffix'], '/period-attendance/'));
                 $key = "{$route['method']} {$route['suffix']}";
                 $spec = $specs[$key] ?? [];
@@ -663,6 +666,29 @@ class TeacherMultiSchoolTest extends TestCase
 
 
         $this->assertSame([], $failures, count($failures)." sweep failure(s) over {$attacks} refused requests and {$controls} controls:\n".implode("\n", $failures));
+    }
+
+    private function seedTranscriptSweep(TeacherRealmWorld $world): void
+    {
+        app(TenantContext::class)->runWithout(function () use($world) {
+            $year=\App\Models\SchoolYear::firstOrCreate(['masjid_id'=>$world->school->id,'label'=>'Transcript practice year'],['first_day'=>'2024-08-01','last_day'=>'2025-06-30','meeting_weekdays'=>[1]]);
+            $term=\App\Models\SchoolTerm::firstOrCreate(['masjid_id'=>$world->school->id,'school_year_id'=>$year->id,'position'=>1],['name'=>'Transcript term','starts_on'=>'2024-08-01','ends_on'=>'2024-10-31']);
+            $card=\App\Models\ReportCard::create(['masjid_id'=>$world->school->id,'group_id'=>$world->class->id,'group_membership_id'=>$world->student->id,'school_year'=>'2024-2025','term'=>1,'type'=>'report_card','grade_label'=>'9th']);
+            $card->forceFill(['school_term_id'=>$term->id,'published_at'=>now()])->save();
+            \App\Models\TermGrade::create(['masjid_id'=>$world->school->id,'contact_id'=>$world->student->contact_id,'class_subject_id'=>$world->subject->id,'school_term_id'=>$term->id,'report_card_id'=>$card->id,'subject'=>$world->subject->name,'percentage'=>'95.00','final_letter'=>'A','published_at'=>now()]);
+            \App\Models\TranscriptCourse::firstOrCreate(['masjid_id'=>$world->school->id,'class_subject_id'=>$world->subject->id],['credit_hundredths'=>100,'level'=>'regular']);
+        });
+    }
+
+    /** Transcript routes get positive ON controls, while the existing card paths keep their OFF policy. */
+    private function transcriptSweepMode(bool $enabled): void
+    {
+        foreach ([$this->schoolA,$this->schoolB] as $school) {
+            $row=$school->fresh(); $values=$row->capability_overrides ?? [];
+            if ($enabled) { $values['transcripts']=true; $values['letter_grades']=true; }
+            else unset($values['transcripts'],$values['letter_grades']);
+            $row->forceFill(['capability_overrides'=>$values])->save();
+        }
     }
 
     /** Period routes get positive ON controls; ordinary day-register controls retain their OFF path. */
@@ -805,6 +831,11 @@ class TeacherMultiSchoolTest extends TestCase
             // URL's school and class can be foreign to it.
             'PUT /groups/{group_id}/grade-weights' => [
                 'body' => fn () => ['weights' => ['test' => 40, 'quiz' => 20, 'homework' => 10, 'classwork' => 10, 'other' => 10]],
+            ],
+
+            'PUT /groups/{group_id}/members/{membership_id}/transcript-finals' => [
+                'body' => fn (TeacherRealmWorld $w) => ['class_subject_id'=>$w->subject->id,'school_year_id'=>DB::table('school_years')->where('masjid_id',$w->school->id)->where('label','Transcript practice year')->value('id'),'letter'=>'A','reason'=>'Sweep final evidence'],
+                'refuse' => $bodyRefusal,
             ],
 
             // -- report cards. The period is named so the fixture card is the one prepared.

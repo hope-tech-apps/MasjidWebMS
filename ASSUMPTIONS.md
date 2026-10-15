@@ -573,3 +573,9 @@ The owner's served-grade rule supersedes the earlier initial-proposal assumption
 - Existing free-text reasons are private by default, including scheduled/void history. Only FeePlan labels or fixed friendly kind names supply safe legacy descriptions.
 - A current school year means a dated year containing school-local today; otherwise the account's first financial date is used, and an empty account starts today.
 - New non-English description/coming-up wording remains machine-drafted pending fluent review. Local verification uses invented fixtures and faked mail/Stripe; no production interaction.
+
+## 2026-10-14 — Transcripts
+
+A year's first published dated report-card grade snapshot is its historical grade label; there is no separate yearly grade record to invent. Unknown historical grades and years before grade 9 stay off the transcript. Current GPA policy and course settings govern live documents; issued snapshots freeze their original policy and figures. Missing percentages are ungraded, never zero. Points/extras input ceilings (10.00) and credit ceiling (100.00) are validation limits, not measured course data.
+
+The guide/demo school walk is a later guides session and does not authorize live data changes here. New translation keys are machine drafts, including the additions in the existing Arabic table. Local SQLite/mounted Vue/PDF-byte checks do not prove MySQL DDL or concurrency, real-browser geometry/accessibility, fluent translations, CI or deployed behavior.

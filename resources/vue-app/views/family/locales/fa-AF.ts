@@ -28,6 +28,31 @@
  * extra.
  */
 export const FA_AF: Record<string, string> = {
+    // Transcript additions machine-drafted; fluent review pending.
+    tr_title: "کارنامه تحصیلی",
+    tr_unofficial: "غیر رسمی",
+    tr_download: "دریافت PDF غیر رسمی",
+    tr_plain: "معدل ساده GPA",
+    tr_weighted: "معدل وزنی GPA",
+    tr_attempted: "کریدت‌های گرفته‌شده",
+    tr_earned: "کریدت‌های کسب‌شده",
+    tr_course: "مضمون",
+    tr_final: "نمره نهایی",
+    tr_level: "سطح",
+    tr_regular: "عادی",
+    tr_honors: "Honors",
+    tr_ap: "AP",
+    tr_from: "از",
+    tr_file_only: "تنها فایل کارنامه قبلی است. مضمون‌ها ثبت نشده‌اند؛ این سال در کریدت یا GPA حساب نمی‌شود.",
+    tr_consent: "به این مکتب اجازه می‌دهم کارنامه رسمی فرزندم را با {x} شریک سازد. دفتر دریافت‌کننده باید بپذیرد. پیش از پذیرش می‌توانم درخواست را پس بگیرم.",
+    tr_agree: "با شریک‌سازی کارنامه رسمی موافقم",
+    tr_withdraw: "پس گرفتن درخواست شریک‌سازی",
+    tr_pending: "رضایت خانواده ثبت شد. در انتظار پذیرش دفتر دریافت‌کننده است.",
+    tr_error: "کارنامه بارگیری یا ذخیره نشد. دوباره کوشش کنید.",
+    tr_none: "ثبت نشده",
+    tr_date_of_birth: "تاریخ تولد",
+    tr_attended: "تاریخ‌های تحصیل",
+    tr_cumulative: "مجموعی",
     // Re-enrolment additions machine-drafted; fluent review pending.
     reenrol_title: "ثبت نام دوباره",
     reenrol_returning: "سال آینده برمی‌گردد",

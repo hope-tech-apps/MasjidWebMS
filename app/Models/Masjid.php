@@ -558,6 +558,7 @@ class Masjid extends Model implements HasMedia
         if (! \App\Support\PeriodAttendanceMode::enabled($this)) unset($out['period_attendance']);
         if (! \App\Support\StudentAllergies::enabled($this)) unset($out['student_allergies']);
         if (! \App\Support\ReportCardCriteria::enabled($this)) unset($out['report_card_criteria']);
+        if (! \App\Support\TranscriptMode::enabled($this)) unset($out['transcripts']);
         if (! \App\Support\LetterGrades::offered($this)) unset($out['letter_grades']);
 
         foreach (['app_member_questions','app_volunteer_entry','lesson_plan_photo_fill'] as $key) if (! $this->hasCapability($key)) unset($out[$key]);
@@ -603,6 +604,7 @@ class Masjid extends Model implements HasMedia
     public function attributesToArray(): array
     {
         $attributes = parent::attributesToArray();
+        if (! \App\Support\TranscriptMode::enabled($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['transcripts']);
         if (! \App\Support\ReportCardCriteria::enabled($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['report_card_criteria']);
         if (! \App\Support\LetterGrades::offered($this) && is_array($attributes['capability_overrides'] ?? null)) unset($attributes['capability_overrides']['letter_grades']);
         if (! \App\Support\SchoolSettings::calendarTerms($this)

@@ -290,9 +290,9 @@ class Contact extends Model implements AuthenticatableContract
     /**
      * THE ONE READER of `date_of_birth`: the day as 'Y-m-d', or null.
      *
-     * FOR THE OFFICE ONLY when the date itself is what leaves: the birth-date
-     * routes and the contacts file of the school records export. Everything
-     * else that needs it (the age on a roster, a merge) goes through
+     * For office birth-date routes/exports and the owner's authorised academic
+     * transcripts: a guardian's own child's copy and a consented school transfer.
+     * Teachers receive age only. Other age calculations and merges go through
      * App\Support\StudentAge or reads it here and lets nothing but a whole
      * number out. No other code reads the attribute.
      *

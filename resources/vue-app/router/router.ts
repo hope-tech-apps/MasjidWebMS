@@ -74,7 +74,7 @@ router.beforeEach((to, from, next) => {
                             && masjidStore.masjid?.capabilities
                             && !to.meta.requiresAnyCapability.some(key => hasGrant(masjidStore.masjid,key))) {
                             next('/auth/404');
-                        } else if (['school_reenrolment', 'school_applications', 'app_bottom_tabs', 'school_timetable', 'family_duty_rota'].includes(to.meta.requiresCapability as string)
+                        } else if (['transcripts', 'school_reenrolment', 'school_applications', 'app_bottom_tabs', 'school_timetable', 'family_duty_rota'].includes(to.meta.requiresCapability as string)
                             && masjidStore.masjid?.capabilities
                             && masjidStore.masjid.capabilities[to.meta.requiresCapability as string] !== true) {
                             next('/auth/404');

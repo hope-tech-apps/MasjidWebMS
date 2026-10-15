@@ -1935,6 +1935,16 @@ class FamilyPortalTest extends TestCase
             }
         }
 
+        // Transcript writes are guardian consent/withdrawal only, behind the independent OFF grant.
+        $transcripts=array_values(array_filter($writes,fn($write)=>str_contains($write,'/transcript/')));
+        sort($transcripts);
+        $this->assertSame([
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/transcript/shares/{share_id}/consent',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/transcript/shares/{share_id}/withdraw',
+        ],$transcripts);
+        foreach (\Illuminate\Support\Facades\Route::getRoutes() as $route) if (str_contains($route->uri(), '/transcript')) $this->assertContains('capability:transcripts',$route->gatherMiddleware());
+        $writes=array_values(array_diff($writes,$transcripts));
+
         // Admissions adds one answer and one read-only quote POST, both behind the independent OFF grant.
         $admissions = array_values(array_filter($writes, fn ($write) => str_contains($write, '/reenrolment/')));
         sort($admissions);

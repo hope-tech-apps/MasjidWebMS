@@ -1425,6 +1425,32 @@ Route::prefix('admin')->group(function () {
                         Route::put('/', 'update');
                     });
 
+                Route::prefix('{masjid_id}/transcripts')->middleware(['capability:transcripts', 'permission:view contacts'])
+                    ->controller(\App\Http\Controllers\AdminDashboard\TranscriptsController::class)->group(function () {
+                        Route::get('/', 'index');
+                        Route::get('/students/{contact_id}', 'show');
+                        Route::get('/students/{contact_id}/prior/{prior_id}/pdf', 'priorPdf');
+                        Route::get('/issues/{issue_id}/pdf', 'issuePdf');
+                        Route::get('/inbox', 'inbox');
+                        Route::get('/inbox/{share_id}', 'inbox');
+                        Route::get('/received/{received_id}', 'received');
+                        Route::get('/received/{received_id}/pdf', 'receivedPdf');
+                        Route::middleware('permission:manage contacts')->group(function () {
+                            Route::put('/settings', 'settings');
+                            Route::put('/courses/{class_subject_id}', 'course');
+                            Route::put('/students/{contact_id}/finals', 'finalGrade');
+                            Route::post('/students/{contact_id}/prior', 'prior');
+                            Route::put('/students/{contact_id}/prior/{prior_id}', 'prior');
+                            Route::post('/students/{contact_id}/issues', 'issue');
+                            Route::post('/students/{contact_id}/shares', 'share');
+                            Route::post('/shares/{share_id}/paper-consent', 'paper');
+                            Route::post('/shares/{share_id}/withdraw', 'withdraw');
+                            Route::post('/inbox/{share_id}/accept', 'accept');
+                            Route::post('/inbox/{share_id}/decline', 'decline');
+                            Route::put('/received/{received_id}/student', 'link');
+                        });
+                    });
+
                 Route::prefix('{masjid_id}/letter-grade-settings')->middleware(['capability:letter_grades', 'permission:manage contacts'])
                     ->controller(\App\Http\Controllers\AdminDashboard\LetterGradeSettingsController::class)->group(function () {
                         Route::get('/', 'show');

@@ -97,6 +97,7 @@ class GroupResource extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $resource): void {
+            \App\Support\TranscriptRecords::assertFileRemoval($resource);
             if ($resource->path) {
                 $resource->storage()->delete($resource->path);
             }

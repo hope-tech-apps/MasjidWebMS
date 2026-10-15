@@ -20,6 +20,31 @@
  * family-i18n-keys.test.ts check coverage and placeholders.
  */
 export const FR: Record<string, string> = {
+    // Transcript additions machine-drafted; fluent review pending.
+    tr_title: "Relevé de notes",
+    tr_unofficial: "Non officiel",
+    tr_download: "Télécharger le PDF non officiel",
+    tr_plain: "Moyenne GPA simple",
+    tr_weighted: "Moyenne GPA pondérée",
+    tr_attempted: "Crédits tentés",
+    tr_earned: "Crédits acquis",
+    tr_course: "Matière",
+    tr_final: "Note finale",
+    tr_level: "Niveau",
+    tr_regular: "Ordinaire",
+    tr_honors: "Honors",
+    tr_ap: "AP",
+    tr_from: "De",
+    tr_file_only: "Fichier antérieur uniquement. Aucune matière saisie ; cette année ne compte ni crédits ni GPA.",
+    tr_consent: "J’autorise cette école à partager le relevé officiel de mon enfant avec {x}. Le bureau destinataire doit accepter. Je peux retirer la demande avant son acceptation.",
+    tr_agree: "J’accepte le partage du relevé officiel",
+    tr_withdraw: "Retirer la demande de partage",
+    tr_pending: "Consentement familial enregistré. En attente de l’acceptation du bureau destinataire.",
+    tr_error: "Le relevé n’a pas pu être chargé ou enregistré. Veuillez réessayer.",
+    tr_none: "Non renseigné",
+    tr_date_of_birth: "Date de naissance",
+    tr_attended: "Dates de scolarité",
+    tr_cumulative: "Cumulatif",
     // Re-enrolment additions machine-drafted; fluent review pending.
     reenrol_title: "Réinscription",
     reenrol_returning: "Reviendra l’année prochaine",

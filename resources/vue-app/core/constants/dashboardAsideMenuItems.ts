@@ -395,6 +395,11 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin', 'MasjidAdmin'], requiresOrgTypes: ['school'], requiresCapability: 'school_reenrolment'
     },
     {
+        title: 'Transcripts and GPA', to: '/masjid/transcripts',
+        svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="17" rx="2" stroke="white"/></svg>',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'], requiresOrgTypes: ['school'], requiresCapability: 'transcripts'
+    },
+    {
         title: 'Applications', to: '/masjid/applications',
         svg_icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="17" rx="2" stroke="white"/><path d="M8 9h8M8 13h8M8 17h5" stroke="white"/></svg>',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'], requiresOrgTypes: ['school'], requiresCapability: 'school_applications'

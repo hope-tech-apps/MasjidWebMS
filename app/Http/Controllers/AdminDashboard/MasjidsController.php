@@ -373,10 +373,11 @@ class MasjidsController extends Controller
     private function withoutHiddenCalendarTerms($response, string $masjid_id)
     {
         $org=\App\Support\ClassSubjectMode::loadedOrganisation((int)$masjid_id);
-        foreach (['report_card_criteria','letter_grades','app_member_questions','app_volunteer_entry','lesson_plan_photo_fill'] as $key) {
+        foreach (['transcripts','report_card_criteria','letter_grades','app_member_questions','app_volunteer_entry','lesson_plan_photo_fill'] as $key) {
             $available = match ($key) {
                 'report_card_criteria' => \App\Support\ReportCardCriteria::enabled($org),
                 'letter_grades' => \App\Support\LetterGrades::offered($org),
+                'transcripts' => \App\Support\TranscriptMode::enabled($org),
                 default => $org?->hasCapability($key) || request()->boolean('include_'.$key),
             };
             if ($available) continue;

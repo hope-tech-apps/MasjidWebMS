@@ -2348,6 +2348,7 @@
             <!-- ====================================================== REPORTS -->
             <ReportCardCriteriaEditor v-else-if="activeTab === 'criteria' && group?.report_card_criteria_enabled" :school-id="masjidId" :group-id="Number(groupId)" />
             <section v-else-if="activeTab === 'reports'">
+                <TeacherTranscriptFinals v-if="group?.transcripts_enabled === true" :school-id="masjidId" :group-id="groupId" />
 
                 <!-- ------------------------------------------- the whole class -->
                 <template v-if="!openCard">
@@ -2660,6 +2661,7 @@
 </template>
 
 <script setup lang="ts">
+import TeacherTranscriptFinals from '@/components/classes/TeacherTranscriptFinals.vue';
 import GroupAttendanceTab from '@/views/dashboard/groups/GroupAttendanceTab.vue';
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText, uploadErrorText } from '@/core/services/ApiErrors';

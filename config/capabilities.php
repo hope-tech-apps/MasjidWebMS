@@ -651,6 +651,13 @@ return [
         'catalogue_when_off' => false,
     ],
 
+    'transcripts' => [
+        'kind' => 'grant', 'group' => 'school', 'label' => 'Transcripts and GPA',
+        'description' => 'High-school credits, exact GPA, official issues and consent-based school transfers.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false, 'catalogue_when_off' => false,
+    ],
+
     'letter_grades' => [
         'kind' => 'grant',
         'group' => 'school',

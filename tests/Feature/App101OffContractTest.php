@@ -73,7 +73,15 @@ class App101OffContractTest extends TestCase
             $expected[] = 'select exists(select * from "'.$table.'" where ('.implode(' or ', array_map(fn ($c) => '"'.$c.'" = ?', $columns)).')) as "exists"';
         }
         $this->assertSame($expected, $tuition);
-        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'school_reenrolment_') && !str_contains($q,'school_admission_mails') && !str_contains($q,'tuition_') && !str_contains($q,'member_question_answers') && !str_contains($q,'attendance_absence_mail') && !str_contains($q,'term_grades') && !str_contains($q,'period_attendance_records')));
+        // Transcript academic records add exactly five guarded reads; retain the original fixture.
+        foreach (['transcript_finals'=>['contact_id'], 'transcript_prior_years'=>['contact_id'], 'transcript_issues'=>['contact_id'], 'transcript_share_requests'=>['contact_id','consented_by_contact_id','withdrawn_by_contact_id'], 'transcript_received'=>['contact_id']] as $table=>$columns) {
+            $condition=implode(' or ',array_map(fn($column)=>'"'.$column.'" = ?', $columns));
+            $this->assertSame([
+                'select exists (select 1 from "main".sqlite_master where name = \''.$table.'\' and type = \'table\') as "exists"',
+                'select exists(select * from "'.$table.'" where ('.$condition.')) as "exists"',
+            ],array_values(array_filter($sql,fn($query)=>str_contains($query,$table))));
+        }
+        $out['member:delete']['sql']=array_values(array_filter($sql,fn($q)=>!str_contains($q,'transcript_') && !str_contains($q,'school_reenrolment_') && !str_contains($q,'school_admission_mails') && !str_contains($q,'tuition_') && !str_contains($q,'member_question_answers') && !str_contains($q,'attendance_absence_mail') && !str_contains($q,'term_grades') && !str_contains($q,'period_attendance_records')));
         $this->assertSame(json_decode(file_get_contents(base_path('tests/fixtures/app101-off-109ce744.json')),true),$out);
     }
 }

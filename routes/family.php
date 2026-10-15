@@ -214,6 +214,14 @@ Route::prefix('family')
         Route::prefix('masjids/{masjid_id}')->group(function () {
 
             Route::get('/me', [MeController::class, 'show']);
+            Route::prefix('groups/{group_id}/members/{membership_id}/transcript')->middleware('capability:transcripts')
+                ->controller(\App\Http\Controllers\Family\TranscriptsController::class)->group(function () {
+                    Route::get('/', 'show');
+                    Route::get('/pdf', 'pdf');
+                    Route::post('/shares/{share_id}/consent', 'consent');
+                    Route::post('/shares/{share_id}/withdraw', 'withdraw');
+                });
+
 
             Route::prefix('tuition')->middleware('capability:tuition_ledger')
                 ->controller(\App\Http\Controllers\Family\TuitionController::class)->group(function () {
@@ -267,7 +275,7 @@ Route::prefix('family')
             // children they hold in each. Every route below is addressed with
             // ids discovered here.
             Route::get('/groups', [GroupsController::class, 'index']);
-            Route::get('/groups/{group_id}', [GroupsController::class, 'show']);
+            Route::get('/groups/{group_id}', [GroupsController::class, 'show'])->middleware(\App\Http\Middleware\AppendTranscriptAccess::class);
 
             // The class story. Consent-gated exactly like the staff feed, and a
             // PHOTO's attachment route serves BYTES rather than a signed URL, on

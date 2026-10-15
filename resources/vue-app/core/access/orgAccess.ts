@@ -179,7 +179,7 @@ export function menuItemState(
     }
 
     if (item.requiresAnyCapability && !item.requiresAnyCapability.some(key => hasGrant(masjid,key))) return 'hidden';
-    if (['school_reenrolment', 'school_applications'].includes(item.requiresCapability ?? '') && !hasGrant(masjid, item.requiresCapability!)) return 'hidden';
+    if (['transcripts', 'school_reenrolment', 'school_applications'].includes(item.requiresCapability ?? '') && !hasGrant(masjid, item.requiresCapability!)) return 'hidden';
     if (item.requiresCapability === 'app_bottom_tabs' && !hasGrant(masjid, 'app_bottom_tabs')) return 'hidden';
     if (item.requiresCapability === 'tuition_ledger' && !hasGrant(masjid, 'tuition_ledger')) return 'hidden';
     if (item.requiresCapability === 'family_duty_rota' && !hasGrant(masjid, 'family_duty_rota')) return 'hidden';

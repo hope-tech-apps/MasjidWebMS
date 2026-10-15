@@ -96,6 +96,13 @@ return [
     | The value is the reason, printed by `--dry-run`.
     */
     'drop_rows' => [
+        'transcript_received' => 'Immutable snapshots and private file pointers include child names and dates of birth; all receiving copies are PII.',
+        'transcript_share_requests' => 'Child headers, consent evidence and guardian/office histories are private; delete before issues.',
+        'transcript_issues' => 'Official JSON and private PDF pointers contain student identity and academic records.',
+        'transcript_prior_years' => 'Prior-school free text, courses, dates and attachment links are PII.',
+        'transcript_finals' => 'Staff-only reasons and override attribution are academic PII.',
+        'transcript_courses' => 'School course configuration is reset with transcripts on staging.',
+        'transcript_settings' => 'Reset the complete transcript policy with its dependent academic records.',
         'school_admission_mails' => 'Guardian emails, child names and school delivery text; clear pending sends and outcomes before history.',
         'school_application_histories' => 'Staff notes and actor history for applications.',
         'school_applications' => 'Application decisions belong to production responses, not staging.',

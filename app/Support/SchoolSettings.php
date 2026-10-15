@@ -167,6 +167,7 @@ final class SchoolSettings
     /** Evaluate the intended map under the organisation mutex, before any writes. */
     public static function assertSubjectWorkChange(Masjid $school, array $changes): void
     {
+        TranscriptMode::assertChanges($school, $changes);
         if (($changes['report_card_criteria'] ?? false) === true && $school->orgType() !== 'school') {
             throw \Illuminate\Validation\ValidationException::withMessages(['capability'=>['Report-card criteria are available to school organisations only.']]);
         }

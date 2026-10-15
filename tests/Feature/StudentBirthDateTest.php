@@ -168,6 +168,8 @@ class StudentBirthDateTest extends TestCase
             'app/Models/Contact.php',
             // Sibling ordering only: no birth date or age is returned by billing.
             'app/Services/FamilyLedger/TuitionCharges.php',
+            'app/Services/Schools/TranscriptShares.php',
+            'app/Services/Schools/Transcripts.php',
             'app/Support/StudentAge.php',
         ], $this->filesCalling('->dateOfBirthOrNull('), 'who may READ a date of birth');
 

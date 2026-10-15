@@ -104,6 +104,7 @@
                         {{ t('tab_attendance') }}
                     </button>
                 </li>
+                <li v-if="group.transcripts_enabled === true && group.children?.length" class="nav-item"><button class="nav-link" :class="{ active: tab === 'transcript' }" @click="tab = 'transcript'">{{ t('tr_title') }}</button></li>
                 <!-- "Handouts", not "Resources" — that is the word a parent uses. -->
                 <li class="nav-item">
                     <button class="nav-link" :class="{ active: tab === 'handouts' }" @click="tab = 'handouts'">
@@ -111,6 +112,8 @@
                     </button>
                 </li>
             </ul>
+
+            <FamilyTranscript v-if="tab === 'transcript' && group?.transcripts_enabled === true" v-for="child in group.children" :key="child.membership_id" :masjid-id="masjidId" :group-id="groupId" :membership-id="child.membership_id" />
 
             <FamilyReenrolment v-if="reenrolmentCampaigns.length && group.children?.length" :masjid-id="masjidId" :group-id="groupId" :children="group.children" :campaigns="reenrolmentCampaigns" />
 
@@ -2271,6 +2274,7 @@ watch(tab, next => {
 });
 
 // The disabled path never loads the new screen or starts its requests.
+const FamilyTranscript = defineAsyncComponent(() => import('@/views/family/FamilyTranscript.vue'));
 const FamilyReenrolment = defineAsyncComponent(() => import('@/views/family/FamilyReenrolment.vue'));
 </script>
 

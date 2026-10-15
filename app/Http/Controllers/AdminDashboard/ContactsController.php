@@ -301,6 +301,7 @@ class ContactsController extends Controller
 
         \Illuminate\Support\Facades\DB::transaction(function () use ($source, $target, $actor, $request, &$familyLogin, &$roster, &$birthDate) {
             app(\App\Services\Schools\PeriodAttendance::class)->mergeContacts($source, $target);
+            \App\Support\TranscriptRecords::assertContactMerge($source);
             \App\Services\Schools\SchoolAdmissionsRecords::merge($source, $target);
             \App\Support\StudentAllergies::merge($source, $target, $actor?->id);
 

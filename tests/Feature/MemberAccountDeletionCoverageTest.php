@@ -132,6 +132,11 @@ class MemberAccountDeletionCoverageTest extends TestCase
             'registrants' => ['contact_id'],
             'registrations' => ['contact_id'],
             'term_grades' => ['contact_id'],
+            'transcript_finals' => ['contact_id'],
+            'transcript_prior_years' => ['contact_id'],
+            'transcript_issues' => ['contact_id'],
+            'transcript_share_requests' => ['contact_id', 'consented_by_contact_id', 'withdrawn_by_contact_id'],
+            'transcript_received' => ['contact_id'],
         ], MemberAccountDeletion::OFFICE_RECORDS);
 
         $this->assertSame([

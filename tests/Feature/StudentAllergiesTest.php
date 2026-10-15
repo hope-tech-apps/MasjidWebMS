@@ -288,6 +288,8 @@ class StudentAllergiesTest extends TestCase
         $device=\App\Models\MobileAppUser::create(['masjid_id'=>$this->school->id,'contact_id'=>$this->child->id,'device_id'=>'practice-device','user_agent'=>'Practice']);
         config(['member_portal.enabled'=>true,'member_portal.masjid_ids'=>[]]);
         $params=$this->seedPrivacyRecords();
+        // Positive transcript reads, including real PDF bytes, must remain clean of health data.
+        $this->school->forceFill(['capability_overrides'=>array_merge($this->school->capability_overrides ?? [],['transcripts'=>true,'letter_grades'=>true])])->save();
         $intakeYear = \App\Models\SchoolYear::create(['masjid_id'=>$this->school->id,'label'=>'Practice intake year','first_day'=>'2027-08-01','last_day'=>'2028-06-30']);
         $intake = \App\Models\SchoolReenrolment::create(['masjid_id'=>$this->school->id,'school_year_id'=>$intakeYear->id,'opens_on'=>'2026-01-01','closes_on'=>'2026-12-31']);
         $params['reenrolment_id'] = $intake->id;
