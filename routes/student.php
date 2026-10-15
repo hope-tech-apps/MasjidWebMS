@@ -4,6 +4,7 @@ use App\Http\Controllers\Student\AuthController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('student/masjids/{masjid_id}')->whereNumber('masjid_id')->group(function () {
+    Route::get('/availability',[AuthController::class,'availability']);
     Route::post('/auth/sign-in',[AuthController::class,'signIn']);
     Route::middleware(['auth:student','student.active'])->group(function () {
         Route::put('/password',[AuthController::class,'password'])->name('student.password');

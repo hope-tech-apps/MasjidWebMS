@@ -1,4 +1,4 @@
-<template><p v-if="account?.has_account" class="small border rounded p-2">{{ labels.title }}: {{ account.enabled ? labels.on : labels.off }} · {{ labels.username }}: <strong>{{ account.username }}</strong><br>{{ labels.last }}: {{ account.last_sign_in_at ? new Date(account.last_sign_in_at).toLocaleString() : labels.never }}</p></template>
+<template><p v-if="account?.has_account" class="small border rounded p-2">{{ labels.title }}: {{ account.enabled ? labels.on : labels.off }} · {{ labels.username }}: <strong>{{ account.username }}</strong><br>{{ labels.last }}: {{ account.last_sign_in_label ?? labels.never }}</p></template>
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import FamilyApi from '@/core/services/FamilyApiService';

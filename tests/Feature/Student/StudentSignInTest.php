@@ -13,6 +13,49 @@ use Tests\TestCase;
 class StudentSignInTest extends StudentTestCase
 {
     #[Test]
+    public function availability_is_public_and_reflects_disabled_never_enabled_and_missing_schools(): void
+    {
+        $url=$this->base().'/availability';
+        $this->getJson($url)->assertOk()->assertJsonPath('data.available',true)->assertHeader('Cache-Control','no-store, private');
+        foreach ([['student_sign_in'=>false],[]] as $overrides) {
+            $this->school->forceFill(['capability_overrides'=>$overrides])->save();
+            $this->getJson($url)->assertNotFound()->assertJsonPath('message','Student sign-in is not available at this school.')->assertHeader('Cache-Control','no-store, private');
+        }
+        $this->getJson('/api/student/masjids/999999/availability')->assertNotFound();
+        $this->assertSame(0,StudentSignInLog::count());
+    }
+
+    #[Test]
+    public function class_slips_use_school_unique_ascii_names_and_keep_office_edits(): void
+    {
+        $this->child->update(['first_name'=>'Ílyàs','last_name'=>"Sample'ton"]);
+        $children=[$this->child];
+        foreach ([['Ilyas','Sampleton'],['Ilyas','Sampleton'],['!!!',''],['A',''],[str_repeat('Long',20),str_repeat('Name',20)],[str_repeat('Long',20),str_repeat('Name',20)]] as [$first,$last]) {
+            $child=Contact::factory()->create(['masjid_id'=>$this->school->id,'first_name'=>$first,'last_name'=>$last]);
+            GroupMembership::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'contact_id'=>$child->id,'role'=>'member','grade_label'=>'6th']);
+            $children[]=$child;
+        }
+        // A username at another school does not consume this school's name.
+        app(TenantContext::class)->forgetTenant();
+        $other=Masjid::create(array_merge($this->school->getAttributes(),['id'=>null,'email'=>'other@example.invalid','phone'=>'+15555550109','name'=>'Other Practice School']));
+        $otherChild=Contact::factory()->create(['masjid_id'=>$other->id]);
+        StudentAccount::create(['masjid_id'=>$other->id,'contact_id'=>$otherChild->id,'username'=>'ilyas.sampleton','password'=>Hash::make('PracticePass42')]);
+        Sanctum::actingAs($this->office,['staff']);
+        $url=$this->officeBase().'/groups/'.$this->class->id.'/slips';
+        $ids=array_map(fn($c)=>$c->id,$children);
+        $slips=$this->postJson($url,['contact_ids'=>$ids])->assertOk()->json('data.slips');
+        $names=array_column($slips,'username');
+        $this->assertContains('ilyas.sampleton',$names); $this->assertContains('ilyas.sampleton2',$names); $this->assertContains('ilyas.sampleton3',$names);
+        $this->assertCount(count($names),array_unique($names));
+        $this->assertContains('student',$names); $this->assertContains('student.a',$names);
+        $long=substr(strtolower(str_repeat('Long',20)),0,19).'.'.substr(strtolower(str_repeat('Name',20)),0,19);
+        $this->assertContains($long,$names); $this->assertContains($long.'2',$names);
+        foreach ($names as $name) { $this->assertMatchesRegularExpression('/^[a-z0-9._-]{3,40}$/',$name); }
+        $this->putJson($this->officeBase().'/accounts/'.$this->child->id,['username'=>'office.edited'])->assertOk();
+        $this->postJson($url,['contact_ids'=>[$this->child->id]])->assertOk()->assertJsonPath('data.slips.0.username','office.edited');
+    }
+
+    #[Test]
     public function a_real_student_token_is_refused_on_every_registered_route_outside_its_realm(): void
     {
         $token=$this->account()->createToken('student',['student'])->plainTextToken;

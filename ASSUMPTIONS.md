@@ -588,3 +588,7 @@ On the transcript is a class-subject setting, alongside credit and level, matchi
 - The guides/demo walk and guide pages are a later session, not authorization to read or change a live demo tenant. Build/tests use invented practice data only.
 - A child's recognized current class grades must all meet the school's threshold; unknown or contradictory younger grades fail closed. Withdrawal or threshold/switch changes are rechecked per request.
 - Due dates mean the end of the named school-local day. Missing due date means no late flag. Existing assignment scores, including missing/excused, mean the work has been marked and lock replacement.
+
+## 2026-10-15 — Student sign-in walk fixes
+
+Class-slip name defaults apply when creating an account; later slips preserve any existing username because the office can edit it and the schema does not distinguish a generated name from an office choice. Unusable or shorter-than-three-character cleaned names use a readable student fallback. Student date labels are English, matching the existing English-only portal; family field labels retain their language while the server time label uses the requested English format. Calendar day values remain dates in the school timezone and are never treated as UTC instants.

@@ -5,7 +5,7 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Models\{Contact, Group, Masjid, StudentAccount, StudentSignInLog, StudentSignInSetting};
 use App\Services\Student\StudentAccess;
-use App\Support\{GradeLevel, TenantContext};
+use App\Support\{GradeLevel, StudentDates, TenantContext};
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{DB, Hash, Validator};
 use Illuminate\Support\Str;
@@ -41,7 +41,7 @@ final class StudentAccountsController extends Controller
 
     public static function status(?StudentAccount $a): array
     {
-        return ['has_account'=>$a !== null,'username'=>$a?->username,'enabled'=>$a !== null && $a->enabled,'last_sign_in_at'=>$a?->last_sign_in_at?->toISOString()];
+        return ['has_account'=>$a !== null,'username'=>$a?->username,'enabled'=>$a !== null && $a->enabled,'last_sign_in_at'=>$a?->last_sign_in_at?->toISOString(),'last_sign_in_label'=>$a ? StudentDates::instant($a->last_sign_in_at,$a->masjid_id) : null];
     }
 
     public function index(int $masjid_id, int $group_id)
@@ -90,6 +90,22 @@ final class StudentAccountsController extends Controller
         });
     }
 
+    /** Called under the school lock so concurrent slip/reset requests cannot claim the same name. */
+    private function defaultUsername(Masjid $school, Contact $child): string
+    {
+        $clean=fn ($name) => preg_replace('/[^a-z0-9]/','',strtolower(Str::ascii((string)$name)));
+        // Keep both names when either is long, with room for the first collision suffix.
+        $base=trim(substr($clean($child->first_name),0,19).'.'.substr($clean($child->last_name),0,19),'.');
+        if (strlen($base) < 3) $base='student'.($base !== '' ? '.'.$base : '');
+        $base=substr($base,0,40);
+        $username=$base; $suffix=2;
+        while (StudentAccount::where('masjid_id',$school->id)->where('username',$username)->exists()) {
+            $number=(string)$suffix++;
+            $username=substr($base,0,40-strlen($number)).$number;
+        }
+        return $username;
+    }
+
     public function slips(Request $request, int $masjid_id, int $group_id)
     {
         $school=$this->school(); $group=Group::where('masjid_id',$school->id)->where('kind','class')->findOrFail($group_id);
@@ -102,7 +118,7 @@ final class StudentAccountsController extends Controller
                 if ($members->count() !== count($data['contact_ids'])) return response()->api(404,'Student not found in this class.');
                 $slips=[];
                 foreach ($members as $m) {
-                    $username=StudentAccount::where('masjid_id',$school->id)->where('contact_id',$m->contact_id)->value('username') ?? 'student'.strtolower(Str::random(12));
+                    $username=StudentAccount::where('masjid_id',$school->id)->where('contact_id',$m->contact_id)->value('username') ?? $this->defaultUsername($school,$m->contact);
                     $slips[]=$this->issue($school,$m->contact,$username);
                 }
                 return response()->api(200,'These passwords replace the selected students’ old passwords. Print them now.',['class_name'=>$group->name,'slips'=>$slips],['Cache-Control'=>'private, no-store']);

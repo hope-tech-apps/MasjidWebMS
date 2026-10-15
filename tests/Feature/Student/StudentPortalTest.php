@@ -20,6 +20,37 @@ class StudentPortalTest extends StudentTestCase
     private function handUrl(ClassAssignment $a): string { return $this->memberBase().'/work/'.$a->id.'/hand-ins'; }
 
     #[Test]
+    public function dates_and_times_are_formatted_by_the_school_without_shifting_calendar_days(): void
+    {
+        $this->school->forceFill(['timezone'=>'America/Los_Angeles'])->save();
+        $a=$this->work();
+        StudentWorkSetting::query()->update(['due_on'=>'2026-10-20']);
+        $year=\App\Models\SchoolYear::create(['masjid_id'=>$this->school->id,'label'=>'Practice year','first_day'=>'2026-08-24','last_day'=>'2027-06-04','meeting_weekday'=>1,'meeting_weekdays'=>[1]]);
+        \App\Models\SchoolTerm::create(['masjid_id'=>$this->school->id,'school_year_id'=>$year->id,'name'=>'First term','starts_on'=>'2026-08-24','ends_on'=>'2026-12-18','position'=>1]);
+        \App\Models\SchoolClosure::create(['masjid_id'=>$this->school->id,'school_year_id'=>$year->id,'closed_on'=>'2026-10-19','reason'=>'Practice closure']);
+        $account=$this->account(); $account->forceFill(['last_sign_in_at'=>'2026-10-15 00:17:00'])->save();
+        StudentHandIn::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'class_assignment_id'=>$a->id,'group_membership_id'=>$this->member->id,'student_contact_id'=>$this->child->id,'version'=>1,'kind'=>'link','link'=>'https://example.invalid/work','late'=>false,'submitted_at'=>'2026-10-15 00:17:00']);
+        $token=$account->createToken('student',['student'])->plainTextToken;
+        $this->bearer($token)->getJson($this->memberBase().'/work')->assertOk()
+            ->assertJsonPath('data.0.assigned_on_label','Wed, Oct 14')->assertJsonPath('data.0.due_on_label','Tue, Oct 20');
+        $this->bearer($token)->getJson($this->handUrl($a))->assertOk()->assertJsonPath('data.history.0.submitted_at_label','Oct 14, 2026, 5:17 PM');
+        $this->bearer($token)->getJson($this->base().'/timetable?week=2026-10-12')->assertOk()->assertJsonPath('data.days.0.date_label','Mon, Oct 12');
+        foreach ([false,true] as $terms) {
+            $this->school->forceFill(['capability_overrides'=>['student_sign_in'=>true,'school_calendar'=>true,'school_calendar_terms'=>$terms]])->save();
+            $r=$this->bearer($token)->getJson($this->base().'/school-calendar')->assertOk()
+                ->assertJsonPath('data.years.0.first_day_label','Mon, Aug 24, 2026')->assertJsonPath('data.years.0.last_day_label','Fri, Jun 4, 2027')
+                ->assertJsonPath('data.years.0.closures.0.closed_on_label','Mon, Oct 19');
+            if ($terms) $r->assertJsonPath('data.years.0.terms.0.starts_on_label','Mon, Aug 24, 2026')->assertJsonPath('data.years.0.terms.0.ends_on_label','Fri, Dec 18, 2026');
+        }
+        $parent=Contact::factory()->create(['masjid_id'=>$this->school->id,'login_enabled_at'=>now(),'login_email'=>'parent@example.invalid']);
+        GroupMembership::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'contact_id'=>$parent->id,'role'=>'guardian','guardian_of_contact_id'=>$this->child->id,'provenance'=>'confirmed']);
+        $this->bearer($parent->createFamilyToken()->plainTextToken)->getJson('/api/family/masjids/'.$this->school->id.'/student-accounts')->assertOk()->assertJsonPath('data.0.last_sign_in_label','Oct 14, 2026, 5:17 PM');
+        $this->school->forceFill(['timezone'=>'Pacific/Auckland'])->save();
+        $this->bearer($token)->getJson($this->handUrl($a))->assertOk()->assertJsonPath('data.history.0.submitted_at_label','Oct 15, 2026, 1:17 PM');
+        $this->bearer($token)->getJson($this->memberBase().'/work')->assertOk()->assertJsonPath('data.0.due_on_label','Tue, Oct 20');
+    }
+
+    #[Test]
     public function reads_only_own_classes_work_marks_and_calendar_and_excludes_every_staff_field(): void
     {
         $a=$this->work(); $token=$this->account()->createToken('student',['student'])->plainTextToken;
@@ -89,7 +120,7 @@ class StudentPortalTest extends StudentTestCase
         GroupMembership::create(['masjid_id'=>$this->school->id,'group_id'=>$this->class->id,'contact_id'=>$parent->id,'role'=>'guardian','guardian_of_contact_id'=>$this->child->id,'provenance'=>'confirmed']);
         $family=$this->bearer($parent->createFamilyToken()->plainTextToken)->getJson('/api/family/masjids/'.$this->school->id.'/student-accounts')->assertOk();
         $this->assertSame('practice6',$family->json('data.0.username'));
-        $this->assertSame(['membership_id','has_account','username','enabled','last_sign_in_at'],array_keys($family->json('data.0')));
+        $this->assertSame(['membership_id','has_account','username','enabled','last_sign_in_at','last_sign_in_label'],array_keys($family->json('data.0')));
         $this->assertStringNotContainsString('password',$family->getContent());
     }
 
@@ -111,6 +142,7 @@ class StudentPortalTest extends StudentTestCase
         $this->bearer($token)->getJson($this->base().'/classes')->assertOk()->assertJsonPath('data.0.teachers.0','Practice Teacher');
         $r=$this->bearer($token)->getJson($this->base().'/timetable?week=2026-10-12')->assertOk();
         $this->assertSame('Own lesson',$r->json('data.days.3.meetings.0.label'));
+        $r->assertJsonPath('data.days.3.meetings.0.starts_at_label','9:00 AM')->assertJsonPath('data.days.3.meetings.0.ends_at_label','9:45 AM');
         $this->assertStringNotContainsString('SENTINEL',$r->getContent());
         \App\Models\SchoolClosure::create(['masjid_id'=>$this->school->id,'school_year_id'=>$year->id,'closed_on'=>'2026-10-15','reason'=>'Practice closure']);
         $this->bearer($token)->getJson($this->base().'/timetable?week=2026-10-12')->assertOk()->assertJsonPath('data.days.3.meetings',[])->assertJsonPath('data.days.3.closed',true);

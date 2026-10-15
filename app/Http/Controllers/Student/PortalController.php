@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Student;
 use App\Http\Controllers\Controller;
 use App\Models\{ClassAssignment, GroupStaff, StudentHandIn, StudentWorkSetting};
 use App\Services\Student\{StudentAccess, StudentHandIns};
-use App\Support\{SchoolCalendar, SchoolCalendarPayload, SchoolCalendarReaderPayload, SchoolCalendarReaders, SchoolCalendarRequestMode, SchoolDateAuthority, SchoolSettings, TimetableReader};
+use App\Support\{SchoolCalendar, SchoolCalendarPayload, SchoolCalendarReaderPayload, SchoolCalendarReaders, SchoolCalendarRequestMode, SchoolDateAuthority, SchoolSettings, StudentDates, TimetableReader};
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
@@ -38,7 +38,8 @@ final class PortalController extends Controller
         $handedIn=StudentHandIn::where('masjid_id',$m->masjid_id)->where('group_membership_id',$m->id)->whereIn('class_assignment_id',$work->pluck('id'))->distinct()->pluck('class_assignment_id')->all();
         $settings=StudentWorkSetting::where('masjid_id',$m->masjid_id)->whereIn('class_assignment_id',$work->pluck('id'))->get()->keyBy('class_assignment_id');
         return response()->api(200,'',$work->map(fn ($a) => ['id'=>(int)$a->id,'title'=>$a->title,'subject'=>$a->subject,'assigned_on'=>$a->assigned_on?->toDateString(),
-            'due_on'=>$settings->get($a->id)?->due_on?->toDateString(),'students_hand_in'=>(bool)$settings->get($a->id)?->students_hand_in,'has_hand_in'=>in_array($a->id,$handedIn)])->values());
+            'assigned_on_label'=>StudentDates::day($a->assigned_on?->toDateString(),$m->masjid_id),
+            'due_on'=>$settings->get($a->id)?->due_on?->toDateString(),'due_on_label'=>StudentDates::day($settings->get($a->id)?->due_on?->toDateString(),$m->masjid_id),'students_hand_in'=>(bool)$settings->get($a->id)?->students_hand_in,'has_hand_in'=>in_array($a->id,$handedIn)])->values());
     }
     public function marks(Request $request, int $masjid_id, int $membership_id)
     {
@@ -47,7 +48,23 @@ final class PortalController extends Controller
     public function calendar(Request $request)
     {
         $id=$request->user()->masjid_id;
-        return response()->api(200,'',SchoolCalendarRequestMode::enabled($id) ? SchoolCalendarReaderPayload::reader(SchoolCalendarReaders::for($id)) : SchoolCalendarPayload::reader(SchoolCalendar::for($id)));
+        $payload=SchoolCalendarRequestMode::enabled($id) ? SchoolCalendarReaderPayload::reader(SchoolCalendarReaders::for($id)) : SchoolCalendarPayload::reader(SchoolCalendar::for($id));
+        // Decorate only the student projection; shared calendar contracts stay frozen.
+        foreach ($payload['years'] as &$year) {
+            $year['first_day_label']=StudentDates::day($year['first_day'],$id,true);
+            $year['last_day_label']=StudentDates::day($year['last_day'],$id,true);
+            foreach ($year['closures'] as &$closure) $closure['closed_on_label']=StudentDates::day($closure['closed_on'],$id);
+            unset($closure);
+            if (isset($year['terms'])) {
+                foreach ($year['terms'] as &$term) {
+                    $term['starts_on_label']=StudentDates::day($term['starts_on'],$id,true);
+                    $term['ends_on_label']=StudentDates::day($term['ends_on'],$id,true);
+                }
+                unset($term);
+            }
+        }
+        unset($year);
+        return response()->api(200,'',$payload);
     }
     public function timetable(Request $request)
     {
@@ -67,9 +84,9 @@ final class PortalController extends Controller
                 // Narrow the reader itself to this student's class, then expose only lesson facts.
                 $versions=app(TimetableReader::class)->meetings($id,$year->id,$date,'class',$m->group_id,$weekday);
                 foreach($versions as $v) $rows[]=array_intersect_key($v,array_flip(['id','group_name','kind','label','starts_at','ends_at','room_name']))
-                    + ['teachers'=>array_column($v['teachers'],'name')];
+                    + ['teachers'=>array_column($v['teachers'],'name'),'starts_at_label'=>StudentDates::clock($date,$v['starts_at'],$id),'ends_at_label'=>StudentDates::clock($date,$v['ends_at'],$id)];
             }
-            $days[]=['date'=>$date,'closed'=>$closure!==null,'reason'=>$reason,'meetings'=>$rows];
+            $days[]=['date'=>$date,'date_label'=>StudentDates::day($date,$id),'closed'=>$closure!==null,'reason'=>$reason,'meetings'=>$rows];
         }
         return response()->api(200,'',['week_start'=>$start->toDateString(),'timezone'=>$calendar->timezone(),'days'=>$days]);
     }

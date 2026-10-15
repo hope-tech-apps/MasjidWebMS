@@ -42,6 +42,7 @@ test('student first sign-in adopts only its own token and requires password chan
     const s=await mountSfc('views/student/StudentPortal.vue',{}, {vue,'vue-router':{useRoute:()=>({params:{masjidId:'3'}})},
         '@/core/services/StudentAccountApiService':{default:http},'@/core/services/ApiErrors':{apiErrorText:()=> 'Failed'},'@/core/helpers/preparePhoto':{preparePhoto:async(file:any)=>file}});
     try {
+        await flush();
         type(s.all(n=>n.tag==='input')[0],'practice6');type(s.all(n=>n.tag==='input')[1],'PracticeOnce42');
         submit(s.all(n=>n.tag==='form')[0]);await flush();
         assert.deepEqual(adopted,[{school:'3',token:'student-token'}]);assert.match(s.text(),/Choose your own password/);assert.doesNotMatch(s.text(),/Your marks/);
@@ -119,5 +120,39 @@ test('a photo still decoding at sign-out cannot be uploaded into the next studen
         click(s.button('Your hand-in'));await flush();
         photoResolve(original);await flush();
         assert.deepEqual(uploads,[]);assert.match(s.text(),/Practice work/);
+    }finally{s.unmount();}
+});
+
+test('student and family surfaces display server labels without browser date conversion',async()=>{
+    const http={token:()=> 'student',clear:()=>{},lastResponseAt:()=>Date.now(),get:async(url:string)=>({data:{data:
+        url.endsWith('/classes')?[{membership_id:1,name:'Practice Class',teachers:[]}]:
+        url.endsWith('/work')?[{id:2,title:'Practice work',due_on:'2026-10-20',due_on_label:'Tue, Oct 20',students_hand_in:true}]:
+        url.endsWith('/hand-ins')?{marked:false,history:[{id:3,version:1,kind:'link',link:'https://example.invalid/work',submitted_at:'2026-10-15T00:17:00Z',submitted_at_label:'Oct 14, 2026, 5:17 PM'}]}:
+        url.includes('/timetable')?{days:[{date:'2026-10-12',date_label:'Mon, Oct 12',meetings:[{id:4,starts_at:'09:00',ends_at:'09:45',starts_at_label:'9:00 AM',ends_at_label:'9:45 AM',label:'Practice lesson',teachers:[]}]}]}:
+        url.endsWith('/school-calendar')?{years:[{id:5,label:'Practice year',first_day:'2026-08-24',last_day:'2027-06-04',first_day_label:'Mon, Aug 24, 2026',last_day_label:'Fri, Jun 4, 2027',closures:[{closed_on:'2026-10-19',closed_on_label:'Mon, Oct 19',reason:'Practice closure'}],terms:[{id:6,name:'First term',starts_on:'2026-08-24',ends_on:'2026-12-18',starts_on_label:'Mon, Aug 24, 2026',ends_on_label:'Fri, Dec 18, 2026'}]}]}:{scores:[],reports:[]}}})};
+    const s=await mountSfc('views/student/StudentPortal.vue',{}, {vue,'vue-router':{useRoute:()=>({params:{masjidId:'3'}})},
+        '@/core/services/StudentAccountApiService':{default:http},'@/core/services/ApiErrors':{apiErrorText:()=> 'Failed'},'@/core/helpers/preparePhoto':{preparePhoto:async(f:any)=>f}});
+    try{
+        await flush();assert.match(s.text(),/Due Tue, Oct 20/);click(s.button('Your hand-in'));await flush();assert.match(s.text(),/Oct 14, 2026, 5:17 PM/);
+        click(s.button('Timetable'));await flush();assert.match(s.text(),/Mon, Oct 12.*9:00 AM–9:45 AM/);assert.doesNotMatch(s.text(),/2026-10-12/);
+        click(s.button('Calendar'));await flush();assert.match(s.text(),/Mon, Aug 24, 2026 to Fri, Jun 4, 2027/);assert.match(s.text(),/Mon, Oct 19/);assert.match(s.text(),/First term: Mon, Aug 24, 2026 to Fri, Dec 18, 2026/);
+    }finally{s.unmount();}
+    const family=await mountSfc('components/classes/FamilyStudentAccount.vue',{schoolId:3,membershipId:1},{vue,
+        '@/core/services/FamilyApiService':{default:{get:async()=>({data:{data:[{membership_id:1,has_account:true,enabled:true,username:'practice.student',last_sign_in_at:'2026-10-15T00:17:00Z',last_sign_in_label:'Oct 14, 2026, 5:17 PM'}]}})}},
+        '@/views/family/familyI18n':{useFamilyLang:()=>({lang:vue.ref('en')})}});
+    try{await flush();assert.match(family.text(),/Last sign-in: Oct 14, 2026, 5:17 PM/);}finally{family.unmount();}
+});
+
+for(const outcome of ['on','off','network']) test('student sign-in waits for availability: '+outcome,async()=>{
+    let resolve:(v:any)=>void=()=>{},reject:(e:any)=>void=()=>{};const reply=new Promise((yes,no)=>{resolve=yes;reject=no;});const reads:string[]=[];
+    const http={token:()=>null,clear:()=>{},lastResponseAt:()=>Date.now(),get:(url:string)=>{reads.push(url);return reply;}};
+    const s=await mountSfc('views/student/StudentPortal.vue',{}, {vue,'vue-router':{useRoute:()=>({params:{masjidId:'3'}})},
+        '@/core/services/StudentAccountApiService':{default:http},'@/core/services/ApiErrors':{apiErrorText:()=> 'Failed'},'@/core/helpers/preparePhoto':{preparePhoto:async(f:any)=>f}});
+    try{
+        assert.equal(s.all(n=>n.tag==='form').length,0);assert.deepEqual(reads,['/api/student/masjids/3/availability']);
+        if(outcome==='on')resolve({data:{data:{available:true}}});else reject(outcome==='off'?{response:{status:404}}:new Error('Network'));
+        await flush();assert.equal(s.all(n=>n.tag==='form').length,outcome==='on'?1:0);
+        if(outcome==='off')assert.match(s.text(),/Student sign-in is not available at this school\./);
+        if(outcome==='network')assert.match(s.text(),/Could not check student sign-in/);
     }finally{s.unmount();}
 });

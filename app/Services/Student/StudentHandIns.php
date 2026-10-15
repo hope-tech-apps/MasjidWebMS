@@ -3,7 +3,7 @@
 namespace App\Services\Student;
 
 use App\Models\{AssignmentScore, ClassAssignment, GroupMembership, Masjid, StudentAccount, StudentHandIn, StudentWorkSetting};
-use App\Support\{GroupResourceFiles, SchoolDateAuthority};
+use App\Support\{GroupResourceFiles, SchoolDateAuthority, StudentDates};
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{DB, Storage, Validator};
 use Illuminate\Validation\Rule;
@@ -13,7 +13,7 @@ final class StudentHandIns
     public static function payload(StudentHandIn $h): array
     {
         return ['id'=>(int)$h->id,'version'=>(int)$h->version,'kind'=>$h->kind,'link'=>$h->link,
-            'file_name'=>$h->original_name,'mime_type'=>$h->mime_type,'size_bytes'=>$h->size_bytes,'late'=>$h->late,'submitted_at'=>$h->submitted_at->toISOString()];
+            'file_name'=>$h->original_name,'mime_type'=>$h->mime_type,'size_bytes'=>$h->size_bytes,'late'=>$h->late,'submitted_at'=>$h->submitted_at->toISOString(),'submitted_at_label'=>StudentDates::instant($h->submitted_at,$h->masjid_id)];
     }
 
     public static function marked(ClassAssignment $work, GroupMembership $member): bool

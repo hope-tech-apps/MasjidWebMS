@@ -2,7 +2,10 @@
     <main class="container py-4 student-portal" style="max-width:760px">
         <header class="d-flex align-items-center justify-content-between gap-3 mb-4"><h1 class="h3 mb-0">Student portal</h1><button v-if="signedIn" class="btn btn-outline-secondary" @click="signOut">Sign out</button></header>
         <p v-if="error" class="alert alert-warning" role="alert">{{ error }}</p>
-        <form v-if="!signedIn" @submit.prevent="signIn" class="card card-body gap-3">
+        <p v-if="availability==='checking'" role="status">Checking student sign-in…</p>
+        <p v-else-if="availability==='off'" role="status">Student sign-in is not available at this school.</p>
+        <div v-else-if="availability==='error'" class="alert alert-warning" role="alert">Could not check student sign-in. Please try again. <button class="btn btn-link" @click="checkAvailability()">Try again</button></div>
+        <form v-else-if="!signedIn" @submit.prevent="signIn" class="card card-body gap-3">
             <label>Username<input v-model="username" class="form-control" autocomplete="username" required maxlength="40" autocapitalize="none" spellcheck="false"></label>
             <label>Password<input v-model="password" type="password" class="form-control" autocomplete="current-password" required maxlength="72"></label>
             <button class="btn btn-success" :disabled="busy">Sign in</button><p class="small text-muted mb-0">Use the account your school office gave you. Ask the office if you need a reset.</p>
@@ -21,7 +24,7 @@
                 <p class="small text-muted" v-if="selectedClass?.teachers?.length">Teachers: {{ selectedClass.teachers.join(', ') }}</p>
                 <h2 class="h5">Work</h2><p v-if="!work.length">No work has been set yet.</p>
                 <article v-for="a in work" :key="a.id" class="card card-body mb-3">
-                    <h3 class="h6">{{ a.title }}</h3><p class="small mb-2">{{ a.subject }}<span v-if="a.due_on"> · Due {{ a.due_on }}</span></p>
+                    <h3 class="h6">{{ a.title }}</h3><p class="small mb-2">{{ a.subject }}<span v-if="a.due_on"> · Due {{ a.due_on_label }}</span></p>
                     <button v-if="a.students_hand_in || a.has_hand_in" class="btn btn-sm btn-outline-success align-self-start" @click="openHandIn(a)">Your hand-in</button>
                     <section v-if="openWork?.id===a.id" class="mt-3">
                         <p v-if="history?.marked" class="text-muted">This work has been marked. Your hand-in is read-only.</p>
@@ -32,7 +35,7 @@
                             <p class="small text-muted mb-0">PDF, Word, JPEG or PNG; up to 8 MB. Replacing keeps every previous version.</p>
                             <button class="btn btn-success" :disabled="busy">{{ history?.history?.length ? 'Replace hand-in' : 'Hand in work' }}</button>
                         </form>
-                        <ol class="list-unstyled mt-3"><li v-for="h in history?.history ?? []" :key="h.id" class="border-top py-2 small">Version {{ h.version }} · {{ when(h.submitted_at) }} <strong v-if="h.late"> · Late</strong><br><a v-if="h.kind==='link'" :href="h.link" target="_blank" rel="noopener noreferrer">{{ h.link }}</a><button v-else class="btn btn-link btn-sm px-0" @click="download(a,h)">{{ h.file_name }}</button></li></ol>
+                        <ol class="list-unstyled mt-3"><li v-for="h in history?.history ?? []" :key="h.id" class="border-top py-2 small">Version {{ h.version }} · {{ h.submitted_at_label }} <strong v-if="h.late"> · Late</strong><br><a v-if="h.kind==='link'" :href="h.link" target="_blank" rel="noopener noreferrer">{{ h.link }}</a><button v-else class="btn btn-link btn-sm px-0" @click="download(a,h)">{{ h.file_name }}</button></li></ol>
                     </section>
                 </article>
                 <h2 class="h5">Your marks</h2><p v-if="!marks?.scores?.length">No marks yet.</p>
@@ -41,8 +44,8 @@
                 <p v-if="marks?.scores_truncated" class="small text-muted">Showing the latest {{ marks.scores_shown }} marks. The summary includes all recorded marks.</p>
                 <article v-for="r in marks?.reports ?? []" :key="r.id" class="mb-3"><h3 class="h6">{{ r.period }}</h3><p v-for="g in r.letter_grades" :key="g.subject">{{ g.subject }}: {{ g.final_letter ?? 'Not assessed' }}<span v-if="g.percentage != null"> ({{ g.percentage }}%)</span></p></article>
             </div>
-            <section v-if="page==='Timetable'"><h2 class="h5">Your timetable</h2><label>Week<input v-model="week" type="date" class="form-control mb-3" @change="openPage('Timetable')"></label><article v-for="d in timetable?.days ?? []" :key="d.date" class="card card-body mb-2"><h3 class="h6">{{ d.date }}</h3><p v-if="d.closed">No school: {{ d.reason }}</p><p v-else-if="!d.meetings.length" class="small text-muted mb-0">No lessons scheduled.</p><p v-for="m in d.meetings" :key="m.id" class="mb-1">{{ m.starts_at }}–{{ m.ends_at }} · {{ m.label }}<span v-if="m.room_name"> · {{ m.room_name }}</span><span v-if="m.teachers.length"> · {{ m.teachers.join(', ') }}</span></p></article></section>
-            <section v-if="page==='Calendar'"><h2 class="h5">School calendar</h2><article v-for="y in calendar?.years ?? []" :key="y.id" class="card card-body mb-2"><h3 class="h6">{{ y.label }}</h3><p>{{ y.first_day }} to {{ y.last_day }}</p><p v-for="c in y.closures ?? []" :key="c.closed_on">{{ c.closed_on }} · {{ c.reason }}</p><p v-for="t in y.terms ?? []" :key="t.id">{{ t.name }}: {{ t.starts_on }} to {{ t.ends_on }}</p></article><p v-if="!calendar?.years?.length">The school has not published its calendar yet.</p></section>
+            <section v-if="page==='Timetable'"><h2 class="h5">Your timetable</h2><label>Week<input v-model="week" type="date" class="form-control mb-3" @change="openPage('Timetable')"></label><article v-for="d in timetable?.days ?? []" :key="d.date" class="card card-body mb-2"><h3 class="h6">{{ d.date_label }}</h3><p v-if="d.closed">No school: {{ d.reason }}</p><p v-else-if="!d.meetings.length" class="small text-muted mb-0">No lessons scheduled.</p><p v-for="m in d.meetings" :key="m.id" class="mb-1">{{ m.starts_at_label }}–{{ m.ends_at_label }} · {{ m.label }}<span v-if="m.room_name"> · {{ m.room_name }}</span><span v-if="m.teachers.length"> · {{ m.teachers.join(', ') }}</span></p></article></section>
+            <section v-if="page==='Calendar'"><h2 class="h5">School calendar</h2><article v-for="y in calendar?.years ?? []" :key="y.id" class="card card-body mb-2"><h3 class="h6">{{ y.label }}</h3><p>{{ y.first_day_label }} to {{ y.last_day_label }}</p><p v-for="c in y.closures ?? []" :key="c.closed_on">{{ c.closed_on_label }} · {{ c.reason }}</p><p v-for="t in y.terms ?? []" :key="t.id">{{ t.name }}: {{ t.starts_on_label }} to {{ t.ends_on_label }}</p></article><p v-if="!calendar?.years?.length">The school has not published its calendar yet.</p></section>
         </template>
     </main>
 </template>
@@ -54,6 +57,7 @@ import { preparePhoto } from '@/core/helpers/preparePhoto';
 import { apiErrorText } from '@/core/services/ApiErrors';
 const route=useRoute(); const school=String(route.params.masjidId); const base=`/api/student/masjids/${school}`;
 const signedIn=ref(!!StudentApi.token(school)), mustChange=ref(false), busy=ref(false), error=ref('');
+const availability=ref<'checking'|'on'|'off'|'error'>('checking');
 const requiredPassword=ref(false);
 const username=ref(''), password=ref(''), currentPassword=ref(''), newPassword=ref(''), confirmation=ref('');
 const classes=ref<any[]>([]), work=ref<any[]>([]), marks=ref<any>(null), memberId=ref<number|null>(null), page=ref('Classes');
@@ -61,7 +65,6 @@ const openWork=ref<any>(null), histories=ref<Record<number,any>>({}), history=co
 const selectedClass=computed(()=>classes.value.find(c=>c.membership_id===Number(memberId.value)));
 const uploadKey=ref(0);
 const kind=ref('file'), link=ref(''), file=ref<File|null>(null), week=ref(''), timetable=ref<any>(null), calendar=ref<any>(null);
-function when(date:string){ return new Date(date).toLocaleString(); }
 function scoreText(s:any){ if(s.status==='missing') return 'Not handed in'; if(s.status==='excused') return 'Excused'; if(s.mark_label) return s.mark_label; if(s.assignment?.scale==='levels') return `Level ${s.points_earned} of 4`; return `${s.points_earned} / ${s.assignment?.points_possible}`; }
 // A shared device may change account while a request or photo decode is still in flight.
 let sessionVersion = 0;
@@ -87,7 +90,10 @@ async function attempt(fn:()=>Promise<void>) {
         if(version!==sessionVersion)return;
         if(e.response?.status===403 && e.response?.data?.message?.startsWith('Change your one-time')) {
             mustChange.value=true; requiredPassword.value=true;
-        } else if([401,403,404].includes(e.response?.status)) endSession();
+        } else if([401,403,404].includes(e.response?.status)) {
+            endSession();
+            if(e.response?.status===404)await checkAvailability(false);
+        }
         error.value=apiErrorText(e)||'Please try again.';
     } finally { if(version===sessionVersion)busy.value=false; }
 }
@@ -178,8 +184,22 @@ async function download(a:any,h:any) {
     await attempt(()=>StudentApi.download(base+'/classes/'+member+'/work/'+a.id+'/hand-ins/'+h.id+'/download',h.file_name,()=>version===sessionVersion));
 }
 let idleTimer:ReturnType<typeof setInterval>;
+async function checkAvailability(loadSession=true) {
+    const version=sessionVersion;
+    availability.value='checking';
+    try {
+        await StudentApi.get(base+'/availability');
+        if(version!==sessionVersion)return;
+        availability.value='on';
+        if(loadSession && signedIn.value)await attempt(load);
+    } catch(e:any) {
+        if(version!==sessionVersion)return;
+        if(e.response?.status===404){endSession();availability.value='off';}
+        else availability.value='error';
+    }
+}
 onMounted(()=>{
-    if(signedIn.value)attempt(load);
+    checkAvailability();
     idleTimer=setInterval(()=>{
         if(signedIn.value && Date.now()-StudentApi.lastResponseAt()>=15*60*1000){
             endSession();error.value='Your student session expired. Sign in again.';

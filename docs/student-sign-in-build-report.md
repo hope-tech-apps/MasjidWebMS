@@ -162,3 +162,27 @@ MySQL DDL/rollback/locking execution (the MySQL CI test is added); remote CI or 
 | tests/Support/TeacherRealmWorld.php | Seed an actual private hand-in and resolve its ID for route sweeps. |
 
 Local ignored working notes STATE.md and PLAN.md were also replaced with the student build checkpoint. The pre-existing untracked artifacts/subject-report-summary-query-counts.json was restored byte for byte; 39 generated untracked artifacts were removed. No generated public/build is left. A lesson was appended to the shared lessons inbox, outside this repository.
+
+
+## Walk fix round, 2026-10-15
+
+All three owner walk fixes are implemented locally on `feature/student-sign-in`, starting at `6716c482` (main `36ae2ba5` plus the student build and failed-attempt limiter correction). No commit, deployment, real-data access, mail, switch-on, dependency/build change, CAPTURE variable or frozen-fixture edit.
+
+- `app/Support/StudentDates.php:11` formats calendar dates directly in `SchoolCalendarReaders::for($id)->timezone()`; stored instants are converted to that timezone. Student work, timetable, calendar years/terms/closures and hand-ins use server display labels. Family/office Last sign-in and teacher/office hand-in histories use the same server labels. Raw values remain available for inputs and comparisons.
+- `app/Http/Controllers/AdminDashboard/StudentAccountsController.php:94` generates lowercase ASCII first.last defaults under the existing school lock, transliterating accents and dropping other characters. Each name contributes at most 19 characters (19 + dot + 19 leaves room for the first numeric suffix within 40); collisions append 2, 3 and so on, shortening when necessary. Unusable short names have a readable student fallback. Existing usernames and office edits survive later slips.
+- `app/Http/Controllers/Student/AuthController.php:27` serves a public no-store availability check. The student page waits before showing its form. Off/never-enabled/missing schools show the requested unavailable sentence; transport failures show a retry. An off response clears an existing student session.
+
+Tests were added before implementation. The focused PHP red run failed four cases (missing display fields/clock labels, random usernames and absent availability route); the SPA red run failed the four new display/preflight cases, with nine existing cases passing.
+
+| Verification | Result | Evidence |
+|---|---|---|
+| Final `php -d memory_limit=-1 vendor/bin/pest tests/Feature/Student` | 33 passed, 2776 assertions, 4.49 s | `/tmp/student-walk-final-student-php.log` |
+| Frozen PHP contracts: App101OffContract, SchoolCalendarOffContract, SchoolCalendarReaderSourceContract, ClassSubjectsOffSourceContract, InstalledBuildsContract | 70 passed, 295 assertions, 3.39 s | `/tmp/student-walk-frozen-php.log` |
+| Related PHP: student plus SchoolCalendarOffQueryDifferential, StudentAllergies, LetterGrades, ReportCardCriteria | 169 passed, 3870 assertions, 15.73 s | `/tmp/student-walk-regressions-php.log` |
+| Entire default PHP suite, run ONCE in this round: `php -d memory_limit=-1 vendor/bin/pest` | 11375 passed, 7 skipped, 11 failed; 190055 assertions; 870.76 s | `/tmp/student-walk-entire-php.log` |
+| Student SPA: student-sign-in, student-account-http, student-api-service; TZ=UTC | 22 passed, 0 failed | `/tmp/student-walk-spa.log` |
+| Broader student SPA and frozen classroom renders: `TZ=UTC node --experimental-strip-types --test resources/vue-app/tests/student*.test.ts resources/vue-app/tests/class-location-visible.test.ts resources/vue-app/tests/class-subjects-screens.test.ts` | 469 passed, 0 failed, 0 skipped; 218318.312209 ms | `/tmp/student-walk-all-student-spa.log` |
+
+The entire PHP run has exactly the eleven allowed exceptions listed in the earlier report: two BackupRun archive assertions, ExampleTest and HostHeaderUrlIntegrityTest missing `public/build/manifest.json`, four ResendTransportTimeout and three TenancyCanary loopback socket refusals (`Operation not permitted`). There are no additional failures.
+
+`git diff --check` passed. Normal and whitespace-insensitive diff statistics agree; no formatter ran. Removed 39 generated untracked artifacts. Preserved the pre-existing `artifacts/subject-report-summary-query-counts.json` byte for byte (SHA256 `fc51ccba2d8ceeee9662d4fddd65af0d38e59a505cb9a48156a698cfb56ce770`). Verification is local PHP/SQLite and mounted SPA/HTTP tests; this round did not run a production build, MySQL, a real browser/print walk or staging/production checks.

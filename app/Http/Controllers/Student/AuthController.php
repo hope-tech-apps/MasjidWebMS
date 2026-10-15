@@ -23,6 +23,14 @@ final class AuthController extends Controller
             'must_change_password'=>(bool)$account->must_change_password];
     }
 
+    /** Public preflight discloses only whether this school's student door is open. */
+    public function availability(int $masjid_id)
+    {
+        $available=StudentAccess::enabled(Masjid::find($masjid_id));
+        return response()->api($available ? 200 : 404,$available ? '' : 'Student sign-in is not available at this school.',
+            $available ? ['available'=>true] : null,['Cache-Control'=>'private, no-store']);
+    }
+
     public function signIn(Request $request, int $masjid_id)
     {
         $school=Masjid::find($masjid_id);
