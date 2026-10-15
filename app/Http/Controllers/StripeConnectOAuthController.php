@@ -57,7 +57,7 @@ class StripeConnectOAuthController extends Controller
             $message = 'The Stripe change could not be completed. Return to Online payments and refresh the status before trying again.';
             $status = 422;
         }
-        return response()->view('connect.oauth-status', ['message' => $message, 'portalUrl' => config('app.url')], $status)
+        return response()->view('connect.oauth-status', ['message' => $message, 'portalUrl' => \App\Support\SiteUrl::to('/masjid/details#online-payments'), 'linked' => $status === 200], $status)
             ->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'no-referrer');
     }
 }

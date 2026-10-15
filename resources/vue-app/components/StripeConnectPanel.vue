@@ -157,8 +157,7 @@
                     <p v-if="unlinkNotice" class="text-success small mt-2" role="status">{{ unlinkNotice }}</p>
                     <ul v-if="connectStatus.oauth.history?.length" class="small mt-3 mb-0">
                         <li v-for="(entry, index) in connectStatus.oauth.history" :key="index">
-                            {{ historyAction(entry.action) }} account ending {{ entry.account_last4 }}
-                            by {{ entry.actor || 'Stripe or removed staff' }} on {{ historyTime(entry.at) }}
+                            {{ historyAction(entry.action, entry.actor) }} account ending {{ entry.account_last4 }} on {{ entry.at }}
                         </li>
                     </ul>
                 </div>
@@ -210,8 +209,9 @@
                 <!-- The Stripe tab was opened: tell the admin how the loop closes. -->
                 <p v-if="onboardingLaunched" class="small text-info mb-0 mt-3">
                     <i class="bi bi-box-arrow-up-right me-1"></i>
-                    Stripe opened in a new tab. Finish the form there, then come back here
-                    and press “Refresh status”.
+                    <template v-if="existingAccountLaunched">Sign in to Stripe in the new tab and allow access, then come back here and press Refresh status.</template>
+                    <template v-else>Stripe opened in a new tab. Finish the form there, then come back here
+                    and press “Refresh status”.</template>
                 </p>
 
                 <p v-if="onboardingError" class="small text-danger mb-0 mt-3">
@@ -279,6 +279,7 @@ const forbidden = ref(false);          // 403 → the panel renders nothing at a
 const statusError = ref('');
 const onboardingError = ref('');
 const onboardingLaunched = ref(false);
+const existingAccountLaunched = ref(false);
 const revokingId = ref<number | null>(null);
 const revokeError = ref('');
 const revokeNotice = ref('');
@@ -392,6 +393,7 @@ const beginOnboarding = async (existing = false): Promise<void> => {
             return;
         }
 
+        existingAccountLaunched.value = existing;
         onboardingLaunched.value = true;
     } catch (e) {
         // The blank tab has no purpose if there is no link to give it.
@@ -406,9 +408,10 @@ const beginOnboarding = async (existing = false): Promise<void> => {
         startingOnboarding.value = false;
     }
 };
-const historyLabels: Record<string, string> = { link: 'Linked', unlink: 'Unlinked', deauthorized: 'Stripe disconnected' };
-const historyAction = (action: string): string => historyLabels[action] ?? action;
-const historyTime = (value: string): string => new Date(value).toLocaleString();
+const historyLabels: Record<string, string> = { link: 'linked', unlink: 'unlinked' };
+const historyAction = (action: string, actor: string | null): string => action === 'deauthorized'
+    ? 'Stripe disconnected'
+    : `${actor || 'a former staff member'} ${historyLabels[action] ?? action}`;
 
 const unlinkAccount = async (): Promise<void> => {
     if (unlinking.value) return;

@@ -110,7 +110,7 @@ class StripeConnectController extends Controller
                     'history' => \App\Models\StripeConnectHistory::with('actor:id,name')->where('masjid_id', $masjid->id)->latest('id')->limit(20)->get()->map(fn ($row) => [
                         'action' => $row->action, 'account_last4' => $row->account_last4,
                         'actor' => $row->actor?->name,
-                        'at' => $row->created_at->toIso8601String(),
+                        'at' => $row->created_at->copy()->setTimezone(\App\Support\SchoolCalendarReaders::for((int) $masjid->id)->timezone())->format('M j, Y, g:i A'),
                     ])->all(),
                 ]] : []),
             ],

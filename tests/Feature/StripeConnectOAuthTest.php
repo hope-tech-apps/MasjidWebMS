@@ -87,6 +87,33 @@ class StripeConnectOAuthTest extends TestCase
         Http::assertSent(fn ($r) => $r->url() === 'https://connect.stripe.com/oauth/token' && $r['grant_type'] === 'authorization_code' && $r['code'] === 'test-code' && $r->hasHeader('Authorization'));
     }
 
+    public function test_callback_links_back_to_online_payments_on_success_and_refusal(): void
+    {
+        config(['app.url' => 'https://portal.example.invalid/']);
+        $org = $this->makeMasjid();
+        $this->staff($org);
+        $state = $this->state($org);
+        $this->browser();
+        $this->returnFromStripe($state)->assertOk()
+            ->assertSee('href="https://portal.example.invalid/masjid/details#online-payments"', false)
+            ->assertSee('Return to Online payments');
+        $this->returnFromStripe($state)->assertStatus(422)
+            ->assertSee('href="https://portal.example.invalid/masjid/details#online-payments"', false)
+            ->assertSee('Return to Online payments');
+    }
+
+    public function test_history_times_are_readable_on_the_school_clock_including_day_and_year_boundaries(): void
+    {
+        $org = $this->makeMasjid(['timezone' => 'America/New_York']);
+        $user = $this->staff($org);
+        foreach (['2026-10-15 05:34:00' => 'Oct 15, 2026, 1:34 AM', '2027-01-01 02:34:00' => 'Dec 31, 2026, 9:34 PM'] as $utc => $local) {
+            StripeConnectHistory::create(['masjid_id' => $org->id, 'actor_user_id' => $user->id, 'action' => 'link', 'account_last4' => '0001'])
+                ->forceFill(['created_at' => $utc])->save();
+            $this->getJson($this->path($org, 'status'))->assertOk()
+                ->assertJsonPath('data.oauth.history.0.at', $local);
+        }
+    }
+
     public function test_forged_expired_and_wrong_session_user_states_are_refused(): void
     {
         $org = $this->makeMasjid();

@@ -29,6 +29,7 @@ export type FormsCardVia = {
 export type ConnectStatus = {
     oauth?: {
         enabled: boolean;
+        /** History times are readable school-local strings from the server. */
         history: { action: string; account_last4: string; actor: string | null; at: string }[];
     };
     /** null until the first onboarding call creates the connected account. */
