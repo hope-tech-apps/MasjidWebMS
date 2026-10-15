@@ -568,3 +568,8 @@ The owner's served-grade rule supersedes the earlier initial-proposal assumption
 - One school currency is configured in organisation_billing_settings, initially the existing Stripe currency setting. Accounts and FeePlans snapshot it; balances never mix currencies.
 - New non-English tuition labels are machine-drafted, including Arabic; fluent review remains owed. Existing locale review flags are unchanged.
 - Real Stripe TEST mode, webhook endpoint subscriptions, real mail, MySQL locking and production behaviour are unverified locally. No network is available.
+
+## 2026-10-14 — Tuition walk fixes
+- Existing free-text reasons are private by default, including scheduled/void history. Only FeePlan labels or fixed friendly kind names supply safe legacy descriptions.
+- A current school year means a dated year containing school-local today; otherwise the account's first financial date is used, and an empty account starts today.
+- New non-English description/coming-up wording remains machine-drafted pending fluent review. Local verification uses invented fixtures and faked mail/Stripe; no production interaction.

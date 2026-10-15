@@ -38,7 +38,10 @@ class SendTuitionMail implements ShouldQueue
                     $items = array_values(array_filter($current, fn ($i) => collect($row->due_items ?? [])->contains(fn ($old) => $old['due_on'] === $i['due_on'] && $old['side'] === $i['side'])));
                     if (! $items) { $row->update(['status' => 'skipped']); return; }
                 }
-                $body = $row->kind === 'statement' ? 'Your school tuition statement is attached.' : "School tuition reminder:\n".implode("\n", array_map(fn ($i) => TuitionStatement::money($i['amount_minor'], $account->currency).' due '.$i['due_on'], $items));
+                $today = SchoolCalendarReaders::for($this->schoolId)->today();
+                $link = rtrim(config('app.url'), '/').'/family/'.$this->schoolId.'/tuition';
+                $body = $row->kind === 'statement' ? 'Your tuition statement is attached.' : "A reminder about your family's tuition:\n".implode("\n", array_map(fn ($i) => TuitionStatement::money($i['amount_minor'], $account->currency).($i['due_on'] < $today ? ' was due ' : ' is due ').TuitionStatement::date($i['due_on']).'.', $items));
+                $body .= "\n\nCurrent balance as of ".TuitionStatement::date($today).': '.TuitionStatement::money($ledger->balance($account, $today), $account->currency).".\nView your tuition account: ".$link;
                 $mail = new AttendanceAbsenceMail($school->name, $school->email, $school->name.': Tuition '.($row->kind === 'statement' ? 'statement' : 'reminder'), $body."\n\nPlease contact the school office with questions.");
                 if ($row->kind === 'statement') $mail->attachData(app(TuitionStatement::class)->pdf($account, $row->from_on->toDateString(), $row->to_on->toDateString()), 'tuition-statement.pdf', ['mime' => 'application/pdf']);
                 if (! DB::table('tuition_mails')->where('id', $row->id)->where('status', 'queued')->update(['status' => 'sending', 'attempted_at' => now(), 'due_items' => json_encode($items), 'updated_at' => now()])) return;

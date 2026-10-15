@@ -48,12 +48,12 @@ class TuitionCharges
         return $out;
     }
 
-    /** Preview only as far as the next unpaid due date, or through an explicit reminder date. */
-    public function projectedDue(Masjid $school, TuitionAccount $account, ?string $through = null, bool $stopAtNext = false): array
+    /** Preview the next unpaid due date or an explicit interval; futureOnly skips current debt for Coming up. */
+    public function projectedDue(Masjid $school, TuitionAccount $account, ?string $through = null, bool $stopAtNext = false, bool $futureOnly = false): array
     {
         $today = SchoolCalendarReaders::for($school->id)->today();
         $due = $this->ledger->due($account);
-        if ($stopAtNext && $due && $due[0]['due_on'] <= $today) return $due;
+        if ($stopAtNext && ! $futureOnly && $due && $due[0]['due_on'] <= $today) return $due;
         $dates = TuitionSchedule::where('masjid_id', $school->id)->where('is_active', true)->get()->flatMap(fn ($s) => array_column($this->periods($s), 'due_on'))->filter(fn ($d) => $d >= $today && ($through === null || $d <= $through))->unique()->sort()->values();
         $posted = TuitionLine::where('masjid_id', $school->id)->where('account_id', $account->id)->pluck('idempotency_key')->flip();
         $planned = [];
@@ -63,9 +63,9 @@ class TuitionCharges
                 $planned[] = ['line_id' => null, 'child_contact_id' => $row['child_contact_id'], 'due_on' => $date, 'amount_minor' => $row['amount_minor'] - $row['discount_minor']];
             }
             $due = $this->ledger->due($account, $planned);
-            if ($stopAtNext && $due && $due[0]['due_on'] <= $date) break;
+            if ($stopAtNext && collect($due)->contains(fn ($d) => (! $futureOnly || $d['due_on'] > $today) && $d['due_on'] <= $date)) break;
         }
-        return $due;
+        return $futureOnly ? array_values(array_filter($due, fn ($d) => $d['due_on'] > $today)) : $due;
     }
 
     public function post(Masjid $school): int

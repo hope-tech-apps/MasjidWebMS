@@ -9905,3 +9905,7 @@ the school timezone, is the payment/refund effective date even if delivered late
 Office financial posts carry a browser action UUID; retries return the same entry,
 and reuse with changed details is refused. New tuition metadata is considered only
 after every existing money path, including the cart and donation metadata.
+
+## 2026-10-14 — Tuition ledger walk corrections
+
+Owner walk supersedes the original reason visibility and family-document formatting. Existing `tuition_lines.reason` is retained as the private staff note; a new nullable description is public. Never copy historical reasons into descriptions, even for voids. Blank/legacy descriptions use a plan label or friendly kind. Family projections are allowlists; notes and audit fields stay office-only. Family balances and Checkout ceilings are as of school-local today, with upcoming debt separate. CSV amounts are currency units with explicit currency. School-year statement defaults, family-readable mail/PDF, local office timestamps, save feedback and counted email confirmation are the current contract in docs/tuition-ledger.md. No commit, real send, switch-on or deployment is authorized by this fix round.

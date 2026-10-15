@@ -12,6 +12,7 @@ class TuitionLine extends Model
 
     public $timestamps = false;
     protected $guarded = [];
+    protected $hidden = ['reason'];
     protected $casts = ['amount_minor' => 'integer', 'effective_on' => 'date', 'due_on' => 'date', 'needs_review' => 'boolean', 'created_at' => 'datetime'];
 
     protected static function booted(): void

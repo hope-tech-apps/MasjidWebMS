@@ -28,11 +28,11 @@ class TuitionController extends FamilyController
     {
         $ledger = app(FamilyLedger::class); $today = SchoolCalendarReaders::for($account->masjid_id)->today();
         $due = $ledger->due($account); $school = Masjid::findOrFail($account->masjid_id);
-        $prospective = app(TuitionCharges::class)->projectedDue($school, $account, stopAtNext: true);
+        $prospective = app(TuitionCharges::class)->projectedDue($school, $account, stopAtNext: true, futureOnly: true);
         $next = $prospective[0]['due_on'] ?? null;
         $nextAmount = $next ? collect($prospective)->where('due_on', $next)->sum('amount_minor') : 0;
         $children = \App\Models\Contact::withTrashed()->whereIn('id', TuitionChild::where('account_id', $account->id)->pluck('contact_id'))->get()->map(fn ($c) => ['id' => $c->id, 'name' => trim($c->first_name.' '.$c->last_name)])->all();
-        return ['school_today' => $today, 'id' => $account->id, 'currency' => $account->currency, 'balance_minor' => $ledger->balance($account), 'minimum_payment_minor' => max($account->minimum_payment_minor, \App\Services\FamilyLedger\TuitionSettings::for((int) $account->masjid_id)->minimum_payment_minor), 'next_due_on' => $next, 'next_due_minor' => $nextAmount, 'due' => $due, 'children' => $children, 'card_available' => $school->canAcceptDonations()];
+        return ['school_today' => $today, 'default_from' => TuitionStatement::defaultFrom((int) $account->masjid_id, $account), 'id' => $account->id, 'currency' => $account->currency, 'balance_minor' => $ledger->balance($account, $today), 'minimum_payment_minor' => max($account->minimum_payment_minor, \App\Services\FamilyLedger\TuitionSettings::for((int) $account->masjid_id)->minimum_payment_minor), 'upcoming' => collect($prospective)->groupBy('due_on')->map(fn ($items, $day) => ['due_on' => $day, 'amount_minor' => $items->sum('amount_minor')])->values()->all(), 'next_due_on' => $next, 'next_due_minor' => $nextAmount, 'due' => $due, 'children' => $children, 'card_available' => $school->canAcceptDonations()];
     }
 
     public function show(Request $request, $masjid_id, $account_id): \Illuminate\Http\JsonResponse
@@ -43,7 +43,7 @@ class TuitionController extends FamilyController
 
     public function range(Request $request, TuitionAccount $account): array
     {
-        return \Illuminate\Support\Facades\Validator::make(['from' => $request->input('from', '1900-01-01'), 'to' => $request->input('to', SchoolCalendarReaders::for($account->masjid_id)->today())], ['from' => 'required|date_format:Y-m-d', 'to' => 'required|date_format:Y-m-d|after_or_equal:from'])->validate();
+        return \Illuminate\Support\Facades\Validator::make(['from' => $request->input('from', TuitionStatement::defaultFrom((int) $account->masjid_id, $account)), 'to' => $request->input('to', SchoolCalendarReaders::for($account->masjid_id)->today())], ['from' => 'required|date_format:Y-m-d', 'to' => 'required|date_format:Y-m-d|after_or_equal:from'])->validate();
     }
 
     public function statement(Request $request, $masjid_id, $account_id): \Illuminate\Http\Response

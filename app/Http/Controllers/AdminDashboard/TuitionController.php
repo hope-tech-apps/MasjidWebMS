@@ -39,7 +39,7 @@ class TuitionController extends Controller
         $ids = $participants->pluck('contact_id')->merge($guardians->pluck('contact_id'))->unique();
         return $this->ok(['contacts' => Contact::whereIn('id', $ids)->orderBy('first_name')->get()->map(fn ($c) => ['id' => $c->id, 'name' => trim($c->first_name.' '.$c->last_name)]), 'participants' => $participants, 'guardians' => $guardians,
             'offerings' => Offering::orderBy('name')->get(['id', 'name']), 'years' => SchoolYear::with('terms')->get()->map(fn ($y) => ['id' => $y->id, 'label' => $y->label, 'terms' => $y->terms->map(fn ($t) => ['id' => $t->id, 'name' => $t->name])]),
-            'groups' => Group::where('kind', 'class')->get(['id', 'name']), 'grades' => $participants->pluck('grade_label')->filter()->unique()->values(), 'school_today' => SchoolCalendarReaders::for((int) $this->school()->id)->today(), 'methods' => FamilyLedger::METHODS, 'billing_settings' => \App\Services\FamilyLedger\TuitionSettings::for((int) $this->school()->id), 'currency' => \App\Services\FamilyLedger\TuitionSettings::for((int) $this->school()->id)->currency]);
+            'groups' => Group::where('kind', 'class')->get(['id', 'name']), 'grades' => $participants->pluck('grade_label')->filter()->unique()->values(), 'default_from' => TuitionStatement::defaultFrom((int) $this->school()->id), 'method_labels' => collect(FamilyLedger::METHODS)->mapWithKeys(fn ($m) => [$m => FamilyLedger::methodLabel($m)]), 'school_today' => SchoolCalendarReaders::for((int) $this->school()->id)->today(), 'methods' => FamilyLedger::METHODS, 'billing_settings' => \App\Services\FamilyLedger\TuitionSettings::for((int) $this->school()->id), 'currency' => \App\Services\FamilyLedger\TuitionSettings::for((int) $this->school()->id)->currency]);
     }
 
     public function schoolSettings(Request $request): \Illuminate\Http\JsonResponse
@@ -66,7 +66,7 @@ class TuitionController extends Controller
         $recipients = TuitionGuardian::where('account_id', $account->id)->get()->map(function ($g) use ($account) {
             $c = Contact::find($g->contact_id); return ['contact_id' => $g->contact_id, 'name' => $c ? trim($c->first_name.' '.$c->last_name) : '', 'eligible' => $c && app(FamilyLedger::class)->mayRead($account, $c), 'address' => $c ? TuitionReminders::address($c) : null];
         });
-        return $this->ok(['account' => $account, 'balance_minor' => app(FamilyLedger::class)->balance($account), 'due' => app(FamilyLedger::class)->due($account), 'statement' => app(TuitionStatement::class)->data($account, $range['from'], $range['to'], true), 'recipients' => $recipients, 'mails' => TuitionMail::where('account_id', $account->id)->latest('id')->limit(100)->get(['id', 'kind', 'status', 'guardian_contact_id', 'from_on', 'to_on', 'due_items', 'created_at', 'sent_at'])]);
+        return $this->ok(['account' => $account, 'balance_minor' => app(FamilyLedger::class)->balance($account), 'due' => app(FamilyLedger::class)->due($account), 'statement' => app(TuitionStatement::class)->data($account, $range['from'], $range['to'], true), 'recipients' => $recipients, 'mails' => TuitionMail::where('account_id', $account->id)->latest('id')->limit(100)->get(['id', 'kind', 'status', 'guardian_contact_id', 'from_on', 'to_on', 'due_items', 'created_at', 'sent_at'])->map(fn ($m) => array_merge($m->toArray(), ['created_at' => TuitionStatement::timestamp($m->created_at, (int) $account->masjid_id), 'sent_at' => TuitionStatement::timestamp($m->sent_at, (int) $account->masjid_id)]))]);
     }
 
     public function settings(Request $request, $masjid_id, $account_id): \Illuminate\Http\JsonResponse
@@ -79,15 +79,15 @@ class TuitionController extends Controller
     public function entry(Request $request, $masjid_id, $account_id): \Illuminate\Http\JsonResponse
     {
         $this->school(); $account = TuitionAccount::findOrFail($account_id);
-        $data = $request->validate(['idempotency_key' => 'required|uuid', 'kind' => ['required', Rule::in(['charge', 'credit', 'office_payment'])], 'amount_minor' => 'required|integer|min:1|max:999999999', 'effective_on' => 'required|date_format:Y-m-d', 'reason' => 'required|string|max:1000', 'method' => ['nullable', Rule::in(FamilyLedger::METHODS)], 'reference' => 'nullable|string|max:255', 'child_contact_id' => 'nullable|integer']);
-        return $this->ok(app(FamilyLedger::class)->office($account, $data['kind'], (int) $data['amount_minor'], $data['effective_on'], $data['reason'], $request->user()->id, $data['method'] ?? null, $data['reference'] ?? null, isset($data['child_contact_id']) ? (int) $data['child_contact_id'] : null, $data['idempotency_key']));
+        $data = $request->validate(['idempotency_key' => 'required|uuid', 'kind' => ['required', Rule::in(['charge', 'credit', 'office_payment'])], 'amount_minor' => 'required|integer|min:1|max:999999999', 'effective_on' => 'required|date_format:Y-m-d', 'reason' => 'nullable|string|max:1000', 'note' => 'nullable|string|max:1000', 'description' => 'nullable|string|max:255', 'method' => ['nullable', Rule::in(FamilyLedger::METHODS)], 'reference' => 'nullable|string|max:255', 'child_contact_id' => 'nullable|integer']);
+        return $this->ok(app(FamilyLedger::class)->office($account, $data['kind'], (int) $data['amount_minor'], $data['effective_on'], $data['note'] ?? $data['reason'] ?? '', $request->user()->id, $data['method'] ?? null, $data['reference'] ?? null, isset($data['child_contact_id']) ? (int) $data['child_contact_id'] : null, $data['idempotency_key'], $data['description'] ?? null));
     }
 
     public function void(Request $request, $masjid_id, $account_id, $line_id): \Illuminate\Http\JsonResponse
     {
         $this->school(); TuitionAccount::findOrFail($account_id); $line = TuitionLine::where('account_id', $account_id)->findOrFail($line_id);
-        $data = $request->validate(['reason' => 'required|string|max:1000']);
-        return $this->ok(app(FamilyLedger::class)->void($line, $data['reason'], $request->user()->id));
+        $data = $request->validate(['note' => 'required_without:reason|nullable|string|max:1000', 'reason' => 'required_without:note|nullable|string|max:1000', 'description' => 'nullable|string|max:255']);
+        return $this->ok(app(FamilyLedger::class)->void($line, $data['note'] ?? $data['reason'], $request->user()->id, $data['description'] ?? null));
     }
 
     private function range(Request $request): array
@@ -112,12 +112,13 @@ class TuitionController extends Controller
         $this->school(); $range = $this->range($request);
         return response()->streamDownload(function () use ($range) {
             $out = fopen('php://output', 'w');
-            fputcsv($out, ['Account', 'Currency', 'Opening minor', 'Closing minor', 'Date', 'Child', 'Kind', 'Amount minor', 'Reason', 'Method', 'Reference', 'Recorded by', 'Entry', 'Original entry', 'Recorded at', 'Needs review', 'Stripe payment intent'], ',', '"', '');
+            fputcsv($out, ['Account', 'Family', 'Currency', 'Opening balance', 'Closing balance', 'Date', 'Child', 'Kind', 'Amount', 'Description', 'Staff note', 'Method', 'Reference', 'Recorded by', 'Entry', 'Original entry', 'Recorded at', 'Needs review', 'Stripe payment intent'], ',', '"', '');
             foreach (TuitionAccount::orderBy('id')->cursor() as $a) {
                 $data = app(TuitionStatement::class)->data($a, $range['from'], $range['to'], true);
                 foreach ($data['lines'] as $l) {
-                    $cells = [$a->id, $a->currency, $data['opening_minor'], $data['closing_minor'], $l['date'], $l['child'], $l['kind'], $l['amount_minor'], $l['reason'], $l['method'], $l['reference'], $l['recorded_by'], $l['id'], $l['original_line_id'], $l['recorded_at'], $l['needs_review'] ? 'yes' : 'no', $l['stripe_payment_intent_id']];
-                    $cells = array_map(fn ($v) => is_string($v) && preg_match('/^[\s]*[=+@-]/u', $v) ? "'".$v : $v, $cells);
+                    // Only text columns need formula escaping; signed numeric amounts remain usable numbers.
+                    $text = fn ($v) => is_string($v) && preg_match('/^[\s]*[=+@-]/u', $v) ? "'".$v : $v;
+                    $cells = [$a->id, $text($data['family_name']), strtoupper($a->currency), TuitionStatement::decimal($data['opening_minor'], $a->currency), TuitionStatement::decimal($data['closing_minor'], $a->currency), $l['date'], $text($l['child']), $l['kind_label'], TuitionStatement::decimal($l['amount_minor'], $a->currency), $text($l['description']), $text($l['note']), $l['method_label'], $text($l['reference']), $text($l['recorded_by']), $l['id'], $l['original_line_id'], $l['recorded_at'], $l['needs_review'] ? 'yes' : 'no', $text($l['stripe_payment_intent_id'])];
                     fputcsv($out, $cells, ',', '"', '');
                 }
             }

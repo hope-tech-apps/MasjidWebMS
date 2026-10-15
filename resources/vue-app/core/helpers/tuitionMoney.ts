@@ -9,7 +9,7 @@ export function tuitionDecimal(minor: number, currency: string): string {
     const scale = tuitionScale(currency), digits = String(Math.abs(minor)).padStart(scale + 1, '0');
     return (minor < 0 ? '-' : '') + (scale ? digits.slice(0, -scale) + '.' + digits.slice(-scale) : digits);
 }
-export function tuitionMoney(minor: number, currency: string): string { return currency.toUpperCase() + ' ' + tuitionDecimal(minor, currency); }
+export function tuitionMoney(minor: number, currency: string): string { const scale = tuitionScale(currency); return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase(), minimumFractionDigits: scale, maximumFractionDigits: scale }).format(Number(tuitionDecimal(minor, currency))); }
 export function tuitionMinor(input: string, currency: string): number | null {
     const scale = tuitionScale(currency);
     if (!(scale ? new RegExp('^\\d+(?:\\.\\d{1,' + scale + '})?$') : /^\d+$/).test(input.trim())) return null;

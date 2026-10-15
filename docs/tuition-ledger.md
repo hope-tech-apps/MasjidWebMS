@@ -45,7 +45,7 @@ with tuition history are refused rather than rewriting immutable attribution.
 
 Staging classification for all new columns:
 
-- `tuition_lines.reason`, `recorded_by_label`: anonymise; reference and Stripe PI:
+- `tuition_lines.description`, `reason`, `recorded_by_label`: anonymise; reference and Stripe PI:
   null. No names, references or free text survive in these fields.
 - `tuition_checkouts.stripe_account_id`: anonymise; session ID and URL: null.
 - Accounts, children, guardians, schedules, settings: IDs, dates, fixed enums,
@@ -95,8 +95,34 @@ one was missed. Only children already assigned to an account by that date qualif
 The office list shows every family's balance and an overdue filter. Open a family
 for its range ledger, corrections, one-offs/credits, recorded office payments,
 PDF statement, recipient preview, email action and delivery log. CSV export uses
-inclusive dates, an opening/closing balance, exact minor units, and formula guards.
+inclusive dates, opening/closing balances and amounts in money units, a currency column, guardian family names and a child name where assigned. Text columns have formula guards; signed numeric amounts remain numbers.
 The UI displays school-entered prose as text, never HTML.
+
+## Descriptions, notes and family documents
+
+The office entry and void forms separate **Description (Families see this)** from
+**Note (Staff only)**. Description is at most 255 characters; blank descriptions
+use the plan label for scheduled charges or a friendly kind such as Charge,
+Payment or Correction. Notes remain in the existing `tuition_lines.reason` column,
+are hidden on raw model serialization, and appear only in office projections and
+staff CSV exports. The API accepts `note`; the former `reason` input is a private
+note alias for cached clients. Existing reasons, including void reasons, are never
+promoted into descriptions. A nullable description migration preserves old data;
+legacy lines project a plan/kind default. Staging scrubs both fields.
+
+Family JSON is an explicit allowlist. It has `description`, friendly method/kind
+labels and financial fields, with no note, reason, reference or staff audit fields.
+The family page and the PDF both use this projection. The PDF shows guardian names,
+school name/address/contact, readable dates, friendly kinds such as Payment, cash,
+and the family's descriptions. It ends with the school's contact line. Internal
+entry IDs stay out of the PDF. Dates without times remain calendar days; office
+Recorded by and email-log timestamps are formatted on the server in the school's
+timezone as `Oct 14, 2026, 5:17 PM`, matching LetterGrades.
+
+Open account, Add entry and Void show Saved after success. Email statement requires
+a confirmation naming the number of currently eligible recipients with addresses.
+The delivery worker still rechecks authority and the current address. Method keys
+remain stable; visible labels include Cash App, Zelle, Check and Bank transfer.
 
 ## Family authority and payment
 
@@ -107,8 +133,7 @@ including withdrawn children. Removing a custody edge cuts access immediately;
 an email match grants nothing. The member portal remains dark, preserving #61;
 no universal-cart flags, origins, routing or payment blockers are bypassed.
 
-Families see their balance, next due amount/date, each child's lines, history and
-an inclusive date-range PDF with an opening balance. A school without a connected
+Families see their balance as of school-local today, coming charges separately, each child's lines, history and an inclusive date-range PDF with an opening balance. The default From date is the start of the current dated school year; with no current year it is the account's first entry, or today for an empty account. Future-dated office charges stay outside today's balance and maximum Checkout amount. A school without a connected
 Stripe account can keep its ledger and office payments; the family sees that card
 payment is unavailable. New labels exist in all seven language tables; non-English
 tuition labels are machine-drafted pending fluent review.
@@ -118,7 +143,7 @@ Connect account through the existing RegistrationCheckoutService direct-charge
 transport (`stripe_account` request option / Stripe-Account header). Hosted
 Checkout accepts cards only. A family explicitly chooses a positive whole or
 partial balance, never more than the current balance or below the school minimum.
-No card data reaches Manara. No card surcharge is added. The existing platform
+Checkout retains the full ledger balance snapshot for webhook reconciliation, while the payable limit excludes future-dated entries. This prevents an existing future charge from creating a false changed-balance flag. No card data reaches Manara. No card surcharge is added. The existing platform
 fee fraction is parsed as an exact decimal for integer fee arithmetic.
 
 Return URLs use server-configured app.url and the family portal path, never
@@ -165,7 +190,7 @@ Stripe subscription collects. Manara builds no payment scheduler.
 ## Mail and evidence limits
 
 `tuition:remind` runs hourly. Optional school before/after intervals create one
-reminder per account/guardian/day, listing due dates/amounts together. Future
+reminder per account/guardian/day, listing due dates/amounts together. Family wording distinguishes `was due Oct 11, 2026` from `is due Oct 17, 2026`, uses currency symbols and the currency's decimal scale, and includes the current balance as of school-local today plus `config('app.url')/family/<school>/tuition`. Future
 charges are previewed, never posted early. Amounts are recomputed before sending;
 paid debt suppresses an overdue message. There are no automatic late fees.
 Office statement sends use the same recipient authority and log. The database

@@ -20,7 +20,20 @@ class FamilyLedger
     }
 
     public function assertEnabled(int $school): void { abort_unless(self::enabled(Masjid::find($school)), 403); }
-    public function balance(TuitionAccount $account): int { return (int) TuitionLine::where('masjid_id', $account->masjid_id)->where('account_id', $account->id)->sum('amount_minor'); }
+    /** Sum all history, or only entries effective by the supplied school calendar day. */
+    public function balance(TuitionAccount $account, ?string $asOf = null): int { return (int) TuitionLine::where('masjid_id', $account->masjid_id)->where('account_id', $account->id)->when($asOf, fn ($q) => $q->whereDate('effective_on', '<=', $asOf))->sum('amount_minor'); }
+
+    /** Stable storage keys have explicit human-readable labels on every tuition surface. */
+    public static function methodLabel(?string $method): ?string
+    {
+        return $method === null ? null : (['cash' => 'Cash', 'check' => 'Check', 'zelle' => 'Zelle', 'cash_app' => 'Cash App', 'venmo' => 'Venmo', 'bank_transfer' => 'Bank transfer', 'other' => 'Other', 'stripe' => 'Card'][$method] ?? 'Other');
+    }
+
+    /** Safe family-facing defaults never reuse an office note. */
+    public static function kindLabel(string $kind): string
+    {
+        return ['charge' => 'Charge', 'sibling_discount' => 'Sibling discount', 'credit' => 'Credit', 'office_payment' => 'Payment', 'card_payment' => 'Card payment', 'refund' => 'Refund', 'void' => 'Correction'][$kind];
+    }
 
     public function open(Masjid $school, array $children, array $guardians, int $actor): TuitionAccount
     {
@@ -67,36 +80,38 @@ class FamilyLedger
             && $this->confirmedFor((int) $account->masjid_id, (int) $guardian->id, $children);
     }
 
-    public function office(TuitionAccount $account, string $kind, int $amount, string $date, string $reason, int $actor, ?string $method = null, ?string $reference = null, ?int $child = null, ?string $actionKey = null): TuitionLine
+    /** The legacy reason argument is a private staff note; only description is family-visible. */
+    public function office(TuitionAccount $account, string $kind, int $amount, string $date, string $reason, int $actor, ?string $method = null, ?string $reference = null, ?int $child = null, ?string $actionKey = null, ?string $description = null): TuitionLine
     {
         $this->assertEnabled((int) $account->masjid_id);
         $this->require(in_array($kind, ['charge', 'credit', 'office_payment'], true), 'Choose a charge, credit or office payment.');
-        $this->require($amount > 0 && $amount <= 999999999 && trim($reason) !== '', 'Enter a positive amount and a reason.');
+        $this->require($amount > 0 && $amount <= 999999999, 'Enter a positive amount.');
         $this->require($kind !== 'office_payment' || in_array($method, self::METHODS, true), 'Choose an office payment method.');
         $this->require(! $reference || ! preg_match('/^(pi_|ch_|cs_|in_)/', trim($reference)), 'Stripe payments arrive from Stripe confirmation. Do not record a Stripe reference by hand.');
         if ($child !== null) $this->require(TuitionChild::where('masjid_id', $account->masjid_id)->where('account_id', $account->id)->where('contact_id', $child)->exists(), 'Choose a child on this account.');
         $line = $this->append($account, [
             'kind' => $kind, 'amount_minor' => $kind === 'charge' ? $amount : -$amount,
-            'effective_on' => $date, 'due_on' => $kind === 'charge' ? $date : null, 'reason' => $reason,
+            'effective_on' => $date, 'due_on' => $kind === 'charge' ? $date : null, 'reason' => $reason, 'description' => trim($description ?? '') ?: self::kindLabel($kind),
             'recorded_by_user_id' => $actor, 'recorded_by_label' => User::findOrFail($actor)->name,
             'child_contact_id' => $child, 'method' => $kind === 'office_payment' ? $method : null,
             'reference' => $reference, 'source' => 'office', 'idempotency_key' => 'office:'.$account->id.':'.($actionKey ?? Str::uuid()),
         ]);
-        $this->require($line->kind === $kind && $line->amount_minor === ($kind === 'charge' ? $amount : -$amount) && $line->effective_on->toDateString() === $date && $line->reason === $reason && $line->reference === $reference && $line->method === ($kind === 'office_payment' ? $method : null) && $line->child_contact_id === $child, 'This action was already recorded with different details. Reload the ledger before entering a new action.');
+        $this->require($line->kind === $kind && $line->amount_minor === ($kind === 'charge' ? $amount : -$amount) && $line->effective_on->toDateString() === $date && $line->reason === $reason && $line->description === (trim($description ?? '') ?: self::kindLabel($kind)) && $line->reference === $reference && $line->method === ($kind === 'office_payment' ? $method : null) && $line->child_contact_id === $child, 'This action was already recorded with different details. Reload the ledger before entering a new action.');
         return $line;
     }
 
-    public function void(TuitionLine $line, string $reason, int $actor): TuitionLine
+    /** Reverse an entry with a private audit reason and a separate public description. */
+    public function void(TuitionLine $line, string $reason, int $actor, ?string $description = null): TuitionLine
     {
         $this->assertEnabled((int) $line->masjid_id);
         $this->require(in_array($line->source, ['office', 'schedule'], true) && $line->kind !== 'void', 'Stripe records can only be refunded in Stripe. A void cannot be voided.');
         $this->require(trim($reason) !== '', 'Enter a correction reason.');
         $account = TuitionAccount::where('masjid_id', $line->masjid_id)->findOrFail($line->account_id);
-        return DB::transaction(function () use ($account, $line, $reason, $actor) {
+        return DB::transaction(function () use ($account, $line, $reason, $actor, $description) {
             TuitionAccount::whereKey($account->id)->lockForUpdate()->firstOrFail();
-            $void = $this->append($account, ['kind' => 'void', 'amount_minor' => -$line->amount_minor, 'effective_on' => \App\Support\SchoolCalendarReaders::for($account->masjid_id)->today(), 'reason' => $reason, 'original_line_id' => $line->id, 'child_contact_id' => $line->child_contact_id, 'recorded_by_user_id' => $actor, 'recorded_by_label' => User::findOrFail($actor)->name, 'source' => 'office', 'idempotency_key' => 'void:'.$line->id]);
+            $void = $this->append($account, ['kind' => 'void', 'amount_minor' => -$line->amount_minor, 'effective_on' => \App\Support\SchoolCalendarReaders::for($account->masjid_id)->today(), 'reason' => $reason, 'description' => trim($description ?? '') ?: 'Correction', 'original_line_id' => $line->id, 'child_contact_id' => $line->child_contact_id, 'recorded_by_user_id' => $actor, 'recorded_by_label' => User::findOrFail($actor)->name, 'source' => 'office', 'idempotency_key' => 'void:'.$line->id]);
             // A scheduled sibling discount belongs to its charge; reversing the charge reverses it too.
-            foreach (TuitionLine::where('account_id', $account->id)->where('original_line_id', $line->id)->where('kind', 'sibling_discount')->get() as $discount) $this->void($discount, $reason, $actor);
+            foreach (TuitionLine::where('account_id', $account->id)->where('original_line_id', $line->id)->where('kind', 'sibling_discount')->get() as $discount) $this->void($discount, $reason, $actor, $description);
             return $void;
         });
     }
@@ -106,6 +121,9 @@ class FamilyLedger
     {
         $this->require(in_array($data['kind'] ?? null, self::KINDS, true) && is_int($data['amount_minor'] ?? null) && $data['amount_minor'] !== 0, 'Ledger entries require a known kind and nonzero integer minor units.');
         CartTables::existsOrFail('tuition_lines');
+        // Old office reasons stay private; a missing description never falls back to free-text notes.
+        $data['description'] = trim($data['description'] ?? '') ?: (($data['fee_plan_id'] ?? null) && $data['kind'] === 'charge' ? \App\Models\FeePlan::where('masjid_id', $account->masjid_id)->findOrFail($data['fee_plan_id'])->label : self::kindLabel($data['kind']));
+        $data['reason'] ??= '';
         return DB::transaction(function () use ($account, $data) {
             TuitionAccount::where('masjid_id', $account->masjid_id)->whereKey($account->id)->lockForUpdate()->firstOrFail();
             return TuitionLine::firstOrCreate(['masjid_id' => $account->masjid_id, 'idempotency_key' => $data['idempotency_key']], array_merge($data, ['masjid_id' => $account->masjid_id, 'account_id' => $account->id, 'currency' => $account->currency, 'created_at' => now()]));

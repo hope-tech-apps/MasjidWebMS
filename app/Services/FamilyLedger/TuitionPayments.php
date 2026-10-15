@@ -21,7 +21,9 @@ class TuitionPayments
         return DB::transaction(function () use ($account, $payer, $amount, $school) {
             $account = TuitionAccount::whereKey($account->id)->lockForUpdate()->firstOrFail();
             $balance = $this->ledger->balance($account);
-            $this->ledger->require($amount > 0 && $amount <= $balance && $amount <= 999999999, 'Choose an amount no greater than the balance.');
+            // Keep the whole-ledger reconciliation snapshot; only today's debt is payable in Checkout.
+            $payable = $this->ledger->balance($account, SchoolCalendarReaders::for($account->masjid_id)->today());
+            $this->ledger->require($amount > 0 && $amount <= $payable && $amount <= 999999999, 'Choose an amount no greater than the balance.');
             $this->ledger->require($amount >= max($account->minimum_payment_minor, TuitionSettings::for((int) $school->id)->minimum_payment_minor), 'The amount is below the school minimum.');
             $pending = TuitionCheckout::where('account_id', $account->id)->where('payer_contact_id', $payer->id)->where('amount_minor', $amount)->where('balance_minor', $balance)->where('stripe_account_id', $school->stripe_account_id)->where('created_at', '>', now()->subMinutes(29))->whereNotNull('checkout_url')->latest('id')->first();
             if ($pending && ! TuitionLine::where('checkout_id', $pending->id)->where('kind', 'card_payment')->exists()) return ['url' => $pending->checkout_url];

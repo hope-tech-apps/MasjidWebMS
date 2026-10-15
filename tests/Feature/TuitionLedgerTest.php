@@ -183,8 +183,9 @@ class TuitionLedgerTest extends TestCase
         $this->assertSame(900, $data['opening_minor']); $this->assertSame(1200, $data['closing_minor']);
         $this->assertSame(['2026-10-01', '2026-10-31'], array_column($data['lines'], 'date'));
         $html = $statement->html($x['account'], '2026-10-01', '2026-10-31');
-        $this->assertStringContainsString('#2', $html); $this->assertStringContainsString('#3', $html);
-        $this->assertStringContainsString('USD 9.00', $html); $this->assertStringContainsString('USD 12.00', $html);
+        $this->assertStringContainsString('Oct 1, 2026', $html); $this->assertStringContainsString('Oct 31, 2026', $html);
+        $this->assertStringNotContainsString('#2', $html); $this->assertStringNotContainsString('office_payment', $html);
+        $this->assertStringContainsString('$9.00', $html); $this->assertStringContainsString('$12.00', $html);
         $this->assertStringNotContainsString('2026-09-30', $html); $this->assertStringNotContainsString('2026-11-01', $html);
         $this->assertStringStartsWith('%PDF-', $statement->pdf($x['account'], '2026-10-01', '2026-10-31'));
     }
@@ -477,4 +478,133 @@ class TuitionLedgerTest extends TestCase
         $this->assertSame(0,TuitionLine::count());
     }
 
+
+    #[Test]
+    public function descriptions_are_public_but_office_notes_and_legacy_void_reasons_never_reach_families(): void
+    {
+        $this->travelTo(now()->parse('2026-10-14 21:17:00 UTC'));
+        $x = $this->setupLedger(); Mail::fake(); config(['queue.default' => 'database']);
+        $charge = $x['ledger']->office($x['account'], 'charge', 2000, '2026-10-11', 'PRIVATE-CHARGE-NOTE', $x['actor']->id, description: 'October tuition');
+        $payment = $x['ledger']->office($x['account'], 'office_payment', 500, '2026-10-14', 'PRIVATE-PAYMENT-NOTE', $x['actor']->id, 'cash', description: 'Payment received');
+        $x['ledger']->void($payment, 'PRIVATE-VOID-NOTE', $x['actor']->id, 'Payment correction');
+        // Simulate rows from before the description column existed. Do not reinterpret their notes as public copy.
+        DB::table('tuition_lines')->where('id', $payment->id)->update(['description' => null]);
+        $statement = app(TuitionStatement::class);
+        $office = $statement->data($x['account'], '2026-10-01', '2026-10-31', true);
+        $this->assertSame('PRIVATE-CHARGE-NOTE', $office['lines'][0]['note']);
+        $this->assertSame('Oct 14, 2026, 5:17 PM', $office['lines'][0]['recorded_at']);
+        $this->assertArrayNotHasKey('reason', $charge->toArray());
+        $this->family($x['parent']); $base = "/api/family/masjids/{$x['school']->id}/tuition";
+        foreach ([$base, $base.'/'.$x['account']->id.'?from=2026-10-01&to=2026-10-31'] as $url) {
+            $json = $this->getJson($url)->assertOk()->getContent();
+            $this->assertStringNotContainsString('PRIVATE-', $json);
+            $this->assertStringNotContainsString('"note"', $json); $this->assertStringNotContainsString('"reason"', $json);
+        }
+        $public = $this->getJson($base.'/'.$x['account']->id.'?from=2026-10-01&to=2026-10-31')->json('data.statement');
+        $this->assertSame(['October tuition', 'Payment', 'Payment correction'], array_column($public['lines'], 'description'));
+        $html = $statement->html($x['account'], '2026-10-01', '2026-10-31');
+        foreach (['October tuition', 'Payment, cash', 'Payment correction', 'Practice Guardian', $x['school']->name, $x['school']->email, $x['school']->phone, 'Oct 14, 2026'] as $text) $this->assertStringContainsString($text, $html);
+        foreach (['PRIVATE-', 'office payment', '(entry ', '#'.$charge->id, 'This is a tuition statement.', '2026-10-14'] as $text) $this->assertStringNotContainsString($text, $html);
+        $pdf = $this->get($base.'/'.$x['account']->id.'/statement?from=2026-10-01&to=2026-10-31')->assertOk()->getContent();
+        $this->assertStringStartsWith('%PDF-', $pdf);
+        $this->assertFamilyPdfHasNoStaffNote($pdf);
+        file_put_contents('/tmp/tuition-walk-family.pdf', $pdf);
+        app(TuitionReminders::class)->recipients($x['account'], 'statement', '2026-10-01', '2026-10-31');
+        $row = TuitionMail::firstOrFail(); (new \App\Jobs\SendTuitionMail($row->id, $x['school']->id))->handle();
+        Mail::assertSent(\App\Mail\AttendanceAbsenceMail::class, function ($mail) {
+            $this->assertStringNotContainsString('PRIVATE-', $mail->render());
+            $this->assertStringStartsWith('%PDF-', $mail->rawAttachments[0]['data']);
+            $this->assertFamilyPdfHasNoStaffNote($mail->rawAttachments[0]['data']);
+            file_put_contents('/tmp/tuition-walk-mailed.pdf', $mail->rawAttachments[0]['data']);
+            return true;
+        });
+    }
+
+    #[Test]
+    public function reminder_speaks_to_families_with_overdue_and_coming_dates_currency_balance_and_link(): void
+    {
+        // UTC next day; school still Oct 14. Both reminder selection and wording must use that day.
+        $this->travelTo(now()->parse('2026-10-15 01:17:00 UTC'));
+        $x = $this->setupLedger(); Mail::fake(); config(['queue.default' => 'database', 'app.url' => 'https://portal.example.invalid/']);
+        $x['account']->update(['remind_before_days' => 3, 'remind_after_days' => 3]);
+        $x['ledger']->office($x['account'], 'charge', 3000, '2026-10-11', 'PRIVATE-OVERDUE-NOTE', $x['actor']->id);
+        $x['ledger']->office($x['account'], 'charge', 2000, '2026-10-17', 'PRIVATE-FUTURE-NOTE', $x['actor']->id);
+        $x['ledger']->office($x['account'], 'office_payment', 1000, '2026-10-14', 'PRIVATE-RECEIVED-NOTE', $x['actor']->id, 'zelle');
+        $this->assertSame(1, app(TuitionReminders::class)->queue($x['school']));
+        $row = TuitionMail::firstOrFail(); (new \App\Jobs\SendTuitionMail($row->id, $x['school']->id))->handle();
+        Mail::assertSent(\App\Mail\AttendanceAbsenceMail::class, function ($mail) use ($x) {
+            foreach (['$20.00 was due Oct 11, 2026.', '$20.00 is due Oct 17, 2026.', 'Current balance as of Oct 14, 2026: $20.00.', 'https://portal.example.invalid/family/'.$x['school']->id.'/tuition'] as $text) $this->assertStringContainsString($text, $mail->bodyText);
+            $this->assertStringNotContainsString('PRIVATE-', $mail->render()); $this->assertStringNotContainsString('USD ', $mail->bodyText);
+            return true;
+        });
+        $this->assertSame('sent', $row->fresh()->status);
+        $this->assertSame('¥123', TuitionStatement::money(123, 'jpy'));
+        $this->assertStringContainsString('1.234', TuitionStatement::money(1234, 'kwd'));
+    }
+
+    #[Test]
+    public function family_balance_ends_today_upcoming_is_separate_and_default_statement_starts_with_the_school_year(): void
+    {
+        $this->travelTo(now()->parse('2026-10-15 01:17:00 UTC')); $x = $this->setupLedger();
+        $x['ledger']->office($x['account'], 'charge', 63500, '2026-10-11', 'PRIVATE', $x['actor']->id);
+        $x['ledger']->office($x['account'], 'charge', 2000, '2026-10-17', 'PRIVATE', $x['actor']->id);
+        $this->family($x['parent']); $url = "/api/family/masjids/{$x['school']->id}/tuition/{$x['account']->id}";
+        $this->getJson($url)->assertOk()->assertJsonPath('data.balance_minor', 63500)->assertJsonPath('data.statement.closing_minor', 63500)->assertJsonPath('data.default_from', '2026-08-24')->assertJsonPath('data.statement.from', '2026-08-24')->assertJsonPath('data.school_today', '2026-10-14')->assertJsonPath('data.next_due_on', '2026-10-17')->assertJsonPath('data.next_due_minor', 2000);
+        $this->postJson($url.'/checkout', ['amount_minor' => 65500])->assertUnprocessable();
+        $this->assertSame(65500, $x['ledger']->balance($x['account']));
+        $this->mock(\App\Services\Stripe\RegistrationCheckoutService::class)->shouldReceive('createDirectCheckout')->once()->andReturn(['id' => 'cs_today', 'url' => 'https://checkout.stripe.com/practice']);
+        $this->postJson($url.'/checkout', ['amount_minor' => 63500])->assertOk();
+        $checkout = TuitionCheckout::firstOrFail();
+        $this->assertSame(65500, $checkout->balance_minor);
+        $this->webhook('checkout.session.completed', ['id' => 'cs_today', 'metadata' => ['tuition_checkout_uuid' => $checkout->uuid], 'payment_status' => 'paid', 'currency' => 'usd', 'amount_total' => 63500, 'payment_intent' => 'pi_today'], 'evt_today', created: now()->timestamp)->assertOk();
+        $this->assertFalse(TuitionLine::where('kind', 'card_payment')->firstOrFail()->needs_review);
+        $this->getJson($url)->assertOk()->assertJsonPath('data.balance_minor', 0)->assertJsonPath('data.next_due_minor', 2000)->assertJsonPath('data.statement.lines.1.method_label', 'Card');
+        $x['year']->update(['last_day' => '2026-09-30']);
+        $this->assertSame('2026-10-11', TuitionStatement::defaultFrom($x['school']->id, $x['account']));
+    }
+
+    #[Test]
+    public function office_form_fields_csv_units_family_child_method_labels_and_mail_times_round_trip(): void
+    {
+        $this->travelTo(now()->parse('2026-10-14 21:17:00 UTC')); $x = $this->setupLedger();
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class); $x['school']->forceFill(['user_id' => $x['actor']->id])->save();
+        \Laravel\Sanctum\Sanctum::actingAs($x['actor'], ['staff']); $url = "/api/admin/masjids/{$x['school']->id}/tuition";
+        $body = ['idempotency_key' => '44444444-4444-4444-8444-444444444444', 'kind' => 'office_payment', 'amount_minor' => '2000', 'effective_on' => '2026-10-14', 'note' => 'PRIVATE-OFFICE-NOTE', 'description' => 'October payment', 'method' => 'cash_app', 'child_contact_id' => (string) $x['children'][0]];
+        $id = $this->post($url.'/'.$x['account']->id.'/entries', $body)->assertOk()->json('data.id');
+        $this->post($url.'/'.$x['account']->id.'/entries/'.$id.'/void', ['note' => 'PRIVATE-CORRECTION', 'description' => 'Payment corrected'])->assertOk();
+        TuitionMail::create(['masjid_id' => $x['school']->id, 'account_id' => $x['account']->id, 'guardian_contact_id' => $x['parent']->id, 'mail_key' => 'walk-times', 'kind' => 'statement', 'status' => 'sent', 'from_on' => '2026-10-01', 'to_on' => '2026-10-31', 'sent_at' => now()]);
+        $this->getJson($url.'/'.$x['account']->id.'?from=2026-10-01&to=2026-10-31')->assertOk()->assertJsonPath('data.statement.lines.0.note', 'PRIVATE-OFFICE-NOTE')->assertJsonPath('data.statement.lines.0.recorded_at', 'Oct 14, 2026, 5:17 PM')->assertJsonPath('data.mails.0.created_at', 'Oct 14, 2026, 5:17 PM')->assertJsonPath('data.mails.0.sent_at', 'Oct 14, 2026, 5:17 PM');
+        $options = $this->getJson($url.'/options')->assertOk();
+        foreach (['cash_app' => 'Cash App', 'zelle' => 'Zelle', 'check' => 'Check', 'bank_transfer' => 'Bank transfer'] as $key => $label) $options->assertJsonPath('data.method_labels.'.$key, $label);
+        $options->assertJsonPath('data.default_from', '2026-08-24');
+        $csv = $this->get($url.'/export?from=2026-10-01&to=2026-10-31')->assertOk()->streamedContent();
+        $rows = array_map(fn ($line) => str_getcsv($line, ',', '"', ''), explode("\n", trim($csv)));
+        $row = array_combine($rows[0], $rows[1]);
+        $this->assertSame('Practice Guardian', $row['Family']); $this->assertSame('Sample Student', $row['Child']);
+        $this->assertSame('USD', $row['Currency']); $this->assertSame('-20.00', $row['Amount']); $this->assertSame('0.00', $row['Closing balance']);
+        $this->assertSame('Cash App', $row['Method']); $this->assertSame('October payment', $row['Description']);
+    }
+
+    #[Test]
+    public function existing_schedule_rows_get_plan_descriptions_and_the_statement_shows_no_staff_reason(): void
+    {
+        $this->travelTo(now()->parse('2026-10-09 16:00:00 UTC')); $x = $this->setupLedger(); app(TuitionCharges::class)->post($x['school']);
+        $this->assertSame('Practice tuition', TuitionLine::firstOrFail()->description);
+        $this->assertTrue(\Illuminate\Support\Facades\Schema::hasColumn('tuition_lines', 'description'));
+        $data = app(TuitionStatement::class)->data($x['account'], '2026-10-01', '2026-10-31');
+        $this->assertSame('Practice tuition', $data['lines'][0]['description']); $this->assertArrayNotHasKey('reason', $data['lines'][0]);
+    }
+    /** Inspect actual mPDF streams, including UTF-16 text; an uncompressed byte search misses private text. */
+    private function assertFamilyPdfHasNoStaffNote(string $pdf): void
+    {
+        preg_match_all('/stream\r?\n(.*?)\r?\nendstream/s', $pdf, $streams);
+        $decoded = $pdf;
+        foreach ($streams[1] as $stream) {
+            $content = @gzuncompress($stream);
+            if ($content !== false) $decoded .= $content;
+        }
+        $this->assertStringContainsString(mb_convert_encoding('October tuition', 'UTF-16BE', 'UTF-8'), $decoded);
+        $this->assertStringNotContainsString('PRIVATE-', $decoded);
+        $this->assertStringNotContainsString(mb_convert_encoding('PRIVATE-', 'UTF-16BE', 'UTF-8'), $decoded);
+    }
 }

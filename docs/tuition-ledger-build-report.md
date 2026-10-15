@@ -1,5 +1,108 @@
 # Tuition ledger build report
 
+## Walk correction round (base b31b1c4d)
+
+All eight walk findings are fixed on `feature/tuition-ledger`, uncommitted. HEAD
+remains `b31b1c4dfd164ed23c785a1bbbc69d77987fb87b`; the owner's refund lookup fix is
+preserved. The current contract is `tuition-ledger.md`.
+
+1. Public Description and private Note on entry/void forms, explicitly labelled
+   Families see this / Staff only. Existing `reason` storage stays private, including
+   old void reasons. A new reversible nullable-description migration uses safe
+   plan/kind defaults for old rows; staging scrub covers descriptions too. Family
+   JSON, mounted page, rendered HTML, decoded downloaded/attached PDF streams and
+   rendered email all have note-exclusion assertions.
+2. Reminders use was due / is due, currency symbols and currency decimal scales,
+   readable calendar dates, current school-local balance and the family tuition link.
+3. Family PDFs show guardian names, school letterhead/contact, readable dates,
+   descriptions and friendly entry/method labels. Internal entry IDs are absent;
+   school contact details end the statement. Office CSV retains audit IDs.
+4. Recorded by and email-log times are formatted server-side in the school's timezone,
+   following LetterGrades. Office entry date also initializes from school-local today.
+5. Family balance and Checkout payable ceiling end today; coming debt is separate.
+   From defaults to the current dated school year's start, then account's first line,
+   then today for an empty account. Checkout retains the full reconciliation snapshot,
+   so an existing future charge does not create a false review flag on payment.
+6. Open account, Add entry and Void show Saved. Email statement requires a confirmation
+   with the eligible recipients' count; tests cover cancel and confirm.
+7. CSV amounts/opening/closing balances use exact currency units and a currency column,
+   with guardian family names and assigned child names. Formula guards protect text
+   while negative numeric amounts remain usable numbers.
+8. Method keys display as Cash App, Zelle, Check, Bank transfer and other explicit
+   labels. Five new PHP regression cases and two new mounted SPA cases cover the walk.
+
+### Verified totals
+
+| Run | Result | Evidence |
+|---|---|---|
+| Final requested targeted PHP gates, including audit follow-up | 77 passed, 1446 assertions, 7.00 s | `/tmp/tuition-walk-final-gates.log` |
+| TuitionLedgerTest, included above | 39 passed | same log |
+| Frozen contracts, included above | App101OffContractTest 1; SchoolCalendarOffQueryDifferentialTest 13; ClassSubjectReportSummaryTest 20; all 34 passed | same log |
+| Required StagingScrubCoverageTest, included above | 4 passed | same log |
+| SPA tuition | 7 passed, 0 failed, 472.535875 ms | `/tmp/tuition-walk-spa.log` |
+| Related family language checks | 8 passed, 0 failed, 458.551042 ms | `/tmp/tuition-walk-languages.log` |
+| ENTIRE default PHP suite ONCE, exit 2 | 11257 passed, 7 skipped, 20 failed; 184341 assertions; 785.18 s | `/tmp/tuition-walk-full.log` |
+
+The full run started 2026-10-15 01:35 UTC, within the stated 00:00–04:00 UTC
+criteria window. The full suite was not repeated. The final targeted rerun covers
+the audit follow-up for reconciliation snapshots and stronger decoded-PDF assertions.
+
+### Nine known date failures, separately named
+
+All are in `ReportCardCriteriaTest`, which this fix round does not modify:
+
+- `a_late_started_prior_term_card_uses_its_period_after_a_draft_applies`
+- `two_applied_drafts_keep_late_q1_and_q2_cards_and_full_band_versions_recoverable`
+- `without_dated_terms_late_cards_use_their_own_school_year_including_a_named_year`
+- `the_august_rollover_without_calendar_years_keeps_prior_year_criteria`
+- `period_versions_cannot_be_read_or_overwritten_through_another_tenant`
+- `sending_freezes_band_even_after_takeback_and_draft_applies_on_next_term_start`
+- `without_dated_terms_freeze_is_for_the_school_year`
+- `only_the_band_used_by_a_sent_card_freezes_and_unrelated_current_edits_survive_a_draft`
+- `deferred_criteria_follow_a_rescheduled_term_and_do_not_apply_on_the_old_start`
+
+### Eleven expected environment failures
+
+Socket refusal (`stream_socket_server`, Operation not permitted):
+
+- ResendTransportTimeoutTest: `a_resend_call_that_is_never_answered_gives_up_instead_of_waiting_for_ever`
+- ResendTransportTimeoutTest: `a_silent_resend_still_saves_a_portal_password_and_answers_ok`
+- ResendTransportTimeoutTest: `a_silent_resend_still_resets_an_app_password_and_signs_the_member_in`
+- ResendTransportTimeoutTest: `the_shipped_limits_are_set_and_well_below_nginxs_sixty_seconds`
+- TenancyCanaryTest: `an_origin_that_redirects_every_probe_is_not_a_clean_run`
+- TenancyCanaryTest: `an_origin_that_404s_every_probe_is_not_a_clean_run`
+- TenancyCanaryTest: `one_unreachable_endpoint_is_not_the_same_alarm_as_a_dead_origin`
+
+Archive counts:
+
+- BackupRunTest: `an_archive_whose_headers_are_directories_is_still_a_short_archive`
+- BackupRunTest: `an_archive_that_really_holds_the_files_still_passes`
+
+Missing `public/build/manifest.json`:
+
+- ExampleTest: `it_returns_a_successful_response`
+- HostHeaderUrlIntegrityTest: `the_test_harness_really_does_forge_the_host`
+
+**No other failures.**
+
+### Inspection, cleanup and limits
+
+Actual downloaded and emailed PDFs were generated and extracted with pdftotext;
+public descriptions/contact/dates are present and private-note sentinels/internal
+entry wording are absent. The downloaded statement was rendered to PNG and visually
+inspected. No real browser walk was repeated. Mail and Stripe are faked; MySQL,
+real delivery/provider behaviour, staging/production and fluent non-English copy
+remain unverified. No build, commit, network, deploy, switch-on, real send, formatter,
+fixture recapture, dependency/lockfile or CHANGELOG change was made in this round.
+
+Changed/new PHP syntax: 12 files passed. `git diff --check` passes; ordinary and
+whitespace-ignored diff shortstats match. Removed 39 generated untracked artifacts;
+restored the original subject-report query-count artifact byte for byte from
+`/tmp/tuition-walk-original-query-counts.json`. Frozen fixtures and the three frozen
+test files are unchanged. STATE.md and PLAN.md record completion.
+
+## Original build (historical)
+
 Implemented on `feature/tuition-ledger` from `05a3f9e3`, uncommitted and default off.
 No school was enabled. No network, production, live Stripe, real mail, CAPTURE
 variables, fixture recaptures, formatter, dependency changes or CHANGELOG edits.

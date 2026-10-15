@@ -7,7 +7,7 @@
         <section v-for="account in accounts" :key="account.id" class="card p-3 mb-3">
             <h2 class="h5">{{ account.children.map((c: any) => c.name).join(', ') }}</h2>
             <p>{{ t('tuition_balance') }}: <bdi>{{ money(account.balance_minor, account.currency) }}</bdi></p>
-            <p v-if="account.next_due_on">{{ t('tuition_next_due') }}: <bdi>{{ money(account.next_due_minor, account.currency) }}</bdi> · {{ date(account.next_due_on) }}</p>
+            <p v-if="account.next_due_on">{{ t('tuition_coming_up') }}: <bdi>{{ money(account.next_due_minor, account.currency) }}</bdi> {{ t('tuition_on') }} {{ date(account.next_due_on) }}</p>
             <p v-if="!account.card_available">{{ t('tuition_card_unavailable') }}</p>
             <form v-else-if="account.balance_minor > 0" class="d-flex flex-wrap gap-2 align-items-end mb-3" @submit.prevent="pay(account)">
                 <label>{{ t('tuition_amount') }} ({{ account.currency.toUpperCase() }})<input v-model="amounts[account.id]" class="form-control" inputmode="decimal" required /></label>
@@ -23,8 +23,8 @@
             </div>
             <template v-if="statements[account.id]">
                 <p>{{ t('tuition_opening') }}: <bdi>{{ money(statements[account.id].opening_minor, account.currency) }}</bdi></p>
-                <div class="table-responsive"><table class="table"><thead><tr><th>{{ t('tuition_date') }}</th><th>{{ t('tuition_child') }}</th><th>{{ t('tuition_entry') }}</th><th>{{ t('tuition_reason') }}</th><th>{{ t('tuition_amount') }}</th></tr></thead><tbody>
-                    <tr v-for="line in statements[account.id].lines" :key="line.id"><td>{{ date(line.date) }}</td><td>{{ line.child }}</td><td>{{ t('tuition_' + line.kind) }}<span v-if="line.original_line_id"> (#{{ line.original_line_id }})</span></td><td>{{ ['charge','credit','office_payment','void'].includes(line.kind) ? line.reason : '' }}</td><td><bdi>{{ money(line.amount_minor, account.currency) }}</bdi></td></tr>
+                <div class="table-responsive"><table class="table"><thead><tr><th>{{ t('tuition_date') }}</th><th>{{ t('tuition_child') }}</th><th>{{ t('tuition_entry') }}</th><th>{{ t('tuition_description') }}</th><th>{{ t('tuition_amount') }}</th></tr></thead><tbody>
+                    <tr v-for="line in statements[account.id].lines" :key="line.id"><td>{{ date(line.date) }}</td><td>{{ line.child }}</td><td>{{ t('tuition_' + line.kind) }}<span v-if="line.method_label">, {{ line.method_label }}</span></td><td>{{ line.description }}</td><td><bdi>{{ money(line.amount_minor, account.currency) }}</bdi></td></tr>
                 </tbody></table></div>
                 <p>{{ t('tuition_closing') }}: <bdi>{{ money(statements[account.id].closing_minor, account.currency) }}</bdi></p>
             </template>
@@ -69,7 +69,7 @@ async function download(a: any) {
 onMounted(async () => {
     try {
         accounts.value = (await FamilyApiService.get(base)).data.data.accounts;
-        for (const a of accounts.value) { amounts.value[a.id] = decimal(Math.max(0, a.balance_minor), a.currency); ranges.value[a.id] = { from: '2000-01-01', to: a.school_today ?? new Date().toISOString().slice(0,10) }; await history(a); }
+        for (const a of accounts.value) { amounts.value[a.id] = decimal(Math.max(0, a.balance_minor), a.currency); ranges.value[a.id] = { from: a.default_from ?? a.school_today ?? new Date().toISOString().slice(0,10), to: a.school_today ?? new Date().toISOString().slice(0,10) }; await history(a); }
     } catch { error.value = 'tuition_load_error'; }
     finally { loaded.value = true; }
 });

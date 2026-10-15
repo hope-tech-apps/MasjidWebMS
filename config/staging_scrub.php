@@ -463,7 +463,7 @@ return [
     | unconditionally because it exists to FORCE a state, not to mask a value.
     */
     'anonymise' => [
-        'tuition_lines' => ['reason' => 'label:Financial entry', 'recorded_by_label' => 'label:Staff'],
+        'tuition_lines' => ['description' => 'label:Financial entry', 'reason' => 'label:Financial entry', 'recorded_by_label' => 'label:Staff'],
         'tuition_checkouts' => ['stripe_account_id' => 'label:Disconnected account'],
         'timetable_period_sets' => ['name' => 'label:Period set'],
         'timetable_periods' => ['name' => 'label:Period'],

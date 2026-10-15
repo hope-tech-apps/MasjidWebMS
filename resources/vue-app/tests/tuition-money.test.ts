@@ -10,7 +10,7 @@ test('tuition decimal input is exact and rejects fractional minor units and expo
     for (const value of ['1.001', '1e3', '-1', '0', 'Infinity', '10000000.00']) assert.equal(tuitionMinor(value, 'usd'), null);
 });
 test('statements retain exact signed amounts in all currency scales', () => {
-    assert.equal(tuitionMoney(-12345, 'usd'), 'USD -123.45');
-    assert.equal(tuitionMoney(12345, 'jpy'), 'JPY 12345');
+    assert.equal(tuitionMoney(-12345, 'usd'), '-$123.45');
+    assert.equal(tuitionMoney(12345, 'jpy'), '¥12,345');
     assert.equal(tuitionDecimal(1, 'kwd'), '0.001');
 });

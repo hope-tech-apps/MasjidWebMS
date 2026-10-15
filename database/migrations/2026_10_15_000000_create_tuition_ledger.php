@@ -63,7 +63,7 @@ return new class extends Migration
             $t->foreignId('recorded_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $t->string('recorded_by_label'); $t->string('kind', 24); $t->bigInteger('amount_minor'); $t->string('currency', 3);
             $t->date('effective_on'); $t->date('due_on')->nullable(); $t->string('period', 64)->nullable();
-            $t->string('reason', 1000); $t->string('method', 24)->nullable(); $t->string('reference')->nullable();
+            $t->string('reason', 1000); /* family-visible; reason is staff-only */ $t->string('description', 255)->nullable(); $t->string('method', 24)->nullable(); $t->string('reference')->nullable();
             $t->string('source', 24); $t->string('idempotency_key', 150); $t->string('stripe_payment_intent_id')->nullable();
             $t->boolean('needs_review')->default(false); $t->timestamp('created_at')->useCurrent();
             $t->unique(['masjid_id', 'idempotency_key'], 'tuition_line_key_uq');
