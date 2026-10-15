@@ -26,6 +26,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
 import ApiService from '@/core/services/ApiService';
+import { serverMessage } from '@/core/helpers/serverMessage';
 const props = defineProps<{ masjidId: string; responseId: number }>();
 const emit = defineEmits(['changed']);
 const detail = ref<any>(null); const status = ref('new'); const note = ref(''); const withoutEmail = ref(false); const busy = ref(false); const error = ref('');
@@ -33,15 +34,15 @@ let generation = 0; let alive = true;
 const base = () => `/api/admin/masjids/${props.masjidId}/applications/${props.responseId}` as const;
 const label = (value: string) => ({ new: 'New', accepted: 'Accepted', wait_listed: 'Wait-listed', declined: 'Declined' }[value] ?? value);
 async function load() {
-    const run = ++generation; detail.value = null; error.value = ''; note.value = ''; withoutEmail.value = false;
+    const run = ++generation; detail.value = null; error.value = ''; note.value = ''; withoutEmail.value = false; busy.value = false;
     try { const r = await ApiService.get(base()); if (alive && run === generation) { detail.value = r.data.data; status.value = detail.value.status; } }
-    catch { if (alive && run === generation) error.value = 'The application could not be loaded.'; }
+    catch (e: any) { if (alive && run === generation) error.value = serverMessage(e, 'The application could not be loaded.'); }
 }
 async function save() {
     if (busy.value) return; const run = generation; busy.value = true; error.value = '';
     try { const r = await ApiService.put(`${base()}/status`, { status: status.value, note: note.value, without_email: withoutEmail.value }); if (alive && run === generation) { detail.value = r.data.data; note.value = ''; emit('changed'); } }
-    catch (e: any) { if (alive && run === generation) error.value = e.response?.data?.message || 'The status could not be saved. Check the guardian emails and try again.'; }
-    finally { if (alive && run === generation) busy.value = false; }
+    catch (e: any) { if (alive && run === generation) error.value = serverMessage(e, 'The status could not be saved. Check the guardian emails and try again.'); }
+    finally { if (alive && run === generation) { busy.value = false; withoutEmail.value = false; } }
 }
 watch(() => [props.masjidId, props.responseId], load, { immediate: true });
 onBeforeUnmount(() => { alive = false; ++generation; });

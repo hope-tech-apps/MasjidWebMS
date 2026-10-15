@@ -32,9 +32,14 @@ final class SchoolAdmissionIdentity
         if ($section && ($form->repeatableSection()['id'] ?? null) === $section['id']) $rows = FormRoster::for($form)->rows(collect([$response]));
         elseif ($section) $rows = collect($response->data[$section['id']] ?? [])->map(fn ($values, $index) => ['values' => $values, 'entry_index' => $index]);
         else $rows = collect([['values' => $response->data ?? [], 'entry_index' => 0]]);
-        return $rows->map(function ($row) use ($first, $last) {
+        $fields = $section ? $section['fields'] ?? [] : collect($form->sections())->reject(fn ($s) => ! empty($s['repeatable']))->flatMap(fn ($s) => $s['fields'] ?? [])->all();
+        $applyingKeys = collect($fields)->filter(fn ($f) => preg_match('/^grade applying/i', trim($f['label'] ?? '')))->pluck('name')->all();
+        return $rows->map(function ($row) use ($first, $last, $applyingKeys) {
             $values = $row['values'];
-            $grade = trim((string) ($values['grade'] ?? $values['schoolGrade'] ?? $values['gradeLevel'] ?? $values['studentGrade'] ?? $values['currentGrade'] ?? ''));
+            $grade = '';
+            foreach (array_unique(['gradeApplyingFor', 'applyingGrade', 'nextGrade', ...$applyingKeys, 'grade', 'schoolGrade', 'gradeLevel', 'studentGrade', 'currentGrade']) as $key) {
+                if (is_scalar($values[$key] ?? null) && trim((string) $values[$key]) !== '') { $grade = trim((string) $values[$key]); break; }
+            }
             $position = GradeLevel::position($grade);
             return ['entry_index' => (int) $row['entry_index'], 'first_name' => trim((string) ($values[$first] ?? '')), 'last_name' => trim((string) ($values[$last] ?? '')),
                 'grade' => $position === null ? $grade : GradeLevel::LEVELS[$position]];

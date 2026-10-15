@@ -41,6 +41,7 @@ export const PS: Record<string, string> = {
     reenrol_saved: "ځواب ثبت شو",
     reenrol_next_grade: "راتلونکی ټولګی",
     reenrol_pay: "د مخکینیو پیسو فورمه پرانیزئ",
+    reenrol_pay_now: "اوس پیسې ورکړئ",
     reenrol_payment_method: "د پیسو ورکولو لاره",
     reenrol_card: "کارت",
     reenrol_office_payment: "دفتر ته پیسې ورکړئ",

@@ -41,6 +41,7 @@ export const ES: Record<string, string> = {
     reenrol_saved: "Respuesta registrada",
     reenrol_next_grade: "Próximo grado",
     reenrol_pay: "Abrir formulario del depósito",
+    reenrol_pay_now: "Pagar ahora",
     reenrol_payment_method: "Forma de pago",
     reenrol_card: "Tarjeta",
     reenrol_office_payment: "Pagar en la oficina",

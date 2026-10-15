@@ -33,6 +33,7 @@ export const FR: Record<string, string> = {
     reenrol_saved: "Réponse enregistrée",
     reenrol_next_grade: "Prochain niveau",
     reenrol_pay: "Ouvrir le formulaire d’acompte",
+    reenrol_pay_now: "Payer maintenant",
     reenrol_payment_method: "Mode de paiement",
     reenrol_card: "Carte",
     reenrol_office_payment: "Payer au secrétariat",

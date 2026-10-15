@@ -111,3 +111,47 @@ The single `npm run build` passed in **11.16s**, /tmp/admissions-build.log. Five
 | `tests/Mysql/SchoolAdmissionsSchemaMysqlTest.php` | MySQL primary keys, types, rollback/forward and JSON-child matching (not executed locally). |
 
 Local ignored working notes `STATE.md` and `PLAN.md` were updated for this build. Generated test artifacts were removed; the pre-existing untracked artifact was retained (the suite can regenerate that path). Tracked whitespace and non-whitespace diff statistics match; `git diff --check` is clean. A scan of current added/untracked source is recorded in /tmp/admissions-public-scan.log.
+
+## Walk-fix round, base 78620885
+
+All twelve owner findings have regression coverage. The final original-source reproduction (fixed sources restored byte for byte afterward) observed 11 backend failures, one uniqueness-schema failure and 10 mounted SPA failures. Evidence: `/tmp/admissions-walk-final-red-php.log`, `/tmp/admissions-walk-final-red-schema.log`, `/tmp/admissions-walk-final-red-spa.log`.
+
+Final targeted checks: **84 passed, 1544 assertions** in 6.80 seconds, `/tmp/admissions-walk-targeted.log` and `/tmp/admissions-walk-targeted.xml`:
+
+| Suite | Tests | Assertions |
+| --- | ---: | ---: |
+| SchoolAdmissionsTest | 42 | 336 |
+| SchoolAdmissionsSchemaTest | 4 | 93 |
+| StagingScrubCoverageTest | 4 | 900 |
+| App101OffContractTest | 1 | 20 |
+| SchoolCalendarOffQueryDifferentialTest | 13 | 26 |
+| ClassSubjectReportSummaryTest | 20 | 169 |
+
+Admissions SPA: **20 passed**, `/tmp/admissions-walk-spa.log`. Coverage includes successful and failed save suppression reset, row changes, paid/unpaid existing deposit status without a card-return query, payable/unpayable unpaid handles, refusal sentences, deposit dashes, closed office controls, reminder confirmation/cancellation and last delivery, and immediate/reloaded roster feedback. The original suppressed-save and office-action tests remain behavioral mounted tests.
+
+The fix adds `2026_10_14_235100_guard_school_admission_deposits`; the original migration is unchanged. Existing duplicate child/campaign links refuse the upgrade before schema changes, preserving every response/payment for an operator decision. A new private batch UUID gives exact delivery counts for separate reminder requests. The existing whole-table staging policy covers the column, and scrub coverage passed. MySQL rollback/index checks were extended but are not locally executed.
+
+Entire SPA run: **2183 passed, 2 failed, 1 skipped (2186 tests)**, `/tmp/admissions-walk-full-spa.log`. Both failures are outside this diff in `class-subjects-screens.test.ts`: "photo: mounted empty-only fill, suggestion edits and deferred staff photo save" (2165) and "photo: mounted failed read keeps the form and never displays provider words" (2205). They fail in isolation with the current local clock and pass together with `TZ=UTC` (2/2), `/tmp/admissions-walk-unrelated-photo.log` and `/tmp/admissions-walk-photo-utc-control.log`. Their `photoSetup` fixture (2120) uses `new Date().toISOString().slice(0, 10)` while the screen selects the local calendar day; after UTC midnight the fixture is tomorrow. Those files were not edited. The extra checkout-reason case was added after the entire SPA began: it first failed while the other 18 passed (`/tmp/admissions-walk-checkout-reason-red.log`), then all 19 passed. It covers a message together with `data.uuid`, which the shared validation-bag helper previously displayed before the actual server sentence.
+
+A second deposit recovery regression reproduced a checkout-refusal handle forcing Pay now even with `can_pay: false` (1 failed / 19 passed, `/tmp/admissions-walk-confirming-red.log`). Recovery now reads the saved response status, and all **20** admissions SPA tests pass.
+
+Entire PHP suite **ONCE**: **11273 passed, 7 skipped, 11 failed; 184139 assertions; 838.90s**, `/tmp/admissions-walk-full-php.log` and `/tmp/admissions-walk-full-php.xml`. PHP source stayed unchanged throughout the run. All eleven failures match the owner's known categories: `BackupRunTest` (2 archive); `ExampleTest` and `HostHeaderUrlIntegrityTest` (1 missing-build each); `ResendTransportTimeoutTest` (4 socket); `TenancyCanaryTest` (3 socket). There are no other PHP failures. The three TenancyCanary socket errors are reported at suite/provider level in JUnit rather than as testcase elements, so counting only error children of testcase nodes understates the total.
+
+Local SPA build passed in **10.69s**, `/tmp/admissions-walk-build.log`; the manifest's deposit, office re-enrolment and Applications chunks contain the expected changed markers, `/tmp/admissions-walk-build-inspection.log`. Existing Browserslist data, unresolved font and large-chunk advisories remain. The generated build and new test artifacts were removed; the pre-existing `artifacts/subject-report-summary-query-counts.json` was retained. Final whitespace checks passed, with close whitespace/non-whitespace diff sizes and no formatter run. MySQL execution, real browser/deployed behavior, actual mail/payment and fluent translation review remain unverified. No commit, deployment, switch-on, real email/payment, production data operation, fixture refresh or CHANGELOG change. Added-line privacy checks found no private-key markers, live provider tokens or non-synthetic email domains; `git diff --check` is clean.
+
+Walk-fix coverage map (each owner fault was observed red before its correction):
+
+| Finding | Implemented behavior | Regression |
+| --- | --- | --- |
+| 1 | Linked deposit responses excluded from application lists/direct decisions/rosters and skipped by application mail worker | `deposit_responses_are_excluded_from_every_application_action_and_queued_mail` |
+| 2 | Mail suppression resets after every save attempt and row change | Mounted status-control save/failure/row tests |
+| 3 | Existing paid/unpaid response always opens status, no fresh form; duplicate submit rolls back with 409; database unique child/campaign key | Data-provider paid/unpaid API cases, three mounted paid/payable/unpayable cases, schema key/upgrade tests |
+| 4 | Server formats office instants in school timezone | School-local timestamp API assertions for answers, reminders, submissions and history |
+| 5 | Display readable server reasons from either envelope; checkout metadata cannot mask message | Mounted data/message/checkout-UUID refusals |
+| 6 | Unanswered/not-returning deposit cells show a dash, excluded from deposit filters | Mounted office deposit cells |
+| 7 | Propose only a grade currently served at this school; blank prompts office choice | Served/unserved/foreign-school/frozen-blank API tests and mounted placeholder |
+| 8 | Counted confirmation with cancel; last batch time/count; family-card links in reminders | Reminder API/count/link/same-second batch tests and mounted confirmation/cancellation |
+| 9 | Independent admissions rate-limit bucket at the existing pace | Named limiter and key/pace assertions |
+| 10 | Office can record/change late answers with office attribution; families remain closed | Closed-date API and mounted paper-answer controls |
+| 11 | Added child displays its current class immediately and after reload | API roster-class projection and mounted action replacement |
+| 12 | Applying-grade keys and labels precede current-grade fields | Repeated and flat form-grade API cases |

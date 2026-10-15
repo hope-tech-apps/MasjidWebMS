@@ -5,8 +5,10 @@ use Illuminate\Support\Facades\Schema;
 
 it('rolls empty admissions down and forward on MySQL with production primary keys and safe actor retention', function () {
     $migration = require database_path('migrations/2026_10_14_235000_create_school_admissions.php');
+    $guard = require database_path('migrations/2026_10_14_235100_guard_school_admission_deposits.php');
+    $guard->down();
     $migration->down(); expect(Schema::hasTable('school_admission_mails'))->toBeFalse();
-    $migration->up();
+    $migration->up(); $guard->up();
     foreach (['school_admission_settings', 'school_reenrolments', 'school_reenrolment_answers', 'school_reenrolment_deposits', 'school_applications', 'school_application_histories', 'school_admission_mails'] as $table) {
         $column = DB::selectOne("SELECT COLUMN_KEY AS k, EXTRA AS e FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'id'", [$table]);
         expect($column->k)->toBe('PRI')->and($column->e)->toContain('auto_increment');
@@ -16,6 +18,7 @@ it('rolls empty admissions down and forward on MySQL with production primary key
             if ($fk['foreign_table'] === 'users') expect(strtolower($fk['on_delete']))->toBe('set null');
         }
     }
+    expect(collect(Schema::getIndexes('school_reenrolment_deposits'))->firstWhere('name', 'reenrol_deposit_child_uq')['unique'])->toBeTrue();
     expect(Schema::getColumnType('school_admission_mails', 'body'))->toBe('longtext');
     expect(Schema::getColumnType('school_application_histories', 'note'))->toBe('text');
 });

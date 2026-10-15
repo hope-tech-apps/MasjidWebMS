@@ -12,13 +12,15 @@ use Illuminate\Validation\ValidationException;
 /** An encrypted child/year credential links existing form payments; it never records payment itself. */
 final class SchoolReenrolmentDeposits
 {
+    public const DUPLICATE = 'A deposit response already exists for this child and school year. Open it from the family portal.';
     public function page(SchoolReenrolment $campaign, GroupMembership $child, Contact $guardian): array
     {
         $service = app(SchoolReenrolments::class);
         $answer = SchoolReenrolmentAnswer::where('reenrolment_id', $campaign->id)->where('student_contact_id', $child->contact_id)->first();
-        if (! $service->open($campaign) || $answer?->answer !== 'returning') throw ValidationException::withMessages(['deposit' => 'Confirm that this child is returning while re-enrolment is open first.']);
-        $form = Form::where('masjid_id', $campaign->masjid_id)->findOrFail($campaign->deposit_form_id);
-        abort_unless($form->takesPayment(), 404);
+        $existing = SchoolReenrolmentDeposit::where('masjid_id', $campaign->masjid_id)->where('reenrolment_id', $campaign->id)->where('student_contact_id', $child->contact_id)->first();
+        if (! $existing && (! $service->open($campaign) || $answer?->answer !== 'returning')) throw ValidationException::withMessages(['deposit' => 'Confirm that this child is returning while re-enrolment is open first.']);
+        $form = Form::where('masjid_id', $campaign->masjid_id)->findOrFail($existing ? FormResponse::where('masjid_id', $campaign->masjid_id)->findOrFail($existing->form_response_id)->form_id : $campaign->deposit_form_id);
+        abort_unless($existing || $form->takesPayment(), 404);
         $data = [];
         foreach ($form->sections() as $section) {
             if (! empty($section['repeatable'])) continue;
@@ -32,7 +34,7 @@ final class SchoolReenrolmentDeposits
         $identity = $form->identityMap();
         foreach (['email' => $guardian->email, 'name' => trim($guardian->first_name.' '.$guardian->last_name), 'phone' => $guardian->phone] as $slot => $value) if (is_string($identity[$slot])) $data[$identity[$slot]] = $value;
         $section = StudentAllergies::childSection($form);
-        $entry = ['firstName' => $child->contact->first_name, 'lastName' => $child->contact->last_name, 'grade' => $answer->next_grade ?? \App\Support\GradeLevel::next($child->grade_label) ?? $child->grade_label];
+        $entry = ['firstName' => $child->contact->first_name, 'lastName' => $child->contact->last_name, 'grade' => $answer?->next_grade ?? ''];
         if ($section) $data[$section['id']] = [$entry];
         else $data += ['studentFirstName' => $entry['firstName'], 'studentLastName' => $entry['lastName'], 'studentGrade' => $entry['grade'], 'grade' => $entry['grade']];
         if ($section) {
@@ -86,6 +88,12 @@ final class SchoolReenrolmentDeposits
             || SchoolAdmissionIdentity::name($entries[0]['first_name']) !== SchoolAdmissionIdentity::name($child->contact->first_name)
             || SchoolAdmissionIdentity::name($entries[0]['last_name']) !== SchoolAdmissionIdentity::name($child->contact->last_name)))
             || ! ContactIdentity::sameAddress($response->respondent_email, $guardian->email)) throw ValidationException::withMessages(['deposit' => 'Keep this deposit for the selected child and guardian. Reopen it from the family portal to change children.']);
-        SchoolReenrolmentDeposit::create(['masjid_id' => $form->masjid_id, 'reenrolment_id' => $campaign->id, 'student_contact_id' => $child->contact_id, 'form_response_id' => $response->id]);
+        if (SchoolReenrolmentDeposit::where('masjid_id', $form->masjid_id)->where('reenrolment_id', $campaign->id)->where('student_contact_id', $child->contact_id)->exists()) abort(409, self::DUPLICATE);
+        try {
+            SchoolReenrolmentDeposit::create(['masjid_id' => $form->masjid_id, 'reenrolment_id' => $campaign->id, 'student_contact_id' => $child->contact_id, 'form_response_id' => $response->id]);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            // The unique child/campaign key also covers races across different deposit forms.
+            abort(409, self::DUPLICATE);
+        }
     }
 }

@@ -41,6 +41,7 @@ export const FA_AF: Record<string, string> = {
     reenrol_saved: "پاسخ ثبت شد",
     reenrol_next_grade: "صنف بعدی",
     reenrol_pay: "باز کردن فورم پیش‌پرداخت",
+    reenrol_pay_now: "اکنون پرداخت کنید",
     reenrol_payment_method: "روش پرداخت",
     reenrol_card: "کارت",
     reenrol_office_payment: "پرداخت به دفتر",

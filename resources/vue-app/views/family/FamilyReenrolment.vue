@@ -1,5 +1,5 @@
 <template>
-    <section class="family-reenrolment" :dir="dir" :lang="lang">
+    <section id="reenrolment" class="family-reenrolment" :dir="dir" :lang="lang">
         <h2 class="h5">{{ t('reenrol_title') }}</h2>
         <template v-for="campaign in campaigns" :key="campaign.id">
             <article v-for="child in children" :key="`${campaign.id}:${child.membership_id}`" class="card mb-3">
@@ -11,7 +11,7 @@
                         <p v-if="record(campaign, child).answer" class="small" role="status">
                             {{ t(record(campaign, child).answer === 'returning' ? 'reenrol_returning' : 'reenrol_not_returning') }}
                             · <span dir="auto">{{ record(campaign, child).recorded_by_office ? t('reenrol_office') : record(campaign, child).answered_by }}</span>
-                            <time v-if="record(campaign, child).answered_at"> · {{ stamp(record(campaign, child).answered_at) }}</time>
+                            <time v-if="record(campaign, child).answered_at"> · {{ record(campaign, child).answered_at }}</time>
                         </p>
                         <p v-if="!record(campaign, child).open" class="text-muted">{{ t('reenrol_closed') }}</p>
                         <div v-else class="d-flex flex-wrap gap-2">
@@ -35,12 +35,11 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 import FamilyApiService from '@/core/services/FamilyApiService';
 import { useFamilyLang } from '@/views/family/familyI18n';
 const props = defineProps<{ masjidId: string; groupId: string; children: any[]; campaigns: any[] }>();
-const { t, lang, dir, locale } = useFamilyLang();
+const { t, lang, dir } = useFamilyLang();
 const records = ref<Record<string, any>>({}); const errors = ref<Record<string, boolean>>({}); const busy = ref<Record<string, boolean>>({});
 const key = (campaign: any, child: any) => `${campaign.id}:${child.membership_id}`;
 const record = (campaign: any, child: any) => records.value[key(campaign, child)];
 const childName = (child: any) => [child.contact?.first_name, child.contact?.last_name].filter(Boolean).join(' ');
-const stamp = (value: string) => new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 let generation = 0; let alive = true;
 function url(campaign: any, child: any) { return `/api/family/masjids/${props.masjidId}/groups/${props.groupId}/members/${child.membership_id}/reenrolment/${campaign.id}`; }
 async function load() {

@@ -77,6 +77,7 @@ class SchoolAdmissionsTest extends TestCase
     public function family_guard_dates_and_shared_last_answer_are_enforced_and_off_is_hidden(): void
     {
         $school = $this->makeMasjid(); $campaign = $this->campaign($school); $child = $this->enrol($this->classroom($school)); $child->update(['grade_label' => '3rd']);
+        $served = $this->enrol($child->group); $served->update(['grade_label' => '4th']);
         $first = $this->guardian($child); $second = $this->guardian($child, Contact::factory()->create(['masjid_id' => $school->id, 'first_name' => 'Second', 'last_name' => 'Guardian', 'email' => 'second@example.invalid']));
         $this->family($first); $url = $this->url($child, $campaign);
         $this->getJson($url)->assertOk()->assertJsonPath('data.next_grade', '4th')->assertJsonPath('data.answer', null);
@@ -446,7 +447,7 @@ class SchoolAdmissionsTest extends TestCase
     #[Test]
     public function opening_a_campaign_freezes_proposed_grades_without_answering_for_any_child(): void
     {
-        $school = $this->makeMasjid(); $this->enable($school); $year = $this->year($school); $child = $this->enrol($this->classroom($school)); $child->update(['grade_label' => '3rd']); $this->office($school);
+        $school = $this->makeMasjid(); $this->enable($school); $year = $this->year($school); $child = $this->enrol($this->classroom($school)); $child->update(['grade_label' => '3rd']); $served = $this->enrol($child->group); $served->update(['grade_label' => '4th']); $this->office($school);
         $base = '/api/admin/masjids/'.$school->id.'/reenrolment';
         $id = $this->putJson($base, ['school_year_id' => $year->id, 'opens_on' => '2026-10-19', 'closes_on' => '2026-10-30'])->assertOk()->json('data.id');
         $child->update(['grade_label' => '4th']);
@@ -473,4 +474,168 @@ class SchoolAdmissionsTest extends TestCase
             $copy = $foreign->replicate(); DB::beginTransaction(); $foreign->delete(); $copy->save(); $this->assertSame($a->id, $copy->masjid_id, $model); DB::rollBack();
         }
     }
+    #[Test]
+    public function deposit_responses_are_excluded_from_every_application_action_and_queued_mail(): void
+    {
+        $school = $this->makeMasjid(); $form = $this->form($school, true); $this->application($form); $campaign = $this->campaign($school, $form);
+        $child = $this->enrol($this->classroom($school)); $deposit = $this->response($form); $application = $this->response($form, 'New');
+        SchoolReenrolmentDeposit::create(['masjid_id' => $school->id, 'reenrolment_id' => $campaign->id, 'student_contact_id' => $child->contact_id, 'form_response_id' => $deposit->id]);
+        $this->office($school); $base = '/api/admin/masjids/'.$school->id.'/applications';
+        $this->getJson($base)->assertOk()->assertJsonCount(1, 'data.children')->assertJsonPath('data.children.0.response_id', $application->id);
+        $this->getJson($base.'/'.$deposit->id)->assertNotFound();
+        $this->putJson($base.'/'.$deposit->id.'/status', ['status' => 'accepted'])->assertNotFound();
+        SchoolApplication::create(['form_response_id' => $deposit->id, 'status' => 'accepted']);
+        $this->postJson($base.'/'.$deposit->id.'/roster', ['entry_index' => 0, 'group_id' => $child->group_id])->assertNotFound();
+        $history = SchoolApplicationHistory::create(['form_response_id' => $deposit->id, 'status' => 'accepted', 'emailed' => true]);
+        $mail = SchoolAdmissionMail::create(['kind' => 'application', 'application_history_id' => $history->id, 'guardian_email' => 'guardian@example.invalid', 'subject' => 'Practice', 'body' => 'Practice', 'status' => 'queued']);
+        (new \App\Jobs\SendSchoolAdmissionMail($mail->id, $school->id, now()->addDay()->timestamp))->handle();
+        $this->assertSame('skipped', $mail->fresh()->status); Mail::assertNothingSent(); Queue::assertNothingPushed();
+    }
+
+    public static function depositStatuses(): array { return [['paid'], ['unpaid']]; }
+
+    #[Test, \PHPUnit\Framework\Attributes\DataProvider('depositStatuses')]
+    public function paid_and_unpaid_deposits_reopen_the_existing_response_and_refuse_a_second_submission(string $status): void
+    {
+        $school = $this->makeMasjid(); $form = $this->form($school, true); $campaign = $this->campaign($school, $form);
+        $child = $this->enrol($this->classroom($school)); $guardian = $this->guardian($child); $this->family($guardian);
+        $url = $this->url($child, $campaign); $this->putJson($url, ['answer' => 'returning'])->assertOk();
+        $page = $this->getJson($url.'/deposit')->assertOk()->json('data');
+        Auth::forgetGuards(); app(TenantContext::class)->forgetTenant();
+        $payload = ['data' => $page['data'], 'reenrolment_token' => $page['token'], 'client_submission_key' => 'first-practice-'.$status, 'pay_with' => 'office'];
+        $id = $this->postJson('/api/v1/forms/'.$form->id.'/responses', $payload, ['masjid-id' => $school->id])->assertOk()->json('data.uuid');
+        $existing = FormResponse::where('uuid', $id)->firstOrFail(); $existing->forceFill(['payment_status' => $status, 'paid_at' => $status === 'paid' ? now() : null])->save();
+        $this->family($guardian);
+        $this->getJson($url.'/deposit')->assertOk()->assertJsonPath('data.response_uuids', [$id]);
+        Auth::forgetGuards(); app(TenantContext::class)->forgetTenant(); $payload['client_submission_key'] = 'second-practice-'.$status;
+        $before = FormResponse::count();
+        $this->postJson('/api/v1/forms/'.$form->id.'/responses', $payload, ['masjid-id' => $school->id])->assertConflict()->assertJsonPath('message', 'A deposit response already exists for this child and school year. Open it from the family portal.');
+        $this->assertSame($before, FormResponse::count());
+        $this->assertSame(1, SchoolReenrolmentDeposit::where('reenrolment_id', $campaign->id)->where('student_contact_id', $child->contact_id)->count());
+        $campaign->update(['closes_on' => '2026-10-18']); $this->family($guardian);
+        $this->getJson($url.'/deposit')->assertOk()->assertJsonPath('data.response_uuids', [$id]);
+    }
+
+    #[Test]
+    public function office_can_record_and_change_late_answers_but_families_cannot(): void
+    {
+        $school = $this->makeMasjid(); $campaign = $this->campaign($school); $child = $this->enrol($this->classroom($school)); $guardian = $this->guardian($child);
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-31 21:17:00', 'UTC'));
+        $this->family($guardian); $this->putJson($this->url($child, $campaign), ['answer' => 'returning'])->assertUnprocessable();
+        $office = $this->office($school); $url = '/api/admin/masjids/'.$school->id.'/reenrolment/'.$campaign->id.'/children/'.$child->contact_id;
+        foreach (['returning', 'not_returning'] as $answer) $this->putJson($url, ['answer' => $answer])->assertOk()->assertJsonPath('data.recorded_by_office', true)->assertJsonPath('data.answer', $answer)->assertJsonPath('data.answered_at', 'Oct 31, 2026, 5:17 PM');
+        $this->assertDatabaseHas('school_reenrolment_answers', ['answered_by_user_id' => $office->id, 'answered_by_contact_id' => null]);
+    }
+
+    #[Test]
+    public function proposals_only_advance_to_grades_currently_served_by_this_schools_classes(): void
+    {
+        $school = $this->makeMasjid(); $campaign = $this->campaign($school); $class = $this->classroom($school); $child = $this->enrol($class); $child->update(['grade_label' => 'Grade 8']);
+        $foreign = $this->makeMasjid('foreign'); $foreignChild = $this->enrol($this->classroom($foreign)); $foreignChild->update(['grade_label' => '9th']);
+        app(TenantContext::class)->set($school->id); $service = app(SchoolReenrolments::class); $service->proposals($campaign);
+        $this->assertSame('', $service->child($campaign, $child)['next_grade']);
+        $child->update(['grade_label' => '7th']); $service->proposals($campaign);
+        $this->assertSame('', $service->child($campaign, $child)['next_grade'], 'A saved blank proposal remains blank until the office chooses.');
+        $served = $this->enrol($class); $served->update(['grade_label' => 'Grade 8']);
+        SchoolReenrolmentAnswer::where('student_contact_id', $child->contact_id)->delete(); $service->proposals($campaign);
+        $this->assertSame('8th', $service->child($campaign, $child)['next_grade']);
+        $service->answer($campaign, $child, ['next_grade' => null], office: $this->office($school)->id);
+        $this->assertSame('', $service->child($campaign, $child)['next_grade']);
+    }
+
+    #[Test]
+    public function office_timestamps_reminder_counts_and_email_card_links_are_school_local(): void
+    {
+        $school = $this->makeMasjid(); $form = $this->form($school); $this->application($form); $campaign = $this->campaign($school);
+        $class = $this->classroom($school); $child = $this->enrol($class); $guardian = $this->guardian($child); $this->office($school);
+        $base = '/api/admin/masjids/'.$school->id; $url = $base.'/reenrolment/'.$campaign->id;
+        $this->getJson($url)->assertOk()->assertJsonPath('data.reminder_count', 1)->assertJsonPath('data.last_reminder', null);
+        $this->postJson($url.'/reminders')->assertOk();
+        $mail = SchoolAdmissionMail::firstOrFail();
+        (new \App\Jobs\SendSchoolAdmissionMail($mail->id, $school->id, now()->addDay()->timestamp))->handle();
+        $this->getJson($url)->assertOk()->assertJsonPath('data.last_reminder.count', 1)->assertJsonPath('data.last_reminder.at', 'Oct 19, 2026, 10:00 AM')->assertJsonPath('data.mails.0.sent_at', 'Oct 19, 2026, 10:00 AM');
+        $this->assertStringContainsString('/family/'.$school->id.'/classes/'.$class->id.'#reenrolment', $mail->fresh()->body);
+        $response = $this->response($form, when: '2026-10-14 21:17:00');
+        $this->getJson($base.'/applications')->assertOk()->assertJsonPath('data.children.0.submitted_at', 'Oct 14, 2026, 5:17 PM');
+        $detail = $this->putJson($base.'/applications/'.$response->id.'/status', ['status' => 'accepted'])->assertOk();
+        $detail->assertJsonPath('data.history.0.changed_at', 'Oct 19, 2026, 10:00 AM');
+        $appMail = SchoolAdmissionMail::where('kind', 'application')->firstOrFail();
+        (new \App\Jobs\SendSchoolAdmissionMail($appMail->id, $school->id, now()->addDay()->timestamp))->handle();
+        $this->getJson($base.'/applications/'.$response->id)->assertOk()->assertJsonPath('data.history.0.mails.0.sent_at', 'Oct 19, 2026, 10:00 AM');
+    }
+
+    #[Test]
+    public function admissions_mail_has_an_independent_named_limiter_at_the_same_pace(): void
+    {
+        $job = new \App\Jobs\SendSchoolAdmissionMail(1, 1, now()->addDay()->timestamp);
+        $this->assertSame('school-admissions-mail', (new \ReflectionProperty($job->middleware()[0], 'limiterName'))->getValue($job->middleware()[0]));
+        $limiter = \Illuminate\Support\Facades\RateLimiter::limiter('school-admissions-mail');
+        $this->assertNotNull($limiter); $limit = $limiter($job);
+        $absence = (\Illuminate\Support\Facades\RateLimiter::limiter('attendance-absence-mail'))($job);
+        $this->assertSame($absence->maxAttempts, $limit->maxAttempts); $this->assertNotSame($absence->key, $limit->key);
+    }
+
+    #[Test]
+    public function accepted_children_report_their_current_class_after_being_added(): void
+    {
+        $school = $this->makeMasjid(); $form = $this->form($school); $this->application($form); $response = $this->response($form); $class = $this->classroom($school); $this->office($school);
+        $base = '/api/admin/masjids/'.$school->id.'/applications';
+        $this->putJson($base.'/'.$response->id.'/status', ['status' => 'accepted', 'without_email' => true])->assertOk();
+        $this->postJson($base.'/'.$response->id.'/roster', ['entry_index' => 0, 'group_id' => $class->id])->assertCreated();
+        $this->getJson($base)->assertOk()->assertJsonPath('data.children.0.roster_class', $class->name);
+    }
+
+    #[Test]
+    public function applications_prefer_the_applying_grade_keys_and_labels_to_the_current_grade(): void
+    {
+        $school = $this->makeMasjid(); $form = $this->form($school); $this->application($form); $response = $this->response($form); $this->office($school);
+        foreach (['gradeApplyingFor', 'applyingGrade', 'nextGrade', 'customGrade'] as $key) {
+            $schema = $form->schema; $schema['sections'][1]['fields'][] = ['name' => $key, 'type' => 'text', 'label' => 'Grade applying for next year']; $form->update(['schema' => $schema]);
+            $data = $response->data; $data['children'][0] = ['firstName' => 'Sample', 'lastName' => 'Student', 'grade' => '3rd', $key => 'Grade 4']; $response->update(['data' => $data]);
+            $this->getJson('/api/admin/masjids/'.$school->id.'/applications')->assertOk()->assertJsonPath('data.children.0.grade', '4th');
+        }
+        $schema = $form->schema; $schema['sections'] = [['id' => 'flat', 'fields' => [['name' => 'studentFirstName', 'type' => 'text'], ['name' => 'studentLastName', 'type' => 'text'], ['name' => 'custom', 'type' => 'text', 'label' => 'Grade applying for']]]]; $form->update(['schema' => $schema]);
+        $response->update(['data' => ['studentFirstName' => 'Sample', 'studentLastName' => 'Student', 'currentGrade' => '8th', 'custom' => '9th']]);
+        $this->getJson('/api/admin/masjids/'.$school->id.'/applications')->assertOk()->assertJsonPath('data.children.0.grade', '9th');
+    }
+
+    #[Test]
+    public function office_instants_are_formatted_on_the_school_clock_even_when_the_browser_is_elsewhere(): void
+    {
+        $school = $this->makeMasjid(); $form = $this->form($school); $this->application($form); $campaign = $this->campaign($school); $child = $this->enrol($this->classroom($school)); $this->office($school);
+        $this->travelTo(\Carbon\Carbon::parse('2026-10-14 21:17:00', 'UTC'));
+        $base = '/api/admin/masjids/'.$school->id;
+        $this->putJson($base.'/reenrolment/'.$campaign->id.'/children/'.$child->contact_id, ['answer' => 'returning'])->assertOk()->assertJsonPath('data.answered_at', 'Oct 14, 2026, 5:17 PM');
+        $response = $this->response($form, when: '2026-10-14 21:17:00');
+        $this->getJson($base.'/applications')->assertOk()->assertJsonPath('data.children.0.submitted_at', 'Oct 14, 2026, 5:17 PM');
+        $this->putJson($base.'/applications/'.$response->id.'/status', ['status' => 'accepted'])->assertOk()->assertJsonPath('data.history.0.changed_at', 'Oct 14, 2026, 5:17 PM');
+    }
+
+    #[Test]
+    public function two_reminder_requests_in_the_same_second_keep_separate_delivery_counts(): void
+    {
+        $school = $this->makeMasjid(); $campaign = $this->campaign($school); $class = $this->classroom($school); $child = $this->enrol($class); $this->guardian($child); $this->office($school);
+        $url = '/api/admin/masjids/'.$school->id.'/reenrolment/'.$campaign->id;
+        $this->postJson($url.'/reminders')->assertOk()->assertJsonPath('data.queued', 1);
+        $first = SchoolAdmissionMail::firstOrFail(); (new \App\Jobs\SendSchoolAdmissionMail($first->id, $school->id, now()->addDay()->timestamp))->handle();
+        $other = $this->enrol($class); $this->guardian($other, Contact::factory()->create(['masjid_id' => $school->id, 'email' => 'another@example.invalid']));
+        $this->postJson($url.'/reminders')->assertOk()->assertJsonPath('data.queued', 2);
+        foreach (SchoolAdmissionMail::where('status', 'queued')->get() as $mail) (new \App\Jobs\SendSchoolAdmissionMail($mail->id, $school->id, now()->addDay()->timestamp))->handle();
+        $this->getJson($url)->assertOk()->assertJsonPath('data.last_reminder.count', 2);
+    }
+
+    #[Test]
+    public function deposit_guard_upgrade_refuses_existing_duplicate_links_before_changing_schema(): void
+    {
+        $guard = require database_path('migrations/2026_10_14_235100_guard_school_admission_deposits.php'); $guard->down();
+        $school = $this->makeMasjid(); $form = $this->form($school); $campaign = $this->campaign($school); $child = $this->enrol($this->classroom($school));
+        foreach (['First', 'Second'] as $name) {
+            $response = $this->response($form, $name);
+            SchoolReenrolmentDeposit::create(['masjid_id' => $school->id, 'reenrolment_id' => $campaign->id, 'student_contact_id' => $child->contact_id, 'form_response_id' => $response->id]);
+        }
+        try { $guard->up(); $this->fail('A payment link must never be discarded by the migration.'); }
+        catch (\RuntimeException $e) { $this->assertStringContainsString('Resolve duplicate', $e->getMessage()); }
+        $this->assertDatabaseCount('school_reenrolment_deposits', 2); $this->assertFalse(\Illuminate\Support\Facades\Schema::hasColumn('school_admission_mails', 'reminder_batch'));
+    }
+
 }

@@ -557,3 +557,7 @@ The rollout grant permits the office's letter-grade settings; the office must en
 The public website renderer is outside this worktree. An authenticated family deposit screen will render the selected existing form and use the existing public Forms submission/payment API, carrying a server-authenticated child/year link. It must not create a second money path. Unknown/final grades retain the current label until the office chooses a grade, following GradeLevel::next's existing refusal to guess.
 
 Reminders use one current guardian contact/email and list all their unanswered children for the selected target year. Repeated presses while a reminder remains queued must not duplicate that queued message; a later deliberate reminder is allowed after the earlier delivery finishes.
+
+## 2026-10-14 - Admissions walk-fix clarification
+
+The owner's served-grade rule supersedes the earlier initial-proposal assumption that unknown/final grades retain their current labels. A class currently serves the normalized grades on its current participant roster; only active classes at this school count. Reminder confirmation counts eligible guardian emails, matching the existing one-email-per-guardian delivery rule. The existing walk database may have duplicate deposit links, so the additive schema migration refuses them without changing payment records; no live database was inspected.

@@ -7,7 +7,7 @@ namespace App\Services\Schools;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Requests\Admin\Groups\StoreGroupMembershipRequest;
 use App\Jobs\SendSchoolAdmissionMail;
-use App\Models\{Contact, Form, FormResponse, Group, GroupMembership, Masjid, SchoolAdmissionMail, SchoolAdmissionSetting, SchoolApplication, SchoolApplicationHistory, User};
+use App\Models\{Contact, Form, FormResponse, Group, GroupMembership, Masjid, SchoolAdmissionMail, SchoolAdmissionSetting, SchoolApplication, SchoolApplicationHistory, SchoolReenrolmentDeposit, User};
 use App\Support\{ContactIdentity, GradeLevel, SchoolAdmissionsMode};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -37,7 +37,7 @@ final class SchoolApplications
 
     public function response(int $id, int $school): FormResponse
     {
-        $response = FormResponse::where('masjid_id', $school)->findOrFail($id);
+        $response = FormResponse::where('masjid_id', $school)->whereNotIn('id', SchoolReenrolmentDeposit::where('masjid_id', $school)->select('form_response_id'))->findOrFail($id);
         $response->setRelation('form', $this->form((int) $response->form_id, $school));
         return $response;
     }
@@ -50,8 +50,8 @@ final class SchoolApplications
         return ['response_id' => $response->id, 'status' => SchoolApplication::where('form_response_id', $response->id)->value('status') ?? 'new',
             'children' => SchoolAdmissionIdentity::children($response->form, $response), 'guardians' => SchoolAdmissionIdentity::guardians($response->form, $response),
             'history' => $history->map(fn ($h) => ['id' => $h->id, 'status' => $h->status, 'note' => $h->note, 'emailed' => $h->emailed,
-                'changed_by' => $users->get($h->changed_by_user_id)?->name, 'changed_at' => $h->created_at->toIso8601String(),
-                'mails' => ($mails[$h->id] ?? collect())->map(fn ($m) => ['guardian_email' => $m->guardian_email, 'status' => $m->status, 'sent_at' => $m->sent_at?->toIso8601String(), 'failed_at' => $m->failed_at?->toIso8601String()])->all()])->all()];
+                'changed_by' => $users->get($h->changed_by_user_id)?->name, 'changed_at' => SchoolAdmissionsMode::timestamp((int) $response->masjid_id, $h->created_at),
+                'mails' => ($mails[$h->id] ?? collect())->map(fn ($m) => ['guardian_email' => $m->guardian_email, 'status' => $m->status, 'sent_at' => SchoolAdmissionsMode::timestamp((int) $response->masjid_id, $m->sent_at), 'failed_at' => SchoolAdmissionsMode::timestamp((int) $response->masjid_id, $m->failed_at)])->all()])->all()];
     }
 
     public function change(FormResponse $response, string $status, ?string $note, bool $withoutEmail, int $actor): array
@@ -90,7 +90,7 @@ final class SchoolApplications
     public function listing(int $school): array
     {
         $forms = Form::where('masjid_id', $school)->whereIn('id', $this->setting($school)['application_form_ids'])->get()->keyBy('id');
-        $responses = FormResponse::where('masjid_id', $school)->whereIn('form_id', $forms->keys())->orderBy('submitted_at')->orderBy('id')->get();
+        $responses = FormResponse::where('masjid_id', $school)->whereIn('form_id', $forms->keys())->whereNotIn('id', SchoolReenrolmentDeposit::where('masjid_id', $school)->select('form_response_id'))->orderBy('submitted_at')->orderBy('id')->get();
         $states = SchoolApplication::whereIn('form_response_id', $responses->pluck('id'))->get()->keyBy('form_response_id');
         $positions = []; $children = [];
         foreach ($responses as $response) {
@@ -99,7 +99,13 @@ final class SchoolApplications
                 $grade = GradeLevel::key($child['grade']) ?? '';
                 $position = null;
                 if ($status === 'wait_listed') { $positions[$grade] = ($positions[$grade] ?? 0) + 1; $position = $positions[$grade]; }
-                $children[] = $child + ['response_id' => $response->id, 'form_id' => $form->id, 'form_name' => $form->name, 'status' => $status, 'submitted_at' => $response->submitted_at?->toIso8601String(), 'waitlist_position' => $position];
+                $rosterClass = null;
+                if ($status === 'accepted' && $child['first_name'] !== '' && $child['last_name'] !== '') {
+                    $matches = SchoolAdmissionIdentity::childMatches($form, $response, $child);
+                    if ($matches->count() === 1) $rosterClass = GroupMembership::where('masjid_id', $school)->where('contact_id', $matches->first()->id)->participants()->current()
+                        ->whereHas('group', fn ($q) => $q->where('kind', 'class'))->with('group:id,name')->get()->pluck('group.name')->unique()->implode(', ') ?: null;
+                }
+                $children[] = $child + ['roster_class' => $rosterClass] + ['response_id' => $response->id, 'form_id' => $form->id, 'form_name' => $form->name, 'status' => $status, 'submitted_at' => SchoolAdmissionsMode::timestamp($school, $response->submitted_at), 'waitlist_position' => $position];
             }
         }
         return ['children' => $children, 'classes' => Group::where('kind', 'class')->where('is_active', true)->get(['id', 'name'])->toArray(), 'settings' => $this->setting($school)];
@@ -150,7 +156,7 @@ final class SchoolApplications
                 }
                 $this->add($class, $adult, $student, $actor);
             }
-            return ['membership_id' => $membership->id, 'student_contact_id' => $student->id, 'message' => 'Added to the class roster with guardians confirmed by the office.'];
+            return ['membership_id' => $membership->id, 'student_contact_id' => $student->id, 'roster_class' => $class->name, 'message' => 'Added to the class roster with guardians confirmed by the office.'];
         });
     }
 }

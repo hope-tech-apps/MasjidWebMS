@@ -83,6 +83,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         \Illuminate\Support\Facades\RateLimiter::for('attendance-absence-mail', fn ($job) => \Illuminate\Cache\RateLimiting\Limit::perMinute(max(1, (int) config('attendance.absence_emails_per_minute', 30)))->by('school-absence-mail'));
+        \Illuminate\Support\Facades\RateLimiter::for('school-admissions-mail', fn ($job) => \Illuminate\Cache\RateLimiting\Limit::perMinute(max(1, (int) config('attendance.absence_emails_per_minute', 30)))->by('school-admissions-mail'));
         \Illuminate\Support\Facades\RateLimiter::for('duty-rota', fn ($request) => \Illuminate\Cache\RateLimiting\Limit::perMinute(30)->by($request->ip()));
         $this->registerFamilyGuard();
 

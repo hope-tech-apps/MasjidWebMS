@@ -18,7 +18,8 @@
                 <td>{{ child.form_name }}<small class="d-block">{{ child.submitted_at }}</small></td>
                 <td>{{ label(child.status) }}<span v-if="child.waitlist_position"> · {{ child.waitlist_position }}</span></td>
                 <td><button class="btn btn-sm btn-outline-primary" @click="selected = child.response_id">Status and email history</button>
-                    <div v-if="child.status === 'accepted'" class="d-flex flex-wrap gap-1 mt-2">
+                    <p v-if="child.roster_class" class="mt-2 mb-0">Added to {{ child.roster_class }}</p>
+                    <div v-else-if="child.status === 'accepted'" class="d-flex flex-wrap gap-1 mt-2">
                         <select class="form-select" :aria-label="`Class for ${child.first_name} ${child.last_name}`" v-model="classChoices[`${child.response_id}:${child.entry_index}`]"><option value="">Choose class</option><option v-for="c in data.classes" :key="c.id" :value="c.id">{{ c.name }}</option></select>
                         <button class="btn btn-sm btn-outline-primary" :disabled="busy || !classChoices[`${child.response_id}:${child.entry_index}`]" @click="add(child)">Add to roster with guardians</button>
                     </div>
@@ -37,6 +38,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import ApiService from '@/core/services/ApiService';
+import { serverMessage } from '@/core/helpers/serverMessage';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ApplicationFormSetting from '@/components/forms/ApplicationFormSetting.vue';
 import ApplicationStatusControl from '@/components/forms/ApplicationStatusControl.vue';
@@ -48,8 +50,8 @@ const filtered = computed(() => data.value.children.filter((c: any) => (!status.
 const label = (s: string) => ({ new: 'New', accepted: 'Accepted', wait_listed: 'Wait-listed', declined: 'Declined' }[s] ?? s);
 const base = () => `/api/admin/masjids/${school.value}/applications` as const; let generation = 0; let alive = true;
 async function load() { const run = ++generation; error.value = ''; if (!school.value) return; try { const r = await ApiService.get(base()); if (alive && run === generation) { data.value = r.data.data; texts.value = { ...data.value.settings }; const options = await ApiService.get(`/api/admin/masjids/${school.value}/forms/options`); if (alive && run === generation) forms.value = Array.isArray(options.data.data) ? options.data.data : []; } } catch { if (alive && run === generation) error.value = 'Applications could not be loaded.'; } }
-async function saveTexts() { if (busy.value) return; busy.value = true; error.value = ''; const run = generation; const payload = Object.fromEntries(['accepted_text', 'wait_listed_text', 'declined_text'].map(k => [k, texts.value[k]])); try { await ApiService.put(`${base()}/settings`, payload); if (alive && run === generation) message.value = 'Messages saved.'; } catch (e: any) { if (alive && run === generation) error.value = e.response?.data?.message || 'The messages could not be saved. Use only the two supported placeholders.'; } finally { busy.value = false; } }
-async function add(child: any) { if (busy.value) return; busy.value = true; error.value = ''; message.value = ''; const run = generation; const url = `${base()}/${child.response_id}/roster` as const; const payload = { entry_index: child.entry_index, group_id: classChoices.value[`${child.response_id}:${child.entry_index}`] }; try { const r = await ApiService.post(url, payload); if (alive && run === generation) message.value = r.data.data.message; } catch (e: any) { if (alive && run === generation) error.value = Object.values(e.response?.data?.errors ?? {}).flat().join(' ') || e.response?.data?.message || 'The child could not be added.'; } finally { busy.value = false; } }
+async function saveTexts() { if (busy.value) return; busy.value = true; error.value = ''; const run = generation; const payload = Object.fromEntries(['accepted_text', 'wait_listed_text', 'declined_text'].map(k => [k, texts.value[k]])); try { await ApiService.put(`${base()}/settings`, payload); if (alive && run === generation) message.value = 'Messages saved.'; } catch (e: any) { if (alive && run === generation) error.value = serverMessage(e, 'The messages could not be saved. Use only the two supported placeholders.'); } finally { busy.value = false; } }
+async function add(child: any) { if (busy.value) return; busy.value = true; error.value = ''; message.value = ''; const run = generation; const url = `${base()}/${child.response_id}/roster` as const; const payload = { entry_index: child.entry_index, group_id: classChoices.value[`${child.response_id}:${child.entry_index}`] }; try { const r = await ApiService.post(url, payload); if (alive && run === generation) { child.roster_class = r.data.data.roster_class || data.value.classes.find((c: any) => String(c.id) === String(payload.group_id))?.name; message.value = r.data.data.message; } } catch (e: any) { if (alive && run === generation) error.value = Object.values(e.response?.data?.errors ?? {}).flat().join(' ') || serverMessage(e, 'The child could not be added.'); } finally { busy.value = false; } }
 watch(school, () => { data.value = { children: [], classes: [], settings: {} }; selected.value = null; settingForm.value = ''; forms.value = []; texts.value = {}; classChoices.value = {}; message.value = ''; status.value = ''; grade.value = ''; void load(); }, { immediate: true });
 onBeforeUnmount(() => { alive = false; ++generation; });
 </script>

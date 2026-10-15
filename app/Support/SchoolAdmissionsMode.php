@@ -11,6 +11,12 @@ use Illuminate\Validation\ValidationException;
 /** Independent hidden OFF grants; no configuration or history is public while disabled. */
 final class SchoolAdmissionsMode
 {
+    /** Display instants on the school's clock, independent of the office browser's timezone. */
+    public static function timestamp(int $school, ?\Carbon\CarbonInterface $value): ?string
+    {
+        return $value?->copy()->setTimezone(SchoolCalendarReaders::for($school)->timezone())->format('M j, Y, g:i A');
+    }
+
     public const RECORDS = 'school_reenrolment_records';
     public const KEYS = ['school_reenrolment', 'school_applications'];
     public static function enabled(?Masjid $school, string $key): bool

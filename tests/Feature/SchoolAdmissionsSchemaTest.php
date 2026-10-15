@@ -28,3 +28,15 @@ it('rolls the empty admissions migration down and forward cleanly', function () 
     $migration->down(); expect(Schema::hasTable('school_admission_mails'))->toBeFalse(); expect(Schema::hasTable('school_reenrolments'))->toBeFalse();
     $migration->up(); expect(Schema::hasTable('school_admission_mails'))->toBeTrue(); expect(Schema::hasTable('school_reenrolments'))->toBeTrue();
 });
+
+it('enforces one deposit response per campaign and child in storage', function () {
+    $index = collect(Schema::getIndexes('school_reenrolment_deposits'))->firstWhere('name', 'reenrol_deposit_child_uq');
+    expect($index['unique'] ?? false)->toBeTrue();
+});
+
+it('rolls the empty deposit guard down and forward without changing the original admissions migration', function () {
+    $migration = require database_path('migrations/2026_10_14_235100_guard_school_admission_deposits.php');
+    $migration->down(); expect(Schema::hasColumn('school_admission_mails', 'reminder_batch'))->toBeFalse();
+    $migration->up(); expect(Schema::hasColumn('school_admission_mails', 'reminder_batch'))->toBeTrue();
+    expect(collect(Schema::getIndexes('school_reenrolment_deposits'))->firstWhere('name', 'reenrol_deposit_child_uq')['unique'])->toBeTrue();
+});

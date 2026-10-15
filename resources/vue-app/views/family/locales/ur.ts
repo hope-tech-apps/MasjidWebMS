@@ -41,6 +41,7 @@ export const UR: Record<string, string> = {
     reenrol_saved: "جواب درج ہو گیا",
     reenrol_next_grade: "اگلی جماعت",
     reenrol_pay: "پیشگی رقم کا فارم کھولیں",
+    reenrol_pay_now: "ابھی ادائیگی کریں",
     reenrol_payment_method: "ادائیگی کا طریقہ",
     reenrol_card: "کارڈ",
     reenrol_office_payment: "دفتر میں ادائیگی",

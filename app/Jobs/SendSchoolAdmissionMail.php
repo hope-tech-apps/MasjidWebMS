@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Mail\AttendanceAbsenceMail;
-use App\Models\{Contact, GroupMembership, Masjid, SchoolAdmissionMail, SchoolReenrolment, SchoolReenrolmentAnswer, SchoolYear};
+use App\Models\{Contact, GroupMembership, Masjid, SchoolAdmissionMail, SchoolReenrolment, SchoolReenrolmentAnswer, SchoolYear, SchoolApplicationHistory, SchoolReenrolmentDeposit};
 use App\Services\Schools\SchoolReenrolments;
 use App\Support\{ContactIdentity, SchoolAdmissionsMode, SchoolMailTransport, TenantContext};
 use Carbon\CarbonImmutable;
@@ -24,7 +24,7 @@ class SendSchoolAdmissionMail implements ShouldQueue
     public int $timeout = 60;
     public bool $failOnTimeout = true;
     public function __construct(public int $mailId, public int $schoolId, public int $expiresAt) {}
-    public function middleware(): array { return [new RateLimited('attendance-absence-mail')]; }
+    public function middleware(): array { return [new RateLimited('school-admissions-mail')]; }
     public function retryUntil(): CarbonImmutable { return CarbonImmutable::createFromTimestampUTC($this->expiresAt); }
     public function handle(): void
     {
@@ -34,6 +34,10 @@ class SendSchoolAdmissionMail implements ShouldQueue
             try {
                 $school = Masjid::find($this->schoolId);
                 if (! SchoolAdmissionsMode::enabled($school, $row->kind === 'reminder' ? 'school_reenrolment' : 'school_applications')) { $this->skip(); return; }
+                if ($row->kind === 'application') {
+                    $responseId = SchoolApplicationHistory::where('masjid_id', $this->schoolId)->whereKey($row->application_history_id)->value('form_response_id');
+                    if (! $responseId || SchoolReenrolmentDeposit::where('masjid_id', $this->schoolId)->where('form_response_id', $responseId)->exists()) { $this->skip(); return; }
+                }
                 if ($row->kind === 'reminder') {
                     $campaign = SchoolReenrolment::where('masjid_id', $this->schoolId)->find($row->reenrolment_id);
                     $guardian = Contact::where('masjid_id', $this->schoolId)->find($row->guardian_contact_id);
@@ -44,6 +48,9 @@ class SendSchoolAdmissionMail implements ShouldQueue
                         return GroupMembership::where('masjid_id', $this->schoolId)->where('contact_id', $guardian->id)->where('role', 'guardian')->where('guardian_of_contact_id', $child['student_contact_id'])->whereIn('group_id', $groups)->confirmed()->current()->exists();
                     }));
                     if (! $children) { $this->skip(); return; }
+                    foreach ($children as &$child) $child['group_id'] = GroupMembership::where('masjid_id', $this->schoolId)->where('contact_id', $guardian->id)->where('role', 'guardian')->where('guardian_of_contact_id', $child['student_contact_id'])->confirmed()->current()
+                        ->whereIn('group_id', GroupMembership::where('masjid_id', $this->schoolId)->where('contact_id', $child['student_contact_id'])->participants()->current()->whereHas('group', fn ($q) => $q->where('kind', 'class'))->select('group_id'))->value('group_id');
+                    unset($child);
                     $row->children = $children;
                     $row->body = SchoolReenrolments::reminderText($children, SchoolYear::where('masjid_id', $this->schoolId)->findOrFail($campaign->school_year_id)->label, $this->schoolId);
                 }
