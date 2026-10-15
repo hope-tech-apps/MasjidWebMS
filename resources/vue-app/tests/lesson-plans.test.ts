@@ -253,7 +253,9 @@ test('a jump back into the open day stays on the plan being written', () => {
     // A plan not on that day falls back to the day's first, as pickPlan does.
     assert.equal(jumpTarget(week, '2026-09-14', 4, 7), 9);
 
-    assert.match(fn('jumpToDay'), /const next = jumpTarget\(plans\.value, iso, id, planId\.value\);\s+if \(next !== undefined\) selectPlan\(next\);/);
+    // jumpTarget still decides; leaving the open plan for another asks first (mounted in
+    // class-subjects-screens.test.ts, with the day strip and the week arrows).
+    assert.match(fn('jumpToDay'), /const next = jumpTarget\(plans\.value, iso, id, planId\.value\);[\s\S]*?if \(next !== undefined && !mayLeavePlan\([\s\S]*?\)\) return;[\s\S]*?if \(next !== undefined\) selectPlan\(next\);/);
     // Another plan's chip opens it (asking first about unsaved words, openPlan); the open plan's does nothing.
     assert.match(view, /@click="p\.id !== planId && openPlan\(p\.id\)"/, 'the open plan\'s chip does nothing');
 });
@@ -303,6 +305,7 @@ test('a save, copy or removal that answers late does not reload over the plan th
 test('the open day moves with the week, so the day view reads the week that is loaded', () => {
     const shift = fn('shiftWeek');
     assert.ok(shift.indexOf('planDate.value = ') !== -1 && shift.indexOf('planDate.value = ') < shift.indexOf('weekStart.value = '));
+    assert.ok(shift.indexOf('mayLeavePlan(') !== -1 && shift.indexOf('mayLeavePlan(') < shift.indexOf('planDate.value = '), 'unsaved words are asked about before the week moves');
 });
 
 test('a plan switch loads the subject and week lists once', () => {

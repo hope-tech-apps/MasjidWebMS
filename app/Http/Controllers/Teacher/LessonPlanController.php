@@ -694,9 +694,13 @@ class LessonPlanController extends TeacherController
         // subject; the unique index below is what holds when two saves race.
         $subjectId = $chosen?->id ?? $plan->class_subject_id;
         $grade = LessonPlan::gradeKeyFor($plan->grade_label);
-        $clash = $this->planOnSubject($group, $date, $subjectId, $grade);
+        $subjectKey = LessonPlan::subjectKeyFor($plan->subject);
+        // No subject id with subject words is an unlinked historical row, not the
+        // general plan: asking for the day's general plan refused its save by id
+        // over a plan the screen never showed as a clash. Its words decide below.
+        $clash = $subjectId === null && $subjectKey !== '' ? null : $this->planOnSubject($group, $date, $subjectId, $grade);
         // Keep the old physical key's collision response for unlinked historical rows.
-        if ($clash === null) $clash = $this->planOn($group, $date, LessonPlan::subjectKeyFor($plan->subject), $grade);
+        if ($clash === null) $clash = $this->planOn($group, $date, $subjectKey, $grade);
 
         // Named as the EXISTING plan spells it: the teacher typed "math", but
         // the plan they are being sent to open is the one called "Math".

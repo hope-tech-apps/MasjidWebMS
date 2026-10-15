@@ -1371,7 +1371,7 @@
                             class="btn btn-sm"
                             :class="d.iso === planDate ? 'btn-success' : (dayPlansOn(d.iso).length ? 'btn-outline-success' : 'btn-outline-secondary')"
                             :aria-label="`${d.label}: ${dayPlansOn(d.iso).length} plan${dayPlansOn(d.iso).length === 1 ? '' : 's'}`"
-                            @click="planDate = d.iso">
+                            @click="openDay(d.iso)">
                         {{ d.label }}<i v-if="dayPlansOn(d.iso).length === 1" class="bi bi-dot"></i>
                         <span v-else-if="dayPlansOn(d.iso).length > 1" class="ms-1 small">·{{ dayPlansOn(d.iso).length }}</span>
                     </button>
@@ -3393,16 +3393,34 @@ const addSubjectPlan = () => {
     }
 };
 
-/** From the week grid to one plan (or the day's first) in the day view. */
+/**
+ * Another day of the week, from the day strip, asking first about unsaved
+ * words as a chip does. The planDate watcher opens the day's plan.
+ */
+const openDay = (iso: string) => {
+    if (iso !== planDate.value && mayLeavePlan(longDate(iso))) planDate.value = iso;
+};
+
+/**
+ * From the week grid to one plan (or the day's first) in the day view, asking
+ * first about unsaved words whenever that leaves the open plan. A "no" leaves
+ * the grid on screen as it was.
+ */
 const jumpToDay = (iso: string, id: number | null = null) => {
-    planView.value = 'day';
     if (planDate.value === iso) {
         // Back to the day already open: stay on the plan being written unless
         // another one was asked for — see jumpTarget.
         const next = jumpTarget(plans.value, iso, id, planId.value);
+        const opening = plans.value.find((x) => x.id === next);
+        if (next !== undefined && !mayLeavePlan(planNamed(opening?.grade_label, opening?.subject))) return;
+        planView.value = 'day';
         if (next !== undefined) selectPlan(next);
         return;
     }
+    // A row names its plan; a day's card or empty row names only the day.
+    const opening = id === null ? undefined : plans.value.find((x) => x.id === pickPlan(plans.value, iso, id));
+    if (!mayLeavePlan(opening ? `${planNamed(opening.grade_label, opening.subject)} for ${longDate(iso)}` : longDate(iso))) return;
+    planView.value = 'day';
     // The planDate watcher opens it: it keeps planId when that plan is on the
     // new day, and falls back to the day's first plan when it is not.
     planId.value = id;
@@ -4110,6 +4128,8 @@ watch(planDate, (iso) => selectPlan(pickPlan(plans.value, iso, planId.value)));
 watch(weekStart, () => loadLessonPlans());
 
 const shiftWeek = (delta: number) => {
+    // Another week leaves the open plan: unsaved words are asked about first.
+    if (!mayLeavePlan(delta > 0 ? 'the next week' : 'the previous week')) return;
     const d = new Date(weekStart.value + 'T00:00:00');
     d.setDate(d.getDate() + delta * 7);
     // The open day moves with the week. Left behind, it was a day the loaded

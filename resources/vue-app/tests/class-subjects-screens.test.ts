@@ -1436,9 +1436,9 @@ const combinedDay = () => {
     return `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
 };
 const combinedStudents = ['Pre-K', 'KG'].map((grade, i) => ({ membership_id: 20 + i, grade_label: grade, contact: { id: 30 + i, first_name: `Practice ${grade}`, last_name: '' } }));
-async function combinedClass(flag: boolean, plans: any[], students: any[] = combinedStudents) {
+async function combinedClass(flag: boolean, plans: any[], students: any[] = combinedStudents, meetingWeekdays: number[] | null = null) {
     const setupResult = await setup('teacher', { flag, data: { students },
-        read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans, hidden_fields: [], meeting_weekdays: null })
+        read: (url: string) => url.includes('/lesson-plans?') ? ok({ plans, hidden_fields: [], meeting_weekdays: meetingWeekdays })
             : url.includes('/curriculum') ? ok({ grades: ['Pre-Kindergarten', 'Kindergarten'], subjects: ['Arabic'], weeks: [] }) : undefined,
         write: (method: string, url: string, body: any) => url.includes('/lesson-plans') ? ok({ id: method === 'post' ? 99 : Number(url.split('/').pop()), ...body }) : undefined,
     });
@@ -1648,6 +1648,148 @@ for (const flag of [true, false]) test(`the clash notice's "Open it" asks before
         answers.next = true;
         click(exactButton(screen, 'Open it')); await flush(10);
         assert.equal(activities(screen).value ?? activities(screen).props.value, 'Letter ba.');
+    } finally { screen.unmount(); restore(); }
+});
+
+/**
+ * The day strip, the week grid and the week arrows leave the open plan as a
+ * chip does: unsaved words are asked about first, and a "no" changes nothing.
+ * The other day is in the loaded week whatever day the suite runs on, and the
+ * week grid shows every day, so a weekend run sees today's plan in it too.
+ */
+const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const sameWeekOtherDay = () => { const d = new Date(); d.setDate(d.getDate() + (d.getDay() === 0 ? 1 : -1)); return isoOf(d); };
+const everyDay = [0, 1, 2, 3, 4, 5, 6];
+const longDay = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+};
+const shortDay = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
+const dayButton = (screen: any, iso: string) => {
+    const found = screen.all((n: Node) => n.tag === 'button' && String(n.props['aria-label'] ?? '').startsWith(`${shortDay(iso)}: `));
+    assert.equal(found.length, 1, `the day strip's ${shortDay(iso)}`); return found[0];
+};
+const openDayIs = (screen: any, iso: string) => String(dayButton(screen, iso).props.class).split(/\s+/).includes('btn-success');
+const weekRow = (screen: any, words: string) => {
+    const found = screen.all((n: Node) => n.tag === 'tr' && !!n.props.onClick && n.textContent.includes(words));
+    assert.equal(found.length, 1, `the week grid's row for ${words}`); return found[0];
+};
+const phoneDayCard = (screen: any, iso: string) => {
+    const found = screen.all((n: Node) => n.tag === 'button' && String(n.props.class).includes('card') && n.textContent.startsWith(shortDay(iso)));
+    assert.equal(found.length, 1, `the phone's card for ${shortDay(iso)}`); return found[0];
+};
+const weekArrow = (screen: any, way: 'left' | 'right') => {
+    const found = screen.all((n: Node) => n.tag === 'button' && n.children.some((c: Node) => c.tag === 'i' && c.props.class === `bi bi-chevron-${way}`));
+    assert.equal(found.length, 1, `the ${way} week arrow`); return found[0];
+};
+const shown = (screen: any) => activities(screen).value ?? activities(screen).props.value;
+const leave = (next: string) => `Your changes to the Pre-Kindergarten Arabic plan are not saved. Leave them and open ${next}?`;
+
+for (const flag of [true, false]) test(`the day strip asks before leaving unsaved words for another day ${flag ? 'ON' : 'OFF'}`, async () => {
+    const answers = { next: false };
+    const { asked, restore } = askAs(answers);
+    const other = sameWeekOtherDay();
+    const { screen, calls } = await combinedClass(flag, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.'), { ...savedArabic(83, 'Kindergarten', 'Letter jim.'), session_date: other }]);
+    try {
+        // Untouched, the strip moves at once, either way.
+        click(dayButton(screen, other)); await flush(10);
+        assert.equal(shown(screen), 'Letter jim.');
+        click(dayButton(screen, combinedDay())); await flush(10);
+        assert.equal(shown(screen), 'Letter ba.');
+        assert.equal(asked.length, 0);
+
+        type(activities(screen), 'Letter ba, edited.'); await flush();
+        click(dayButton(screen, combinedDay())); await flush(10);
+        assert.equal(asked.length, 0, 'the open day is no move');
+        assert.equal(shown(screen), 'Letter ba, edited.');
+
+        click(dayButton(screen, other)); await flush(10);
+        assert.deepEqual(asked, [leave(longDay(other))]);
+        assert.ok(openDayIs(screen, combinedDay()), 'a "no" stays on the day');
+        assert.equal(shown(screen), 'Letter ba, edited.');
+
+        answers.next = true;
+        click(dayButton(screen, other)); await flush(10);
+        assert.equal(asked.length, 2);
+        assert.ok(openDayIs(screen, other));
+        assert.equal(shown(screen), 'Letter jim.');
+        assert.equal(writesOf(calls).length, 0);
+    } finally { screen.unmount(); restore(); }
+});
+
+for (const flag of [true, false]) test(`the week grid asks before opening another plan or day over unsaved words ${flag ? 'ON' : 'OFF'}`, async () => {
+    const answers = { next: false };
+    const { asked, restore } = askAs(answers);
+    const other = sameWeekOtherDay();
+    const { screen, calls } = await combinedClass(flag, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.'), savedArabic(82, 'Kindergarten', 'Letter ta.'),
+        { ...savedArabic(83, 'Kindergarten', 'Letter jim.'), session_date: other }], combinedStudents, everyDay);
+    try {
+        type(activities(screen), 'Letter ba, edited.'); await flush();
+        click(exactButton(screen, 'Week')); await flush(10);
+
+        click(weekRow(screen, 'Letter ta.')); await flush(10);
+        assert.deepEqual(asked, [leave('the Kindergarten Arabic plan')], 'another plan of the open day');
+        assert.equal(activities(screen), undefined, 'a "no" stays on the week');
+        click(weekRow(screen, 'Letter jim.')); await flush(10);
+        assert.equal(asked[1], leave(`the Kindergarten Arabic plan for ${longDay(other)}`), 'a plan on another day');
+        click(phoneDayCard(screen, other)); await flush(10);
+        assert.equal(asked[2], leave(longDay(other)), 'another day, from the phone\'s card');
+        assert.equal(asked.length, 3);
+
+        // The open plan's own row, or the open day's card, goes back to the draft and asks nothing.
+        click(weekRow(screen, 'Letter ba.')); await flush(10);
+        assert.equal(asked.length, 3);
+        assert.ok(openDayIs(screen, combinedDay()));
+        assert.equal(shown(screen), 'Letter ba, edited.');
+        click(exactButton(screen, 'Week')); await flush(10);
+        click(phoneDayCard(screen, combinedDay())); await flush(10);
+        assert.equal(asked.length, 3);
+        assert.equal(shown(screen), 'Letter ba, edited.');
+
+        answers.next = true;
+        click(exactButton(screen, 'Week')); await flush(10);
+        click(weekRow(screen, 'Letter ta.')); await flush(10);
+        assert.equal(asked.length, 4);
+        assert.equal(shown(screen), 'Letter ta.');
+
+        type(activities(screen), 'Letter ta, edited.'); await flush();
+        click(exactButton(screen, 'Week')); await flush(10);
+        click(weekRow(screen, 'Letter jim.')); await flush(10);
+        assert.equal(asked.length, 5);
+        assert.ok(openDayIs(screen, other));
+        assert.equal(shown(screen), 'Letter jim.');
+        assert.equal(writesOf(calls).length, 0);
+    } finally { screen.unmount(); restore(); }
+});
+
+for (const flag of [true, false]) test(`the week arrows ask before leaving unsaved words ${flag ? 'ON' : 'OFF'}`, async () => {
+    const answers = { next: false };
+    const { asked, restore } = askAs(answers);
+    const { screen, calls } = await combinedClass(flag, [savedArabic(81, 'Pre-Kindergarten', 'Letter ba.')]);
+    const weekLoads = () => calls.filter((c: any) => c.method === 'get' && c.url.includes('/lesson-plans?')).length;
+    try {
+        const loaded = weekLoads();
+        type(activities(screen), 'Letter ba, edited.'); await flush();
+        click(weekArrow(screen, 'right')); await flush(10);
+        click(weekArrow(screen, 'left')); await flush(10);
+        assert.deepEqual(asked, [leave('the next week'), leave('the previous week')]);
+        assert.equal(weekLoads(), loaded, 'a "no" loads no other week');
+        assert.ok(openDayIs(screen, combinedDay()));
+        assert.equal(shown(screen), 'Letter ba, edited.');
+
+        answers.next = true;
+        click(weekArrow(screen, 'right')); await flush(10);
+        assert.equal(asked.length, 3);
+        assert.equal(weekLoads(), loaded + 1);
+        const week = new Date(); week.setDate(week.getDate() + 7);
+        assert.ok(openDayIs(screen, isoOf(week)), 'the open day moved with the week');
+        assert.equal(shown(screen), '');
+
+        // Nothing typed on the new week's blank plan: back without a question.
+        click(weekArrow(screen, 'left')); await flush(10);
+        assert.equal(asked.length, 3);
+        assert.equal(shown(screen), 'Letter ba.');
+        assert.equal(writesOf(calls).length, 0);
     } finally { screen.unmount(); restore(); }
 });
 
