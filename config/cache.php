@@ -18,6 +18,13 @@ return [
     'default' => env('CACHE_STORE', 'database'),
 
     /*
+    | Retry a database deadlock in the rate limiter instead of failing the
+    | request with a 500. See App\Support\DeadlockRetryingRateLimiter.
+    */
+
+    'limiter_deadlock_retry' => (bool) env('CACHE_LIMITER_DEADLOCK_RETRY', false),
+
+    /*
     |--------------------------------------------------------------------------
     | Cache Stores
     |--------------------------------------------------------------------------

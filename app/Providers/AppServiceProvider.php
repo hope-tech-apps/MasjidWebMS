@@ -47,6 +47,19 @@ class AppServiceProvider extends ServiceProvider
         // half of that fix and the full reasoning.
         $this->app->scoped(\App\Support\TenantContext::class);
 
+        // The framework's CacheServiceProvider is deferred and binds the rate
+        // limiter on first use, so extend() (not a fresh binding, which that
+        // provider would overwrite) swaps in the deadlock-retrying limiter.
+        $this->app->extend(\Illuminate\Cache\RateLimiter::class, function ($limiter, $app) {
+            if (! $app['config']->get('cache.limiter_deadlock_retry')) {
+                return $limiter;
+            }
+
+            return new \App\Support\DeadlockRetryingRateLimiter(
+                $app->make('cache')->driver($app['config']->get('cache.limiter'))
+            );
+        });
+
         // Shared Stripe SDK client for the CRM donation services. Constructed
         // lazily, so an empty STRIPE_SECRET (keys not added yet) is fine until a
         // call is actually made. Pin the API version so behavior is stable
