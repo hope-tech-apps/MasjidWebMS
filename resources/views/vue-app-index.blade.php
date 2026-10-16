@@ -1,8 +1,15 @@
 <!DOCTYPE html>
-<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+{{--
+    translate="no" and the google notranslate meta: Chrome must not machine-translate
+    Manara. Staff and families read it in the language they chose inside the app;
+    Chrome's guess garbled children's names and money amounts on a parent's phone
+    (owner, 2026-10-16: "disable chrome auto translate", every screen).
+--}}
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}" translate="no">
 
 <head>
     <meta charset="utf-8">
+    <meta name="google" content="notranslate">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
     <title>Manara</title>
