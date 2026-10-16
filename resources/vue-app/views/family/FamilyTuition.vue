@@ -15,7 +15,7 @@
             <div v-if="account.balance_minor > 0 && owedItems(account).length" class="mb-3 tuition-owed">
                 <span>{{ t('tuition_owed_items') }}:</span>
                 <ul class="mb-0">
-                    <li v-for="item in owedItems(account)" :key="item.line_id"><bdi>{{ item.description }}</bdi><template v-if="item.child"> (<bdi class="notranslate" translate="no">{{ item.child }}</bdi>)</template>: <bdi class="notranslate" translate="no">{{ money(item.amount_minor, account.currency) }}</bdi><template v-if="account.school_today && item.due_on > account.school_today">{{ t('tuition_list_separator') }}{{ t('tuition_due_by', date(item.due_on)) }}</template></li>
+                    <li v-for="item in owedItems(account)" :key="item.line_id"><!-- One isolate for the description and the child's name, brackets included: separate isolates leave the brackets to the page direction and an Arabic page flips them. --><bdi>{{ item.description }}<template v-if="item.child"> (<span class="notranslate" translate="no">{{ item.child }}</span>)</template></bdi>:<bdi class="notranslate" translate="no">{{ money(item.amount_minor, account.currency) }}</bdi><template v-if="account.school_today && item.due_on > account.school_today">{{ t('tuition_list_separator') }}{{ t('tuition_due_by', date(item.due_on)) }}</template></li>
                 </ul>
             </div>
             <p v-if="account.next_due_on">{{ t('tuition_coming_up') }}: <bdi class="notranslate" translate="no">{{ money(account.next_due_minor, account.currency) }}</bdi> {{ t('tuition_on') }} {{ date(account.next_due_on) }}</p>
