@@ -97,6 +97,73 @@ class FamilyTuitionOwedItemsTest extends TestCase
         $this->assertNull($owed[0]['child_contact_id']);
     }
 
+    private function card(array $x, string $kind, int $amount, string $date, string $key): void
+    {
+        $x['ledger']->append($x['account'], ['kind' => $kind, 'amount_minor' => $amount, 'effective_on' => $date, 'source' => 'stripe_webhook', 'recorded_by_label' => 'Verified Stripe webhook', 'method' => $kind === 'card_payment' ? 'stripe' : null, 'idempotency_key' => $key]);
+    }
+
+    #[Test]
+    public function a_card_refund_reopens_the_oldest_charge_it_had_paid_instead_of_being_listed_as_owed(): void
+    {
+        $this->travelTo(now()->parse('2026-10-15 16:00:00 UTC')); $x = $this->setupLedger();
+        $actor = $x['actor']->id; $ledger = $x['ledger'];
+        $ledger->office($x['account'], 'charge', 10000, '2026-09-01', 'staff note', $actor, description: 'September tuition');
+        $october = $ledger->office($x['account'], 'charge', 10000, '2026-10-01', 'staff note', $actor, description: 'October tuition');
+        $this->card($x, 'card_payment', -20000, '2026-10-02', 'card:practice');
+        $this->card($x, 'refund', 3000, '2026-10-03', 'refund:practice:3000');
+
+        // A part refund reopens part of the oldest charge the payment had covered, as due() does.
+        $owed = $ledger->owed($x['account'], '2026-10-15');
+        $this->assertSame([['October tuition', 'charge', 3000]], array_map(fn ($i) => [$i['description'], $i['kind'], $i['amount_minor']], $owed));
+        $this->card($x, 'refund', 7000, '2026-10-04', 'refund:practice:10000');
+
+        $this->family($x['parent']);
+        $data = $this->getJson($this->url($x))->assertOk()->json('data');
+        $this->assertSame(10000, $data['balance_minor']);
+        $this->assertSame([['October tuition', 'charge', 10000]], array_map(fn ($i) => [$i['description'], $i['kind'], $i['amount_minor']], $data['owed_items']));
+        $this->assertNotContains('refund', array_column($data['owed_items'], 'kind'));
+        $this->assertSame([[$october->id, 10000]], array_map(fn ($d) => [$d['line_id'], $d['amount_minor']], $data['due']));
+    }
+
+    #[Test]
+    public function voiding_a_charge_dated_after_today_does_not_lower_what_is_owed_today(): void
+    {
+        $this->travelTo(now()->parse('2026-10-15 16:00:00 UTC')); $x = $this->setupLedger();
+        $actor = $x['actor']->id; $ledger = $x['ledger'];
+        $past = $ledger->office($x['account'], 'charge', 5000, '2026-09-10', 'staff note', $actor, description: 'Entered by mistake');
+        $ledger->office($x['account'], 'charge', 20000, '2026-09-01', 'staff note', $actor, description: 'Registration');
+        $trip = $ledger->office($x['account'], 'charge', 30000, '2026-11-01', 'staff note', $actor, description: 'Field trip');
+        // The reversal takes the date of what it reverses when that is later than today, never earlier.
+        $this->assertSame('2026-11-01', $ledger->void($trip, 'cancelled', $actor)->effective_on->toDateString());
+        $this->assertSame('2026-10-15', $ledger->void($past, 'typo', $actor)->effective_on->toDateString());
+
+        $this->family($x['parent']);
+        $data = $this->getJson($this->url($x))->assertOk()->json('data');
+        $this->assertSame(20000, $data['balance_minor']);
+        $this->assertSame([['Registration', 20000]], array_map(fn ($i) => [$i['description'], $i['amount_minor']], $data['owed_items']));
+
+        // Once the trip's date arrives the charge and its reversal cancel out.
+        $this->travelTo(now()->parse('2026-11-02 16:00:00 UTC'));
+        $this->assertSame(20000, $ledger->balance($x['account'], '2026-11-02'));
+        $this->assertSame([['Registration', 20000]], array_map(fn ($i) => [$i['description'], $i['amount_minor']], $ledger->owed($x['account'], '2026-11-02')));
+    }
+
+    #[Test]
+    public function an_older_reversal_dated_before_its_entry_is_still_named_so_the_parts_add_up(): void
+    {
+        $this->travelTo(now()->parse('2026-10-15 16:00:00 UTC')); $x = $this->setupLedger();
+        $actor = $x['actor']->id; $ledger = $x['ledger'];
+        $ledger->office($x['account'], 'charge', 20000, '2026-09-01', 'staff note', $actor, description: 'Registration');
+        $later = $ledger->office($x['account'], 'office_payment', 5000, '2026-10-20', 'staff note', $actor, 'check');
+        // A row written before voids took their original's date: dated today, reversing a later payment.
+        $ledger->append($x['account'], ['kind' => 'void', 'amount_minor' => 5000, 'effective_on' => '2026-10-15', 'original_line_id' => $later->id, 'source' => 'office', 'recorded_by_label' => 'Practice Clerk', 'idempotency_key' => 'void:'.$later->id]);
+
+        $owed = $ledger->owed($x['account'], '2026-10-15');
+        $this->assertSame(25000, $ledger->balance($x['account'], '2026-10-15'));
+        $this->assertSame(25000, $this->sum($owed));
+        $this->assertSame([['Registration', 20000], ['Correction', 5000]], array_map(fn ($i) => [$i['description'], $i['amount_minor']], $owed));
+    }
+
     #[Test]
     public function an_account_in_credit_or_settled_owes_nothing_item_by_item(): void
     {

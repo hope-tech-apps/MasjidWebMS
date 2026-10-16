@@ -109,7 +109,10 @@ class FamilyLedger
         $account = TuitionAccount::where('masjid_id', $line->masjid_id)->findOrFail($line->account_id);
         return DB::transaction(function () use ($account, $line, $reason, $actor, $description) {
             TuitionAccount::whereKey($account->id)->lockForUpdate()->firstOrFail();
-            $void = $this->append($account, ['kind' => 'void', 'amount_minor' => -$line->amount_minor, 'effective_on' => \App\Support\SchoolCalendarReaders::for($account->masjid_id)->today(), 'reason' => $reason, 'description' => trim($description ?? '') ?: 'Correction', 'original_line_id' => $line->id, 'child_contact_id' => $line->child_contact_id, 'recorded_by_user_id' => $actor, 'recorded_by_label' => User::findOrFail($actor)->name, 'source' => 'office', 'idempotency_key' => 'void:'.$line->id]);
+            // A reversal must not count before the entry it reverses: voiding a charge dated next month
+            // would otherwise lower today's balance (and what a family may pay) by money not yet asked.
+            $today = \App\Support\SchoolCalendarReaders::for($account->masjid_id)->today();
+            $void = $this->append($account, ['kind' => 'void', 'amount_minor' => -$line->amount_minor, 'effective_on' => max($today, $line->effective_on->toDateString()), 'reason' => $reason, 'description' => trim($description ?? '') ?: 'Correction', 'original_line_id' => $line->id, 'child_contact_id' => $line->child_contact_id, 'recorded_by_user_id' => $actor, 'recorded_by_label' => User::findOrFail($actor)->name, 'source' => 'office', 'idempotency_key' => 'void:'.$line->id]);
             // A scheduled sibling discount belongs to its charge; reversing the charge reverses it too.
             foreach (TuitionLine::where('account_id', $account->id)->where('original_line_id', $line->id)->where('kind', 'sibling_discount')->get() as $discount) $this->void($discount, $reason, $actor, $description);
             return $void;
@@ -149,11 +152,11 @@ class FamilyLedger
     }
 
     /**
-     * What makes up balance($account, $asOf): the entries still unpaid on that day, oldest due first.
+     * What makes up balance($account, $asOf): the charges still unpaid on that day, oldest due first.
      * A family shown one total cannot tell registration plus books from tuition after a discount, so
      * the total is broken down from the same entries. Built so the amounts always sum to
-     * max(0, balance): every entry dated by $asOf is counted once, payments and credits are applied
-     * oldest first, and nothing dated after $asOf (or from another account) is read.
+     * max(0, balance): every entry dated by $asOf is counted once, and nothing dated after $asOf (or
+     * from another account) is read.
      */
     public function owed(TuitionAccount $account, string $asOf): array
     {
@@ -166,17 +169,32 @@ class FamilyLedger
         foreach ($lines->where('kind', 'void') as $line) $root[$line->id] = $root[$line->original_line_id] ?? $line->id;
         $net = [];
         foreach ($lines as $line) $net[$root[$line->id]] = ($net[$root[$line->id]] ?? 0) + $line->amount_minor;
-        $credit = -array_sum(array_filter($net, fn ($amount) => $amount < 0));
         $plans = \App\Models\FeePlan::where('masjid_id', $account->masjid_id)->whereIn('id', $lines->pluck('fee_plan_id')->filter())->pluck('label', 'id');
-        $open = collect($net)->filter(fn ($amount) => $amount > 0)->map(function ($amount, $id) use ($lines, $plans) {
+        $item = function (int $id, int $amount) use ($lines, $plans) {
             $line = $lines->get($id);
             return ['line_id' => $line->id, 'kind' => $line->kind, 'description' => $line->description ?: ($line->kind === 'charge' ? $plans->get($line->fee_plan_id) : null) ?: self::kindLabel($line->kind), 'child_contact_id' => $line->child_contact_id, 'amount_minor' => $amount, 'due_on' => ($line->due_on ?? $line->effective_on)->toDateString(), 'effective_on' => $line->effective_on->toDateString()];
-        })->sortBy([['due_on', 'asc'], ['effective_on', 'asc'], ['line_id', 'asc']])->values();
+        };
+        $order = [['due_on', 'asc'], ['effective_on', 'asc'], ['line_id', 'asc']];
+        // Only a charge is something owed. A refund or a reversed payment takes money back out of
+        // what was paid, so (as in due()) it reopens the oldest charge rather than being listed itself.
+        $open = collect($net)->filter(fn ($amount, $id) => $amount > 0 && $lines->get($id)->kind === 'charge')->map(fn ($amount, $id) => $item($id, $amount))->sortBy($order)->values();
+        $owed = max(0, array_sum($net));
+        $paid = max(0, $open->sum('amount_minor') - $owed);
         $out = [];
-        foreach ($open as $item) {
-            $used = min($credit, $item['amount_minor']); $credit -= $used; $item['amount_minor'] -= $used;
-            unset($item['effective_on']);
-            if ($item['amount_minor'] > 0) $out[] = $item;
+        foreach ($open as $row) {
+            $used = min($paid, $row['amount_minor']); $paid -= $used; $row['amount_minor'] -= $used;
+            unset($row['effective_on']);
+            if ($row['amount_minor'] > 0) $out[] = $row;
+        }
+        // A positive entry no charge here explains (a reversal of an entry dated after $asOf, recorded
+        // before voids took their original's date) still counts in the balance; it is named as itself
+        // so the parts keep adding up to the amount owed.
+        $rest = $owed - array_sum(array_column($out, 'amount_minor'));
+        foreach (collect($net)->filter(fn ($amount, $id) => $amount > 0 && $lines->get($id)->kind !== 'charge')->map(fn ($amount, $id) => $item($id, $amount))->sortBy($order) as $row) {
+            if ($rest <= 0) break;
+            $row['amount_minor'] = min($rest, $row['amount_minor']); $rest -= $row['amount_minor'];
+            unset($row['effective_on']);
+            $out[] = $row;
         }
         return $out;
     }
