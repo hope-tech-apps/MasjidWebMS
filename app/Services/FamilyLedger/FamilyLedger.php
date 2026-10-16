@@ -148,6 +148,39 @@ class FamilyLedger
         return $out;
     }
 
+    /**
+     * What makes up balance($account, $asOf): the entries still unpaid on that day, oldest due first.
+     * A family shown one total cannot tell registration plus books from tuition after a discount, so
+     * the total is broken down from the same entries. Built so the amounts always sum to
+     * max(0, balance): every entry dated by $asOf is counted once, payments and credits are applied
+     * oldest first, and nothing dated after $asOf (or from another account) is read.
+     */
+    public function owed(TuitionAccount $account, string $asOf): array
+    {
+        $lines = TuitionLine::where('masjid_id', $account->masjid_id)->where('account_id', $account->id)->whereDate('effective_on', '<=', $asOf)->orderBy('effective_on')->orderBy('id')->get()->keyBy('id');
+        // A sibling discount nets into its charge, and a void into what it reverses, so a discounted
+        // charge shows what is really asked and a voided one (or a reversed payment) drops out.
+        $root = [];
+        foreach ($lines as $line) if ($line->kind !== 'void' && ! ($line->kind === 'sibling_discount' && $lines->has($line->original_line_id))) $root[$line->id] = $line->id;
+        foreach ($lines->where('kind', 'sibling_discount') as $line) $root[$line->id] ??= $root[$line->original_line_id];
+        foreach ($lines->where('kind', 'void') as $line) $root[$line->id] = $root[$line->original_line_id] ?? $line->id;
+        $net = [];
+        foreach ($lines as $line) $net[$root[$line->id]] = ($net[$root[$line->id]] ?? 0) + $line->amount_minor;
+        $credit = -array_sum(array_filter($net, fn ($amount) => $amount < 0));
+        $plans = \App\Models\FeePlan::where('masjid_id', $account->masjid_id)->whereIn('id', $lines->pluck('fee_plan_id')->filter())->pluck('label', 'id');
+        $open = collect($net)->filter(fn ($amount) => $amount > 0)->map(function ($amount, $id) use ($lines, $plans) {
+            $line = $lines->get($id);
+            return ['line_id' => $line->id, 'kind' => $line->kind, 'description' => $line->description ?: ($line->kind === 'charge' ? $plans->get($line->fee_plan_id) : null) ?: self::kindLabel($line->kind), 'child_contact_id' => $line->child_contact_id, 'amount_minor' => $amount, 'due_on' => ($line->due_on ?? $line->effective_on)->toDateString(), 'effective_on' => $line->effective_on->toDateString()];
+        })->sortBy([['due_on', 'asc'], ['effective_on', 'asc'], ['line_id', 'asc']])->values();
+        $out = [];
+        foreach ($open as $item) {
+            $used = min($credit, $item['amount_minor']); $credit -= $used; $item['amount_minor'] -= $used;
+            unset($item['effective_on']);
+            if ($item['amount_minor'] > 0) $out[] = $item;
+        }
+        return $out;
+    }
+
     public function require(bool $condition, string $message): void
     {
         if (! $condition) throw ValidationException::withMessages(['tuition' => $message]);

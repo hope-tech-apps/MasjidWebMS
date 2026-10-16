@@ -93,6 +93,10 @@ export const FA_AF: Record<string, string> = {
     tuition_list_separator: "، ",
     tuition_title: "فیس تحصیلی",
     tuition_balance: "باقیمانده",
+    // MACHINE-DRAFTED 2026-10-16 (tuition breakdown hotfix): the three lines below need a fluent-reader check.
+    tuition_owed_items: "متشکل از",
+    tuition_paid_ahead: "پیش‌پرداخت شده",
+    tuition_due_by: "موعد پرداخت {x}",
     tuition_next_due: "مبلغ بعدی قابل پرداخت",
     tuition_coming_up: "پیش رو",
     tuition_on: "در",

@@ -93,6 +93,10 @@ export const UR: Record<string, string> = {
     tuition_list_separator: "، ",
     tuition_title: "تعلیمی فیس",
     tuition_balance: "بقایا",
+    // MACHINE-DRAFTED 2026-10-16 (tuition breakdown hotfix): the three lines below need a fluent-reader check.
+    tuition_owed_items: "اس میں شامل ہے",
+    tuition_paid_ahead: "پیشگی ادا شدہ",
+    tuition_due_by: "واجب الادا بتاریخ {x}",
     tuition_next_due: "اگلی واجب الادا رقم",
     tuition_coming_up: "آنے والی ادائیگی",
     tuition_on: "بتاریخ",

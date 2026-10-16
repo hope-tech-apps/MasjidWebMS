@@ -15,7 +15,7 @@
                     <!-- The school's own name, in whichever language the school
                          wrote it, so it is fenced with dir="auto" like every
                          other string this portal did not write. -->
-                    <span class="fw-semibold text-dark family-school-name" dir="auto" :title="orgName || undefined">{{ orgName || t('layout_portal') }}</span>
+                    <span class="fw-semibold text-dark family-school-name notranslate" translate="no" dir="auto" :title="orgName || undefined">{{ orgName || t('layout_portal') }}</span>
                 </router-link>
 
                 <!-- `push-end`, not `ms-auto`: this app loads the LTR build of
@@ -44,7 +44,7 @@
                         <ul v-if="schoolsOpen" class="dropdown-menu show schools-menu shadow-sm"
                             :aria-label="t('layout_your_schools')">
                             <li v-for="id in signedInIds" :key="id">
-                                <router-link :to="`/family/${id}`" class="dropdown-item" dir="auto"
+                                <router-link :to="`/family/${id}`" class="dropdown-item notranslate" translate="no" dir="auto"
                                              :class="{ active: id === masjidId }"
                                              :aria-current="id === masjidId ? 'page' : undefined"
                                              @click="schoolsOpen = false">{{ schoolLabel(id) }}</router-link>
@@ -63,7 +63,7 @@
                                      :aria-label="t('layout_calendar')" :title="t('layout_calendar')">
                             <i class="bi bi-calendar3"></i><span class="d-none d-sm-inline">{{ t('layout_calendar') }}</span>
                         </router-link>
-                        <span class="text-muted small d-none d-sm-inline" dir="auto">{{ familyStore.displayNameFor(masjidId) }}</span>
+                        <span class="text-muted small d-none d-sm-inline notranslate" translate="no" dir="auto">{{ familyStore.displayNameFor(masjidId) }}</span>
                         <button class="btn btn-sm btn-outline-secondary" @click="signOut">{{ t('layout_sign_out') }}</button>
                     </template>
                 </div>
@@ -86,7 +86,7 @@
 <script setup lang="ts">
 import { useFamilyStore } from '@/stores/familyStore';
 import FamilyApiService from '@/core/services/FamilyApiService';
-import { useFamilyLang } from '@/views/family/familyI18n';
+import { normaliseFamilyLang, useFamilyLang } from '@/views/family/familyI18n';
 // Nastaliq for Urdu. Declared for the whole realm, downloaded only when Urdu is
 // actually on screen — see the file for why that costs other languages nothing.
 import '@/views/family/urduFont.css';
@@ -106,18 +106,26 @@ const { lang, dir, t } = useFamilyLang();
 
 // The document follows this realm too; restore its attributes before staff or
 // public pages mount so the family preference never changes their language.
+//
+// translate="no" while the portal is in one of its own languages: a parent's
+// Chrome machine-translated a page this portal already offers in Arabic, turning
+// children's names into nonsense words and figures into guesswork. The language
+// picker is the way to read the portal in another language.
 let restoreDocumentLanguage: (() => void) | undefined;
 onMounted(() => {
     const html = document.documentElement;
     if (!html) return;
-    const previous = { lang: html.getAttribute('lang'), dir: html.getAttribute('dir') };
+    const previous = { lang: html.getAttribute('lang'), dir: html.getAttribute('dir'), translate: html.getAttribute('translate') };
     const stop = watch([lang, dir], ([language, direction]) => {
         html.setAttribute('lang', language);
         html.setAttribute('dir', direction);
+        if (normaliseFamilyLang(language)) html.setAttribute('translate', 'no');
+        else if (previous.translate === null) html.removeAttribute('translate');
+        else html.setAttribute('translate', previous.translate);
     }, { immediate: true });
     restoreDocumentLanguage = () => {
         stop();
-        for (const attribute of ['lang', 'dir'] as const) {
+        for (const attribute of ['lang', 'dir', 'translate'] as const) {
             const value = previous[attribute];
             if (value === null) html.removeAttribute(attribute);
             else html.setAttribute(attribute, value);

@@ -85,6 +85,10 @@ export const FR: Record<string, string> = {
     tuition_list_separator: ", ",
     tuition_title: "Frais de scolarité",
     tuition_balance: "Solde",
+    // MACHINE-DRAFTED 2026-10-16 (tuition breakdown hotfix): the three lines below need a fluent-reader check.
+    tuition_owed_items: "Composé de",
+    tuition_paid_ahead: "Payé d’avance",
+    tuition_due_by: "échéance le {x}",
     tuition_next_due: "Prochain montant dû",
     tuition_coming_up: "À venir",
     tuition_on: "le",

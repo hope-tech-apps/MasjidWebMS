@@ -93,6 +93,10 @@ export const PS: Record<string, string> = {
     tuition_list_separator: "، ",
     tuition_title: "د زده کړو فیس",
     tuition_balance: "پاتې پیسې",
+    // MACHINE-DRAFTED 2026-10-16 (tuition breakdown hotfix): the three lines below need a fluent-reader check.
+    tuition_owed_items: "په دې کې شامل دي",
+    tuition_paid_ahead: "مخکې له وخته ورکړل شوي",
+    tuition_due_by: "د ورکړې نېټه {x}",
     tuition_next_due: "راتلونکی د ورکړې مبلغ",
     tuition_coming_up: "راتلونکی",
     tuition_on: "په",
