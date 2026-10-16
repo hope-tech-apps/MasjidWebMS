@@ -1762,6 +1762,21 @@ for (const flag of [true, false]) test(`the week grid asks before opening anothe
     } finally { screen.unmount(); restore(); }
 });
 
+// A grade typed as a bare number names itself as a grade in the question: "the 1 Arabic plan" names none.
+const numberedStudents = ['1', '2'].map((grade, i) => ({ membership_id: 40 + i, grade_label: grade, contact: { id: 50 + i, first_name: `Practice ${grade}`, last_name: '' } }));
+for (const flag of [true, false]) test(`the question names a numbered grade as "Grade 1" ${flag ? 'ON' : 'OFF'}`, async () => {
+    const answers = { next: false };
+    const { asked, restore } = askAs(answers);
+    const other = sameWeekOtherDay();
+    const { screen } = await combinedClass(flag, [savedArabic(81, '1', 'Letter ba.'), { ...savedArabic(83, '2', 'Letter jim.'), session_date: other }], numberedStudents);
+    try {
+        type(activities(screen), 'Letter ba, edited.'); await flush();
+        click(dayButton(screen, other)); await flush(10);
+        assert.deepEqual(asked, [`Your changes to the Grade 1 Arabic plan are not saved. Leave them and open ${longDay(other)}?`]);
+        assert.equal(shown(screen), 'Letter ba, edited.');
+    } finally { screen.unmount(); restore(); }
+});
+
 for (const flag of [true, false]) test(`the week arrows ask before leaving unsaved words ${flag ? 'ON' : 'OFF'}`, async () => {
     const answers = { next: false };
     const { asked, restore } = askAs(answers);

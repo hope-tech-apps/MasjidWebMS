@@ -207,6 +207,19 @@ export function planLabel(plan: DayPlan | null | undefined, withGrade = true): s
 }
 
 /**
+ * A grade as a sentence names it: a bare number or ordinal ("1", "1st") reads
+ * "Grade 1", because "the 1 Arabic plan" names no grade. Any other label
+ * ("Pre-K", "Kindergarten", "Grade 3", "First Grade") reads as written. '' is
+ * no grade.
+ */
+export function gradeWords(grade: string | null | undefined): string {
+    const clean = String(grade ?? '').replace(/\s+/gu, ' ').trim();
+    const numbered = clean.match(/^(\d{1,2})(?:st|nd|rd|th)?$/i);
+
+    return numbered ? `Grade ${parseInt(numbered[1], 10)}` : clean;
+}
+
+/**
  * True when plans or a roster carry more than one grade: the class is taught as
  * a combined-grade class, and its plans must say which grade each is for.
  */

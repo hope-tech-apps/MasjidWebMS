@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import * as dates from '../core/types/data/masjid-related/SchoolCalendar.ts';
-import { copyRequest, gradeKey, planLabel, severalGrades, subjectClash, takenSubjectKeys } from '../core/helpers/lessonPlans.ts';
+import { copyRequest, gradeKey, gradeWords, planLabel, severalGrades, subjectClash, takenSubjectKeys } from '../core/helpers/lessonPlans.ts';
 import { flush, loadTs, mountSfc } from './support/mountSfc.ts';
 
 const vue = createRequire(import.meta.url)('vue');
@@ -125,6 +125,13 @@ test('one grade, however it is spelled, is one key, as on the server', () => {
 
     // The same subject for "Pre-K" and "Pre-Kindergarten" is the same plan.
     assert.equal(subjectClash(monday, '2026-10-19', 'Mathematics', null, false, null, 'Pre-K')?.id, 3);
+});
+
+test('a question names a numbered grade as a grade, and any other label as written', () => {
+    for (const label of ['1', ' 1 ', '1st', '01', '2ND']) assert.equal(gradeWords(label), label.trim() === '01' ? 'Grade 1' : `Grade ${parseInt(label, 10)}`);
+    for (const label of ['Pre-K', 'Kindergarten', 'Grade 3', 'First Grade', '1st Grade', 'الصف الأول']) assert.equal(gradeWords(label), label);
+    assert.equal(gradeWords(null), '');
+    assert.equal(gradeWords('  '), '');
 });
 
 test('a class is taught as several grades when its roster or plans carry two', () => {

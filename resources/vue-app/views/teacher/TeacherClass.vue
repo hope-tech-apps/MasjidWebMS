@@ -2710,7 +2710,7 @@ import {
 } from '@/core/helpers/gradebook';
 import {
     MAX_PLAN_FILES, attachmentIds, canSavePlan, copyRequest, formTicket, jumpTarget, pickPlan, planAlreadyGone, planDeleteUrl, planFilesFull as planFilesFullOf,
-    gradeKey, planLabel, plansOn, planSaveRequest, severalGrades, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
+    gradeKey, gradeWords, planLabel, plansOn, planSaveRequest, severalGrades, subjectClash, subjectKey, takenSubjectKeys, unattachedFiles, withAttachment, withoutAttachment,
 } from '@/core/helpers/lessonPlans';
 import {
     FOCUS_REFRESH_GAP_MS, MESSAGE_PAGE_SIZE, afterOpening, focusRefreshDue, newChip, openWholeThread,
@@ -3351,9 +3351,9 @@ const selectPlan = (id: number | null) => {
     syncPlanForm();
 };
 
-/** "the Kindergarten Arabic plan", "the new Arabic plan": a plan as the questions below name it. */
+/** "the Kindergarten Arabic plan", "the Grade 1 Arabic plan", "the new Arabic plan": a plan as the questions below name it. */
 const planNamed = (grade: string | null | undefined, subject: string | null | undefined, isNew = false) =>
-    `the ${isNew ? 'new ' : ''}${grade ? `${grade} ` : ''}${String(subject ?? '').trim() || 'general'} plan`;
+    `the ${isNew ? 'new ' : ''}${gradeWords(grade) ? `${gradeWords(grade)} ` : ''}${String(subject ?? '').trim() || 'general'} plan`;
 
 /**
  * Whether the open plan may be left for `next`: at once when it holds nothing
