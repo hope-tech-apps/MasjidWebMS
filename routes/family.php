@@ -45,7 +45,8 @@ use Illuminate\Support\Facades\Route;
 |   crm            the same per-masjid feature gate the staff CRM sits behind. A
 |                  masjid that has not switched the CRM on has no groups, no
 |                  roster and no parents to serve.
-|   throttle:family  60/min keyed on the contact (see AppServiceProvider).
+|   throttle:family  60/min keyed on the contact (see AppServiceProvider). Photo and
+|                  file downloads count against throttle:family-media instead.
 |
 | ============================ THE SIGN-IN STACK ============================
 |
@@ -289,7 +290,12 @@ Route::prefix('family')
                 ->group(function () {
                     Route::get('/', 'index');
                     Route::get('/{post_id}', 'show');
-                    Route::get('/{post_id}/attachments/{attachment_id}', 'downloadAttachment');
+                    // A photo in the feed. A class story with many photos asks for each one at
+                    // once, so photos count against their own allowance (throttle:family-media),
+                    // never the realm's 60 a minute: twenty photos on one page used that up and
+                    // the parent's next requests, her classes and her messages, were refused.
+                    Route::get('/{post_id}/attachments/{attachment_id}', 'downloadAttachment')
+                        ->withoutMiddleware('throttle:family')->middleware('throttle:family-media');
 
                     // A VIDEO. A parent uploads nothing and this changes none of
                     // that — it mints a short-lived, viewer-bound signed URL so
@@ -348,7 +354,8 @@ Route::prefix('family')
                     Route::get('/{thread_id}', 'show');
                     // A photo a teacher sent. A GET, so the realm's counted
                     // writes are unchanged; the controller asks consent again.
-                    Route::get('/{thread_id}/messages/{message_id}/attachments/{attachment_id}', 'downloadAttachment');
+                    Route::get('/{thread_id}/messages/{message_id}/attachments/{attachment_id}', 'downloadAttachment')
+                        ->withoutMiddleware('throttle:family')->middleware('throttle:family-media');
 
                     // The conversation twin of the story's playback ticket, on
                     // exactly the same terms: no row is written, and the verb is

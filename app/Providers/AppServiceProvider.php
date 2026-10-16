@@ -798,6 +798,28 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // Photos and files a parent opens in the family realm: a story or a
+        // conversation with many photos loads them all at once, which is many
+        // requests in one second for one page. They get their own allowance per
+        // contact so they can never use up the realm's 60 a minute for reading
+        // classes and messages (owner's bug report 2026-10-16: a parent saw "We
+        // could not load your classes" after a photo-heavy story). Downloads are
+        // reads behind the same sign-in, consent and roster checks.
+        RateLimiter::for('family-media', function (Request $request) {
+            $principal = $request->user();
+
+            $key = $principal instanceof \App\Models\Contact
+                ? 'contact:' . $principal->getKey()
+                : 'ip:' . $request->ip();
+
+            return Limit::perMinute(600)->by('family-media:' . $key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many requests. Please try again in a minute.',
+                ], 429);
+            });
+        });
+
         // The two UNAUTHENTICATED family endpoints (T-015d): request a sign-in
         // code, and exchange one for a token. Both return TWO limits, because
         // the two abuse shapes are different and either alone leaves the other
