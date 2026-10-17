@@ -388,17 +388,19 @@ class DonationService
      * ids onto our commitment row. Does NOT book a donation — the first
      * invoice.payment_succeeded does that, so out-of-order events converge.
      *
+     * Only the account this commitment charges on may link its Stripe identifiers.
+     *
      * @return ?DonationSubscription  null when the session isn't one of ours
      */
-    public function linkSubscriptionCheckout(array $session): ?DonationSubscription
+    public function linkSubscriptionCheckout(array $session, ?string $account): ?DonationSubscription
     {
         $subscription = $this->findSubscription([
             'uuid' => $session['metadata']['donation_subscription_uuid']
                 ?? ($session['client_reference_id'] ?? null),
             'stripe_checkout_session_id' => $session['id'] ?? null,
-        ]);
+        ], $account);
 
-        if (! $subscription) {
+        if (! $subscription || ! $this->subscriptionIdMatches($subscription, $session['subscription'] ?? null)) {
             return null;
         }
 
@@ -446,6 +448,7 @@ class DonationService
      * and activate its subscription. Returns the donation so the caller can issue
      * and deliver the receipt exactly as for a one-time gift.
      *
+     * Resolution checks the charge account before linking or booking.
      * Resolution is metadata-first so event ordering never matters: the invoice
      * carries our subscription uuid even if checkout.session.completed hasn't
      * linked the Stripe subscription id yet (and we self-heal that link here).
@@ -455,7 +458,7 @@ class DonationService
      *
      * @return ?Donation  null when the invoice isn't one of ours
      */
-    public function bookRecurringInvoice(array $invoice, ?string $account = null): ?Donation
+    public function bookRecurringInvoice(array $invoice, ?string $account): ?Donation
     {
         // The subscription id and our metadata have lived in different spots across
         // Stripe API versions, so check the known locations rather than one path.
@@ -473,10 +476,14 @@ class DonationService
         $subscription = $this->findSubscription([
             'stripe_subscription_id' => $stripeSubId,
             'uuid' => $uuid,
-        ]);
+        ], $account);
 
-        if (! $subscription) {
+        if (! $subscription || ! $stripeSubId) {
             return null; // not one of ours — the controller acks and ignores.
+        }
+
+        if (! $this->subscriptionIdMatches($subscription, $stripeSubId)) {
+            return null;
         }
 
         // Self-heal the Stripe link if the invoice arrived before checkout.completed.
@@ -489,7 +496,9 @@ class DonationService
 
         // Dedup: this invoice may already have booked a donation.
         if ($invoiceId) {
-            $existing = Donation::where('stripe_invoice_id', $invoiceId)->first();
+            $existing = Donation::where('masjid_id', $subscription->masjid_id)
+                ->where('stripe_subscription_id', $stripeSubId)
+                ->where('stripe_invoice_id', $invoiceId)->first();
             if ($existing) {
                 $this->activateSubscription($subscription, $invoice);
 
@@ -671,9 +680,9 @@ class DonationService
     }
 
     /** Mark a subscription canceled (from customer.subscription.deleted). */
-    public function cancelSubscriptionByStripeId(string $stripeSubscriptionId): void
+    public function cancelSubscriptionByStripeId(string $stripeSubscriptionId, ?string $account): void
     {
-        $subscription = DonationSubscription::where('stripe_subscription_id', $stripeSubscriptionId)->first();
+        $subscription = $this->findSubscription(['stripe_subscription_id' => $stripeSubscriptionId], $account);
 
         if ($subscription && $subscription->status !== 'canceled') {
             $subscription->forceFill([
@@ -1157,14 +1166,58 @@ class DonationService
         return null;
     }
 
+    /**
+     * Match a donation event to the organisation whose Stripe account sent it.
+     * Donations have no account pin: both checkout paths charge on the organisation's
+     * stripe_account_id. An empty account represents a platform charge on both sides.
+     * A missing organisation never resolves to the platform account.
+     */
+    public function matchesWebhookAccount(Donation|DonationSubscription $record, ?string $account): bool
+    {
+        $masjid = Masjid::find($record->masjid_id);
+        if ($masjid && hash_equals((string) $masjid->stripe_account_id, $account ?? '')) {
+            return true;
+        }
+
+        \Illuminate\Support\Facades\Log::warning('A donation event did not match its organisation charge account; ignored.', [
+            'masjid_id' => $record->masjid_id,
+            $record instanceof Donation ? 'donation_id' : 'donation_subscription_id' => $record->id,
+            'account' => $account,
+        ]);
+
+        return false;
+    }
+
+    /** A linked commitment only accepts events naming that same Stripe subscription. */
+    private function subscriptionIdMatches(DonationSubscription $subscription, mixed $stripeSubId): bool
+    {
+        // Invoice metadata may arrive before Checkout links the row. Even then,
+        // the named Stripe subscription must not already belong to another commitment.
+        $otherCommitment = is_string($stripeSubId) && $stripeSubId !== ''
+            && DonationSubscription::where('stripe_subscription_id', $stripeSubId)
+                ->where('id', '!=', $subscription->id)->exists();
+
+        if (! $otherCommitment && (! $subscription->stripe_subscription_id
+            || (is_string($stripeSubId) && hash_equals($subscription->stripe_subscription_id, $stripeSubId)))) {
+            return true;
+        }
+
+        \Illuminate\Support\Facades\Log::warning('A donation event named a different subscription from its commitment; ignored.', [
+            'masjid_id' => $subscription->masjid_id,
+            'donation_subscription_id' => $subscription->id,
+        ]);
+
+        return false;
+    }
+
     /** Find a subscription by any known identifier (runs unbound in the webhook). */
-    private function findSubscription(array $keys): ?DonationSubscription
+    private function findSubscription(array $keys, ?string $account): ?DonationSubscription
     {
         foreach (['uuid', 'stripe_subscription_id', 'stripe_checkout_session_id'] as $column) {
             if (! empty($keys[$column])) {
                 $sub = DonationSubscription::where($column, $keys[$column])->first();
                 if ($sub) {
-                    return $sub;
+                    return $this->matchesWebhookAccount($sub, $account) ? $sub : null;
                 }
             }
         }

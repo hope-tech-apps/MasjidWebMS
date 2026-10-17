@@ -33,8 +33,8 @@ use Throwable;
  *    %XX triplets. A percent-encoded (Arabic) slug can take a card; a scheme, a host,
  *    a query, a fragment, a space or a backslash cannot get in.
  *
- * A client-supplied absolute URL is never used: the mobile donation path's habit of
- * passing the client's URLs to Stripe is not copied. The uuid rides in the query
+ * Form returns are built from a relative path; donation returns share this origin
+ * allowlist when a client supplies an absolute URL. The uuid rides in the query
  * string so the page can read the status back (GET /api/v1/form-responses/{uuid}).
  *
  * Pinned by tests/Feature/FormPaymentCheckoutTest.php.

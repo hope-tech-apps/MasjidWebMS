@@ -355,8 +355,11 @@ class RegistrationWebhookTest extends TestCase
         $this->postWebhook([
             'id' => 'evt_donation_1',
             'type' => 'checkout.session.completed',
+            'account' => $this->masjid->stripe_account_id,
             'data' => ['object' => [
                 'id' => 'cs_don_1',
+                'amount_total' => $donation->charged_amount,
+                'currency' => $donation->currency,
                 'object' => 'checkout.session',
                 'payment_status' => 'paid',
                 'status' => 'complete',

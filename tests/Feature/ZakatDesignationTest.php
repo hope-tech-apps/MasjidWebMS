@@ -251,7 +251,7 @@ class ZakatDesignationTest extends TestCase
             'subscription_details' => [
                 'metadata' => ['donation_subscription_uuid' => $subscription->uuid],
             ],
-        ]);
+        ], $this->masjid->stripe_account_id);
 
         $this->assertNotNull($donation);
         $this->assertTrue($donation->is_zakat);
@@ -597,6 +597,8 @@ class ZakatDesignationTest extends TestCase
                 'object' => [
                     'id' => 'pi_' . uniqid(),
                     'object' => 'payment_intent',
+                    'amount_received' => $donation->charged_amount,
+                    'currency' => $donation->currency,
                     'metadata' => ['donation_uuid' => $donation->uuid],
                     'latest_charge' => [
                         'id' => 'ch_' . uniqid(),

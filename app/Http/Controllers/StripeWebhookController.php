@@ -269,7 +269,7 @@ class StripeWebhookController extends Controller
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
                 $isCart => $this->handleCartEvent($event['type'], $object, $account),
-                default => $this->handleCheckoutCompleted($object),
+                default => $this->handleCheckoutCompleted($object, $account),
             },
             // A delayed payment method (a bank debit) completes the page with
             // payment_status `unpaid`; when its money moves, Stripe sends this with
@@ -282,7 +282,7 @@ class StripeWebhookController extends Controller
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
                 $isCart => $this->handleCartEvent($event['type'], $object, $account),
-                default => $this->handleCheckoutCompleted($object),
+                default => $this->handleCheckoutCompleted($object, $account),
             },
             // ...and this when it never does. Nothing was booked on the unpaid
             // completion, so each handler says so at warning; a registration also
@@ -335,7 +335,7 @@ class StripeWebhookController extends Controller
                 : null,
             'customer.subscription.deleted' => $isRegistration
                 ? $this->registrationPayments->handleSubscriptionDeleted($object, $account)
-                : $this->donations->cancelSubscriptionByStripeId((string) ($object['id'] ?? '')),
+                : $this->donations->cancelSubscriptionByStripeId((string) ($object['id'] ?? ''), $account),
             // New for T-006e: an installment commitment billed out in full.
             'subscription_schedule.completed' => $isRegistration
                 ? $this->registrationPayments->handleScheduleCompleted($object, $account)
@@ -553,12 +553,12 @@ class StripeWebhookController extends Controller
             : Carbon::parse((string) $value, 'UTC')->getTimestamp();
     }
 
-    private function handleCheckoutCompleted(array $session): void
+    private function handleCheckoutCompleted(array $session, ?string $account): void
     {
         // A subscription checkout only links the commitment + seeds the donor;
         // the money is booked per invoice by invoice.payment_succeeded.
         if (($session['mode'] ?? null) === 'subscription') {
-            $this->handleSubscriptionCheckout($session);
+            $this->handleSubscriptionCheckout($session, $account);
 
             return;
         }
@@ -567,7 +567,7 @@ class StripeWebhookController extends Controller
             'uuid' => $session['metadata']['donation_uuid'] ?? ($session['client_reference_id'] ?? null),
             'stripe_checkout_session_id' => $session['id'] ?? null,
             'stripe_payment_intent_id' => $session['payment_intent'] ?? null,
-        ]);
+        ], $account);
 
         if (! $donation) {
             return;
@@ -585,6 +585,10 @@ class StripeWebhookController extends Controller
         $paid = ($session['payment_status'] ?? null) === 'paid';
 
         if ($paid) {
+            if (! $this->donationAmountMatches($donation, $session['amount_total'] ?? null, $session['currency'] ?? null)) {
+                return;
+            }
+
             $this->donations->markSucceeded($donation, $ids);
             // Seed the donor CRM from the checkout details, then issue + email
             // the receipt to that contact. Each step is idempotent.
@@ -609,9 +613,9 @@ class StripeWebhookController extends Controller
      * ids to our commitment and seed the donor contact from the first checkout —
      * every monthly charge then inherits that contact. No donation is booked here.
      */
-    private function handleSubscriptionCheckout(array $session): void
+    private function handleSubscriptionCheckout(array $session, ?string $account): void
     {
-        $subscription = $this->donations->linkSubscriptionCheckout($session);
+        $subscription = $this->donations->linkSubscriptionCheckout($session, $account);
 
         if (! $subscription) {
             return;
@@ -638,7 +642,7 @@ class StripeWebhookController extends Controller
             'uuid' => $session['metadata']['donation_uuid'] ?? ($session['client_reference_id'] ?? null),
             'stripe_checkout_session_id' => $session['id'] ?? null,
             'stripe_payment_intent_id' => $session['payment_intent'] ?? null,
-        ]);
+        ], $account);
 
         Log::warning('A delayed donation payment failed; nothing was marked succeeded and no receipt was issued.', [
             'donation_id' => $donation?->id,
@@ -779,9 +783,13 @@ class StripeWebhookController extends Controller
         $donation = $this->findDonation([
             'uuid' => $pi['metadata']['donation_uuid'] ?? null,
             'stripe_payment_intent_id' => $pi['id'] ?? null,
-        ]);
+        ], $account);
 
         if (! $donation) {
+            return;
+        }
+
+        if (! $this->donationAmountMatches($donation, $pi['amount_received'] ?? null, $pi['currency'] ?? null)) {
             return;
         }
 
@@ -848,18 +856,30 @@ class StripeWebhookController extends Controller
         return [$chargeId, $btId, $fee, $net];
     }
 
-    /**
-     * Find a donation across masjids by any known identifier. The webhook runs
-     * UNBOUND (no tenant), so these globally-unique keys are correct without
-     * the tenant scope.
-     */
-    private function findDonation(array $keys): ?Donation
+    /** Match settlement to the stored charged amount, including donor-covered fees. */
+    private function donationAmountMatches(Donation $donation, mixed $amount, mixed $currency): bool
+    {
+        if (is_int($amount) && $amount === (int) $donation->charged_amount
+            && is_string($currency) && hash_equals((string) $donation->currency, $currency)) {
+            return true;
+        }
+
+        Log::warning('A donation payment did not match its charged amount or currency; ignored.', [
+            'donation_id' => $donation->id,
+            'masjid_id' => $donation->masjid_id,
+        ]);
+
+        return false;
+    }
+
+    /** Resolve a donation only on the Stripe account its organisation charges on. */
+    private function findDonation(array $keys, ?string $account): ?Donation
     {
         foreach (['uuid', 'stripe_payment_intent_id', 'stripe_checkout_session_id'] as $column) {
             if (! empty($keys[$column])) {
                 $donation = Donation::where($column, $keys[$column])->first();
                 if ($donation) {
-                    return $donation;
+                    return $this->donations->matchesWebhookAccount($donation, $account) ? $donation : null;
                 }
             }
         }

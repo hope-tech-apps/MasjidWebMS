@@ -8,6 +8,7 @@ use App\Models\Fund;
 use App\Models\Masjid;
 use App\Services\Stripe\DonationService;
 use App\Support\Errors;
+use App\Support\FormPaymentReturn;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -66,6 +67,18 @@ class DonationsController extends Controller
                 'status' => 'error',
                 'message' => 'Fund not found for this masjid.',
             ], Response::HTTP_NOT_FOUND);
+        }
+
+        // Supplied return URLs use the same origins as form payments, including
+        // confirmed domains belonging to this organisation. Omitted URLs keep the
+        // server-generated checkout defaults.
+        foreach (['success_url', 'cancel_url'] as $field) {
+            if ($request->has($field) && ! $this->allowedReturnUrl($request->input($field), (int) $masjid->id)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This return address is not allowed.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
         }
 
         $options = array_filter([
@@ -132,5 +145,20 @@ class DonationsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /** Validate an absolute return URL using the forms origin allowlist. */
+    private function allowedReturnUrl(string $url, int $masjidId): bool
+    {
+        $parts = parse_url($url);
+        if ($parts === false || ! isset($parts['scheme'], $parts['host'])
+            || isset($parts['user']) || isset($parts['pass']) || str_contains($url, '\\')) {
+            return false;
+        }
+
+        $origin = $parts['scheme'] . '://' . $parts['host']
+            . (isset($parts['port']) ? ':' . $parts['port'] : '');
+
+        return FormPaymentReturn::allowedOrigin($origin, $masjidId) !== null;
     }
 }

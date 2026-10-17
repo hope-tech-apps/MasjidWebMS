@@ -513,12 +513,15 @@ class DonationReceiptPdfTest extends TestCase
         return [
             'id' => $o['event_id'] ?? 'evt_' . uniqid(),
             'type' => 'checkout.session.completed',
+            'account' => Masjid::findOrFail($donation->masjid_id)->stripe_account_id,
             'data' => [
                 'object' => [
                     'id' => $o['id'] ?? 'cs_' . uniqid(),
                     'object' => 'checkout.session',
                     'payment_status' => 'paid',
                     'status' => 'complete',
+                    'amount_total' => $donation->charged_amount,
+                    'currency' => $donation->currency,
                     'payment_intent' => $o['payment_intent'] ?? ('pi_' . uniqid()),
                     'client_reference_id' => $donation->uuid,
                     'metadata' => ['donation_uuid' => $donation->uuid],

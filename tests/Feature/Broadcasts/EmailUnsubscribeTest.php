@@ -698,6 +698,7 @@ class EmailUnsubscribeTest extends TestCase
         $this->postStripeWebhook([
             'id' => 'evt_' . uniqid(),
             'type' => 'checkout.session.completed',
+            'account' => $this->masjid->stripe_account_id,
             'data' => [
                 'object' => [
                     'id' => 'cs_' . uniqid(),
@@ -705,6 +706,8 @@ class EmailUnsubscribeTest extends TestCase
                     'payment_status' => 'paid',
                     'status' => 'complete',
                     'payment_intent' => 'pi_' . uniqid(),
+                    'amount_total' => $donation->charged_amount,
+                    'currency' => $donation->currency,
                     'client_reference_id' => $donation->uuid,
                     'metadata' => ['donation_uuid' => $donation->uuid],
                 ],

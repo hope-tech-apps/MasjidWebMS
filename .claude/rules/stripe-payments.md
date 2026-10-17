@@ -80,6 +80,16 @@ holds funds and who bears liability.
   organisation that enables bank debits in its Stripe dashboard reaches this path;
   the production Connect endpoint must subscribe both async events (LOG.md
   2026-09-11).
+- Donation webhooks match the sending account with `hash_equals` before changing
+  gifts, donor contacts, receipts or commitments. Neither donation model stores an
+  account pin, so the expected account is the organisation's `stripe_account_id`;
+  a platform charge only matches an event without a connected account. One-off
+  settlement also requires the stored charged amount (including fee coverage) and
+  currency. Recurring invoices and subscription lifecycle events use the same
+  account check before linking or changing a commitment.
+- Public donation checkout accepts supplied return URLs only on the forms payment
+  origin allowlist (`FormPaymentReturn::allowedOrigin`), including confirmed domains
+  of that organisation. Omitted URLs use the server-generated defaults.
 - Persist a `pending` donation row BEFORE the redirect; write with an
   idempotency key so a retried Checkout Session create can't double-charge.
 

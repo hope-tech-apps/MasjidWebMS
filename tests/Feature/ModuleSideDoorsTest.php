@@ -833,6 +833,7 @@ class ModuleSideDoorsTest extends TestCase
         $event = [
             'id' => 'evt_' . uniqid(),
             'type' => 'checkout.session.completed',
+            'account' => $this->masjid->stripe_account_id,
             'data' => [
                 'object' => [
                     'id' => 'cs_sub_side_doors',
@@ -1191,6 +1192,7 @@ class ModuleSideDoorsTest extends TestCase
         return [
             'id' => 'evt_' . uniqid(),
             'type' => 'checkout.session.completed',
+            'account' => Masjid::findOrFail($donation->masjid_id)->stripe_account_id,
             'data' => [
                 'object' => [
                     'id' => 'cs_' . uniqid(),
@@ -1199,6 +1201,8 @@ class ModuleSideDoorsTest extends TestCase
                     'status' => 'complete',
                     'payment_status' => 'paid',
                     'payment_intent' => $paymentIntent,
+                    'amount_total' => $donation->charged_amount,
+                    'currency' => $donation->currency,
                     'client_reference_id' => $donation->uuid,
                     'metadata' => ['donation_uuid' => $donation->uuid],
                     'customer_details' => ['email' => 'donor-' . uniqid() . '@example.invalid', 'name' => 'Amina Rahman'],
@@ -1213,11 +1217,13 @@ class ModuleSideDoorsTest extends TestCase
         return [
             'id' => 'evt_' . uniqid(),
             'type' => 'payment_intent.succeeded',
-            'account' => $this->masjid->stripe_account_id,
+            'account' => Masjid::findOrFail($donation->masjid_id)->stripe_account_id,
             'data' => [
                 'object' => [
                     'id' => $paymentIntent,
                     'object' => 'payment_intent',
+                    'amount_received' => $donation->charged_amount,
+                    'currency' => $donation->currency,
                     'metadata' => ['donation_uuid' => $donation->uuid],
                     'latest_charge' => [
                         'id' => 'ch_' . uniqid(),

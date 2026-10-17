@@ -2,18 +2,22 @@
 
 namespace Tests\Feature;
 
+use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\DonationReceipt;
 use App\Models\Fund;
 use App\Models\Masjid;
+use App\Models\MasjidDomain;
 use App\Models\StripeWebhookEvent;
 use App\Models\User;
 use App\Services\Stripe\DonationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -31,6 +35,7 @@ use Tests\TestCase;
 class DonationFlowTest extends TestCase
 {
     use RefreshDatabase;
+    use \Tests\Support\SeedsDonationSubscriptions;
 
     private string $webhookSecret = 'whsec_test_secret';
 
@@ -214,6 +219,241 @@ class DonationFlowTest extends TestCase
             1,
             DonationReceipt::withoutMasjidScope()->where('donation_id', $donation->id)->count()
         );
+    }
+
+    public static function ignoredDonationEvents(): array
+    {
+        return [
+            'checkout other account' => ['checkout.session.completed', 'other_account'],
+            'checkout missing account' => ['checkout.session.completed', 'missing_account'],
+            'checkout wrong amount' => ['checkout.session.completed', 'amount'],
+            'checkout wrong currency' => ['checkout.session.completed', 'currency'],
+            'checkout missing amount' => ['checkout.session.completed', 'missing_amount'],
+            'checkout missing currency' => ['checkout.session.completed', 'missing_currency'],
+            'async checkout other account' => ['checkout.session.async_payment_succeeded', 'other_account'],
+            'intent other account' => ['payment_intent.succeeded', 'other_account'],
+            'intent wrong amount' => ['payment_intent.succeeded', 'amount'],
+            'intent wrong currency' => ['payment_intent.succeeded', 'currency'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('ignoredDonationEvents')]
+    public function donation_events_must_match_the_charge_account_amount_and_currency(string $type, string $mismatch): void
+    {
+        Mail::fake();
+        $contact = Contact::factory()->create(['masjid_id' => $this->masjidA->id, 'email' => 'original@example.test']);
+        $donation = $this->makePendingDonation($this->masjidA, $this->fundA, 10000, 10330, [
+            'contact_id' => $contact->id, 'donor_covers_fees' => true,
+        ]);
+        $before = $donation->fresh()->getAttributes();
+        $contactBefore = $contact->fresh()->getAttributes();
+        $event = $type === 'payment_intent.succeeded'
+            ? $this->paymentIntentSucceededEvent($donation)
+            : $this->checkoutCompletedEvent($donation, ['type' => $type]);
+        $event['data']['object']['customer_details'] = ['email' => 'checkout@example.test', 'name' => 'Test Donor'];
+        $amountKey = $type === 'payment_intent.succeeded' ? 'amount_received' : 'amount_total';
+        if ($mismatch === 'other_account') $event['account'] = $this->masjidB->stripe_account_id;
+        if ($mismatch === 'missing_account') unset($event['account']);
+        if ($mismatch === 'amount') $event['data']['object'][$amountKey] = 10000;
+        if ($mismatch === 'currency') $event['data']['object']['currency'] = 'cad';
+        if ($mismatch === 'missing_amount') unset($event['data']['object'][$amountKey]);
+        if ($mismatch === 'missing_currency') unset($event['data']['object']['currency']);
+
+        $this->postWebhook($event)->assertOk();
+
+        $this->assertSame($before, $donation->fresh()->getAttributes());
+        $this->assertSame($contactBefore, $contact->fresh()->getAttributes());
+        $this->assertDatabaseCount('contacts', 1);
+        $this->assertDatabaseCount('donation_receipts', 0);
+        Mail::assertNothingSent();
+    }
+
+    #[Test]
+    public function a_platform_donation_only_accepts_an_event_without_an_account(): void
+    {
+        $this->masjidA->update(['stripe_account_id' => null]);
+        $donation = $this->makePendingDonation($this->masjidA, $this->fundA, 5000, 5000);
+        $event = $this->checkoutCompletedEvent($donation);
+        $event['account'] = $this->masjidB->stripe_account_id;
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame('pending', $donation->fresh()->status);
+        $this->assertDatabaseCount('donation_receipts', 0);
+
+        $event['id'] = 'evt_platform_correct';
+        unset($event['account']);
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame('succeeded', $donation->fresh()->status);
+        $this->assertDatabaseCount('donation_receipts', 1);
+    }
+
+    public static function recurringIdentifiers(): array
+    {
+        return [
+            'uuid before checkout' => [null, true],
+            'uuid after checkout' => ['sub_recurring_test', true],
+            'linked id without metadata' => ['sub_recurring_test', false],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('recurringIdentifiers')]
+    public function a_recurring_invoice_matches_its_commitments_account_before_linking_or_booking(?string $stripeSubId, bool $includeUuid): void
+    {
+        Mail::fake();
+        $subscription = $this->seedDonationSubscription($this->masjidA, $this->fundA, [
+            'status' => 'pending', 'stripe_subscription_id' => $stripeSubId,
+        ]);
+        $before = $subscription->getAttributes();
+        $event = [
+            'id' => 'evt_recurring_other', 'type' => 'invoice.payment_succeeded',
+            'account' => $this->masjidB->stripe_account_id,
+            'data' => ['object' => [
+                'id' => 'in_recurring_test', 'subscription' => 'sub_recurring_test', 'amount_paid' => 5000,
+                'subscription_details' => ['metadata' => ['donation_subscription_uuid' => $subscription->uuid]],
+            ]],
+        ];
+        if (! $includeUuid) unset($event['data']['object']['subscription_details']);
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame($before, $subscription->fresh()->getAttributes());
+        $this->assertDatabaseCount('donations', 0);
+        $this->assertDatabaseCount('donation_receipts', 0);
+        Mail::assertNothingSent();
+
+        $event['id'] = 'evt_recurring_correct';
+        $event['account'] = $this->masjidA->stripe_account_id;
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame('sub_recurring_test', $subscription->fresh()->stripe_subscription_id);
+        $this->assertSame('active', $subscription->fresh()->status);
+        $this->assertDatabaseCount('donations', 1);
+        $this->assertDatabaseCount('donation_receipts', 1);
+    }
+
+    #[Test]
+    public function subscription_checkout_matches_the_commitments_account(): void
+    {
+        Mail::fake();
+        $subscription = $this->seedDonationSubscription($this->masjidA, $this->fundA, [
+            'status' => 'pending', 'stripe_subscription_id' => null, 'stripe_customer_id' => null,
+        ]);
+        $before = $subscription->getAttributes();
+        $event = [
+            'id' => 'evt_sub_checkout_other', 'type' => 'checkout.session.completed',
+            'account' => $this->masjidB->stripe_account_id,
+            'data' => ['object' => [
+                'id' => 'cs_recurring_test', 'mode' => 'subscription', 'subscription' => 'sub_checkout_test',
+                'customer' => 'cus_checkout_test', 'metadata' => ['donation_subscription_uuid' => $subscription->uuid],
+                'customer_details' => ['email' => 'checkout@example.test', 'name' => 'Test Donor'],
+            ]],
+        ];
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame($before, $subscription->fresh()->getAttributes());
+        $this->assertDatabaseCount('contacts', 0);
+        Mail::assertNothingSent();
+        $event['id'] = 'evt_sub_checkout_correct';
+        $event['account'] = $this->masjidA->stripe_account_id;
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame('sub_checkout_test', $subscription->fresh()->stripe_subscription_id);
+    }
+
+    #[Test]
+    public function subscription_deletion_matches_the_commitments_account(): void
+    {
+        $subscription = $this->seedDonationSubscription($this->masjidA, $this->fundA, [
+            'stripe_subscription_id' => 'sub_checkout_test',
+        ]);
+        $event = ['id' => 'evt_sub_deleted_other', 'type' => 'customer.subscription.deleted',
+            'account' => $this->masjidB->stripe_account_id, 'data' => ['object' => ['id' => 'sub_checkout_test']]];
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame('active', $subscription->fresh()->status);
+        $event['id'] = 'evt_sub_deleted_correct';
+        $event['account'] = $this->masjidA->stripe_account_id;
+        $this->postWebhook($event)->assertOk();
+        $this->assertSame('canceled', $subscription->fresh()->status);
+    }
+
+    public static function returnUrlFields(): array
+    {
+        return [
+            'one-off success' => ['success_url', false], 'one-off cancel' => ['cancel_url', false],
+            'recurring success' => ['success_url', true], 'recurring cancel' => ['cancel_url', true],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('returnUrlFields')]
+    public function donation_checkout_refuses_return_urls_outside_the_forms_allowlist(string $field, bool $recurring): void
+    {
+        config(['forms.payment_return_origins' => ['https://giving.example.test']]);
+        $this->stubCheckoutSession('cs_return_test', 'https://checkout.stripe.test/return_test', null);
+        $this->postJson("/api/mobile/masjids/{$this->masjidA->id}/donations/checkout", [
+            'fund_id' => $this->fundA->id, 'amount' => 5000, 'recurring' => $recurring,
+            $field => 'https://elsewhere.example.test/return',
+        ])->assertStatus(422)->assertJsonPath('message', 'This return address is not allowed.');
+        $this->assertDatabaseCount('donations', 0);
+        $this->assertDatabaseCount('donation_subscriptions', 0);
+    }
+
+    public static function conflictingCommitments(): array
+    {
+        return [
+            'invoice with different linked id' => ['invoice.payment_succeeded', true],
+            'checkout with different linked id' => ['checkout.session.completed', true],
+            'invoice naming another commitment' => ['invoice.payment_succeeded', false],
+            'checkout naming another commitment' => ['checkout.session.completed', false],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('conflictingCommitments')]
+    public function recurring_identifiers_must_name_the_same_commitment(string $type, bool $alreadyLinked): void
+    {
+        $subscription = $this->seedDonationSubscription($this->masjidA, $this->fundA, [
+            'status' => 'pending', 'stripe_subscription_id' => $alreadyLinked ? 'sub_original_test' : null,
+        ]);
+        if (! $alreadyLinked) {
+            $this->seedDonationSubscription($this->masjidB, $this->fundB, ['stripe_subscription_id' => 'sub_other_test']);
+        }
+        $before = $subscription->getAttributes();
+        $object = [
+            'id' => 'object_recurring_test', 'mode' => 'subscription', 'subscription' => 'sub_other_test',
+            'amount_paid' => 5000,
+            'metadata' => ['donation_subscription_uuid' => $subscription->uuid],
+            'subscription_details' => ['metadata' => ['donation_subscription_uuid' => $subscription->uuid]],
+        ];
+        $this->postWebhook(['id' => 'evt_recurring_conflict', 'type' => $type,
+            'account' => $this->masjidA->stripe_account_id, 'data' => ['object' => $object]])->assertOk();
+        $this->assertSame($before, $subscription->fresh()->getAttributes());
+        $this->assertDatabaseCount('donations', 0);
+        $this->assertDatabaseCount('donation_receipts', 0);
+    }
+
+    #[Test]
+    public function donation_return_urls_use_configured_origins_and_only_the_organisations_confirmed_domains(): void
+    {
+        config(['forms.payment_return_origins' => ['https://giving.example.test']]);
+        $domain = MasjidDomain::create([
+            'masjid_id' => $this->masjidB->id, 'host' => 'donate.example.test',
+            'kind' => MasjidDomain::KIND_CUSTOM, 'zone_apex' => 'example.test',
+            'status' => MasjidDomain::STATUS_MANUAL, 'serving_confirmed_at' => now(),
+        ]);
+        $input = ['fund_id' => $this->fundA->id, 'amount' => 5000,
+            'success_url' => 'https://giving.example.test/thank-you?paid=1',
+            'cancel_url' => 'https://donate.example.test/cancelled'];
+        $mock = Mockery::mock(DonationService::class)->makePartial()->shouldAllowMockingProtectedMethods();
+        $mock->shouldReceive('createCheckoutSession')->once()
+            ->withArgs(fn (array $params, string $account, string $key) =>
+                $params['success_url'] === $input['success_url'] && $params['cancel_url'] === $input['cancel_url']
+                && $account === $this->masjidA->stripe_account_id)
+            ->andReturn(['id' => 'cs_allowed_return', 'url' => 'https://checkout.stripe.test/allowed', 'payment_intent' => null]);
+        $this->app->instance(DonationService::class, $mock);
+        $this->postJson("/api/mobile/masjids/{$this->masjidA->id}/donations/checkout", $input)->assertStatus(422);
+        $domain->update(['masjid_id' => $this->masjidA->id, 'serving_confirmed_at' => null]);
+        $this->postJson("/api/mobile/masjids/{$this->masjidA->id}/donations/checkout", $input)->assertStatus(422);
+        $domain->update(['serving_confirmed_at' => now()]);
+
+        // Form-encoded, as on a public web donation page.
+        $this->post("/api/mobile/masjids/{$this->masjidA->id}/donations/checkout", $input)->assertStatus(201);
     }
 
     // ================= webhook: idempotency =================
@@ -522,12 +762,15 @@ class DonationFlowTest extends TestCase
         return [
             'id' => $o['event_id'] ?? 'evt_' . uniqid(),
             'type' => $o['type'] ?? 'checkout.session.completed',
+            'account' => Masjid::findOrFail($donation->masjid_id)->stripe_account_id,
             'data' => [
                 'object' => [
                     'id' => $o['id'] ?? 'cs_' . uniqid(),
                     'object' => 'checkout.session',
                     'payment_status' => $o['payment_status'] ?? 'paid',
                     'status' => 'complete',
+                    'amount_total' => $donation->charged_amount,
+                    'currency' => $donation->currency,
                     'payment_intent' => $o['payment_intent'] ?? ('pi_' . uniqid()),
                     'client_reference_id' => $donation->uuid,
                     'metadata' => ['donation_uuid' => $donation->uuid],
@@ -541,11 +784,13 @@ class DonationFlowTest extends TestCase
         return [
             'id' => $o['event_id'] ?? 'evt_' . uniqid(),
             'type' => 'payment_intent.succeeded',
-            'account' => 'acct_A',
+            'account' => Masjid::findOrFail($donation->masjid_id)->stripe_account_id,
             'data' => [
                 'object' => [
                     'id' => $o['id'] ?? 'pi_' . uniqid(),
                     'object' => 'payment_intent',
+                    'amount_received' => $donation->charged_amount,
+                    'currency' => $donation->currency,
                     'metadata' => ['donation_uuid' => $donation->uuid],
                     // Charge + balance transaction expanded so no Stripe fetch.
                     'latest_charge' => [
